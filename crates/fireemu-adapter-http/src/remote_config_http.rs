@@ -126,8 +126,7 @@ pub struct Reply {
 enum ReplyBody {
     Json(Value),
     Rendered(Bytes),
-    /// A defaults file: its own content type, never compressed (2026-11-21 `defaults-*`: identity
-    /// although the request accepted gzip).
+    /// A defaults file: its own content type; compressed only when it has entries.
     File(Bytes, &'static str),
 }
 
@@ -160,18 +159,25 @@ fn pretty_json(value: &Value) -> Vec<u8> {
     body
 }
 
-/// A time as production writes Remote Config times: UTC with exactly six fraction digits
-/// (every `updateTime`, v1 `timestamp` and v2 `time` recorded on 2026-11-21 and in
-/// RC-OBSERVE-V2-3, including values ending in zero); finer digits are truncated.
+/// A time as production writes Remote Config times: UTC at microsecond precision (finer digits
+/// truncated), written as protobuf JSON writes a timestamp: no fraction on a whole second, three
+/// digits on a whole millisecond, otherwise six (RC-CLOSURE-A 2026-11-25 recorded `.949`,
+/// `.193490` and `.408063`; earlier recordings had only six-digit values).
 pub(crate) fn micros_rfc3339(time: LogicalInstant) -> Option<String> {
     let nanos = time.to_rfc3339().ok()?;
     let (seconds, fraction) = nanos
         .strip_suffix('Z')?
         .split_once('.')
         .unwrap_or((nanos.strip_suffix('Z')?, ""));
-    let mut digits = fraction.to_owned();
+    let mut digits = format!("{fraction:0<9}");
     digits.truncate(6);
-    Some(format!("{seconds}.{digits:0<6}Z"))
+    if digits == "000000" {
+        return Some(format!("{seconds}Z"));
+    }
+    if digits.ends_with("000") {
+        digits.truncate(3);
+    }
+    Some(format!("{seconds}.{digits}Z"))
 }
 
 /// The transcoder's refusal of a query value it cannot convert, with its field violation
@@ -211,7 +217,12 @@ impl Reply {
         let (body, content_type, compressible) = match self.body {
             ReplyBody::Json(value) => (Bytes::from(pretty_json(&value)), JSON, true),
             ReplyBody::Rendered(body) => (body, JSON, true),
-            ReplyBody::File(body, content_type) => (body, content_type, false),
+            // A defaults file with entries is compressed like any answer (2026-11-25 RC-CLOSURE-A);
+            // an empty one was served identity (2026-11-21 `defaults-*`).
+            ReplyBody::File(body, content_type) => {
+                let compressible = !body.is_empty();
+                (body, content_type, compressible)
+            }
         };
         Wire {
             status: self.status,
@@ -626,14 +637,27 @@ fn write(
         None | Some("false") => WriteMode::Publish,
         Some(_) => return Err(invalid("validateOnly must be a boolean")),
     };
-    let body = serde_json::from_slice(bytes).map_err(|_| invalid("Invalid JSON payload"))?;
+    let mut body: Value =
+        serde_json::from_slice(bytes).map_err(|_| invalid("Invalid JSON payload"))?;
+    // The checks below see the expressions as written; the template keeps them as production
+    // answers them (a client expression wrapped in one pair of parentheses loses it).
+    let written = body.get("conditions").cloned();
+    if namespace == Namespace::Client {
+        strip_outer_parentheses(&mut body);
+    }
     // The strict profile refuses the server conditions production refused (seq 54-57), after the
     // preconditions; the emulator profile keeps accepting them and serves them as `{}`.
     let check = |template: &ClientTemplate| {
-        let conditions = template.document()["conditions"]
-            .as_array()
+        let conditions = written
+            .as_ref()
+            .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                template.document()["conditions"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            });
         // The strict profile refuses the client conditions production refused (2026-11-21).
         if namespace == Namespace::Client && settings.strict_client_conditions {
             return conditions.iter().try_for_each(|condition| {
@@ -728,6 +752,74 @@ fn rollback(
     };
     let version = store.rollback(number, now).map_err(store_error)?;
     Ok(published(&version, false, user))
+}
+
+/// Removes one pair of parentheses around a whole client condition expression, as production
+/// answered `(percent > 0 && percent <= 100)` (RC-CLOSURE-A `v-cond-parenthesized`, both passes:
+/// `percent > 0 && percent <= 100`). Parentheses inside quoted strings do not count.
+fn strip_outer_parentheses(body: &mut Value) {
+    let Some(conditions) = body.get_mut("conditions").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for condition in conditions {
+        let Some(expression) = condition.get_mut("expression") else {
+            continue;
+        };
+        if let Some(inner) = expression.as_str().and_then(wrapped_inner) {
+            *expression = Value::String(inner.to_owned());
+        }
+    }
+}
+
+/// The text inside parentheses that enclose the whole expression, or `None`.
+fn wrapped_inner(expression: &str) -> Option<&str> {
+    let inner = expression.strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0_i32;
+    let mut quote = None;
+    for c in inner.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => {
+                depth -= 1;
+                if depth < 0 {
+                    return None;
+                }
+            }
+            // Inside a quoted string, or any other character.
+            _ => {}
+        }
+    }
+    (depth == 0 && quote.is_none()).then_some(inner)
+}
+
+/// Production's refusal of a client rollback to a version that does not exist (RC-CLOSURE-A
+/// `k2-rollback-unknown`, both passes: 404 with the version and the project key). Only the client
+/// namespace with a project number was recorded; other cases keep the earlier 404.
+fn unknown_rollback(
+    settings: &RemoteConfigSettings,
+    namespace: Namespace,
+    bytes: &[u8],
+) -> Option<Reply> {
+    let number = settings.project_number?;
+    if namespace != Namespace::Client {
+        return None;
+    }
+    let requested: Value = serde_json::from_slice(bytes).ok()?;
+    let version = match requested
+        .get("versionNumber")
+        .or_else(|| requested.get("version_number"))?
+    {
+        Value::String(text) => text.clone(),
+        Value::Number(number) => number.to_string(),
+        _ => return None,
+    };
+    Some(Reply::error(
+        404,
+        &format!("[NOT_FOUND]: Template version [{version}] not found for project [ProjectKey{{projectNumber={number}, namespace=firebase}}]"),
+        "NOT_FOUND",
+    ))
 }
 
 /// Production's refusal of an `If-Match` that does not name the current client version: HTTP 412
@@ -957,7 +1049,15 @@ pub(crate) fn dispatch_seen(
             store, namespace, settings, query, bytes, if_match, now, seen,
         ),
         ("remoteConfig:listVersions", "GET") => history(store, query, user, now),
-        ("remoteConfig:rollback", "POST") => rollback(store, user, query, bytes, now),
+        ("remoteConfig:rollback", "POST") => {
+            rollback(store, user, query, bytes, now).map_err(|refusal| {
+                if refusal.status == 404 {
+                    unknown_rollback(settings, namespace, bytes).unwrap_or(refusal)
+                } else {
+                    refusal
+                }
+            })
+        }
         ("remoteConfig:downloadDefaults", "GET") => download_defaults(store, query),
         _ => return Reply::error(405, "Method not allowed", "METHOD_NOT_ALLOWED"),
     };

@@ -565,9 +565,11 @@ impl Version {
         )
     }
 
-    /// The tag of an unavailable version's empty answer, whose production value was not recorded.
+    /// The tag of an unavailable version's empty answer: the validation tag's form (RC-CLOSURE-A
+    /// `r-version-missing`); without a project number, the store's own form.
     pub(crate) fn empty_etag(&self) -> String {
-        self.store_etag(0)
+        self.project_number
+            .map_or_else(|| self.store_etag(0), |number| format!("etag-{number}-0"))
     }
 
     fn store_etag(&self, number: u64) -> String {

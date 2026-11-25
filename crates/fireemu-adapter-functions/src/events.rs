@@ -2288,28 +2288,36 @@ fn database_delta(before: &Value, after: &Value) -> Value {
 /// (project, namespace) stream; client and server ids may coincide, and only the client namespace
 /// emits events.
 #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-/// Production's event ids are positive decimal int32 values (RC-OBSERVE-V2-3: 312875307 to
-/// 1894198058), so the id is a permutation of the version number within 31 bits.
+/// Production's event ids are decimal int32 values of either sign (RC-OBSERVE-V2-3: 312875307 to
+/// 1894198058; RC-CLOSURE-A 2026-11-25: 6 of 14 negative, e.g. -820123519), never 0, so the id is
+/// a permutation of the version number within 32 bits, read as a signed integer.
 fn remote_config_event_id(project: &str, namespace: &str, number: u64) -> String {
-    const MASK: u32 = 0x7fff_ffff;
-    let Some(version) = u32::try_from(number)
-        .ok()
-        .filter(|version| *version <= MASK)
-    else {
+    let Ok(version) = u32::try_from(number) else {
         // There is no recorded format for these versions. The prefix keeps them unique.
         return format!("v{number}");
     };
-    let key = (seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32) & MASK;
-    // Within 31 bits the xorshift, the odd multiplication and the XOR with the key are all
+    let key = seeded_stream(&format!("remote-config/{project}/{namespace}"))() as u32;
+    // Within 32 bits the xorshift, the odd multiplication and the XOR with the key are all
     // invertible, so distinct versions keep distinct ids.
-    let permute = |v: u32| ((v ^ (v >> 16)).wrapping_mul(0x9e37_79b1) & MASK) ^ key;
-    // Version 0 is never published, so its image is free: it replaces a 0, which production's
-    // positive ids never are (coordinator ruling 5), and the ids stay distinct and positive.
-    match permute(version) {
+    let permute = |v: u32| (v ^ (v >> 16)).wrapping_mul(0x9e37_79b1) ^ key;
+    // Version 0 is never published, so its image is free: it replaces a 0, which production's ids
+    // never are (coordinator ruling 5), and the ids stay distinct and non-zero.
+    let id = match permute(version) {
         0 => permute(0),
         id => id,
+    };
+    (id as i32).to_string()
+}
+
+/// An RFC 3339 time with the trailing zeros of its fraction removed (and the dot with them).
+fn without_trailing_zeros(time: &str) -> String {
+    match time.strip_suffix('Z').and_then(|t| t.split_once('.')) {
+        Some((seconds, fraction)) => match fraction.trim_end_matches('0') {
+            "" => format!("{seconds}Z"),
+            kept => format!("{seconds}.{kept}Z"),
+        },
+        None => time.to_owned(),
     }
-    .to_string()
 }
 
 /// Renders the recorded v1 and v2 event shapes from an admin version.
@@ -2335,14 +2343,19 @@ pub fn remote_config_version_events(
         }
     }
     let id = remote_config_event_id(project, namespace, number);
+    // Gen1 receives the time without trailing zeros (RC-CLOSURE-A 2026-11-25: a version at
+    // `.193490` arrived as `.19349` in `timestamp` and `data.updateTime`); Gen2 keeps the version's.
+    let v1_time = without_trailing_zeros(time);
+    let mut v1_data = data.clone();
+    v1_data.insert("updateTime".into(), json!(v1_time));
     let v1 = json!({
         "context": {
             "eventId": id,
             "eventType": "google.firebase.remoteconfig.update",
             "resource": {"service": "firebaseremoteconfig.googleapis.com", "name": format!("projects/{project}")},
-            "timestamp": time,
+            "timestamp": v1_time,
         },
-        "data": data,
+        "data": v1_data,
     });
     // v2 data reports the user with empty name and image (RC-OBSERVE-V2-3), whatever history says.
     if let Some(email) = version.pointer("/updateUser/email") {
@@ -2495,12 +2508,37 @@ mod remote_config_tests {
     use proptest::prelude::*;
 
     #[test]
+    fn v1_remote_config_times_drop_trailing_zeros_and_v2_keep_the_version_time() {
+        // RC-CLOSURE-A passes (2026-11-25): a version at `.193490` reached Gen1 as `.19349` in
+        // `timestamp` and `data.updateTime`, and Gen2 as `.193490` in `time` and
+        // `data.updateTime`; one at `.949` reached both as `.949`.
+        for (version_time, v1_time) in [
+            ("2026-11-24T23:15:00.193490Z", "2026-11-24T23:15:00.19349Z"),
+            ("2026-11-24T23:15:08.949Z", "2026-11-24T23:15:08.949Z"),
+            ("2026-11-24T23:15:08.408063Z", "2026-11-24T23:15:08.408063Z"),
+            ("2026-11-24T23:15:08.100Z", "2026-11-24T23:15:08.1Z"),
+            ("2026-11-24T23:15:08Z", "2026-11-24T23:15:08Z"),
+        ] {
+            let version = json!({
+                "versionNumber": "4", "updateTime": version_time, "updateOrigin": "REST_API",
+                "updateType": "INCREMENTAL_UPDATE",
+            });
+            let (v1, v2) =
+                remote_config_version_events("demo-config", "firebase", &version).unwrap();
+            assert_eq!(v1["context"]["timestamp"], v1_time, "{version_time}");
+            assert_eq!(v1["data"]["updateTime"], v1_time, "{version_time}");
+            assert_eq!(v2["time"], version_time, "{version_time}");
+            assert_eq!(v2["data"]["updateTime"], version_time, "{version_time}");
+        }
+    }
+
+    #[test]
     fn committed_remote_config_versions_match_recorded_payloads() {
         let time = "2026-11-21T08:12:31.348152Z";
         // One id per version, shared by v1 and v2 (RC-OBSERVE-V2-3).
         for (id, version, v2_description, v2_source) in [
             (
-                "1515931824",
+                "-631551824",
                 json!({
                     "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "INCREMENTAL_UPDATE", "description": "d",
@@ -2518,7 +2556,7 @@ mod remote_config_tests {
                 "0",
             ),
             (
-                "516578322",
+                "-1630905326",
                 json!({
                     "versionNumber": "3", "updateTime": time, "updateOrigin": "REST_API",
                     "updateType": "ROLLBACK", "description": "Rollback to version 1",
@@ -2616,16 +2654,39 @@ mod remote_config_tests {
             remote_config_event_id("demo-config", "firebase", u64::from(u32::MAX) + 1),
             "v4294967296",
         );
-        // The largest 31-bit version still has a numeric id; beyond it no positive int32 is left.
-        let last = remote_config_event_id("demo-config", "firebase", 0x7fff_ffff);
-        assert!(last.parse::<i32>().is_ok_and(|id| id > 0), "{last}");
-        // The version the review found mapping to 0 (project demo-zero-4312) gets a positive id.
-        let zero = remote_config_event_id("demo-zero-4312", "firebase", 67_154);
-        assert!(zero.parse::<i32>().is_ok_and(|id| id > 0), "{zero}");
+        // Every 32-bit version has a numeric id; beyond them no int32 is left.
+        for version in [0x7fff_ffff, 0x8000_0000, u64::from(u32::MAX)] {
+            let id = remote_config_event_id("demo-config", "firebase", version);
+            assert!(id.parse::<i32>().is_ok_and(|id| id != 0), "{id}");
+        }
+        // No version maps to 0: the version whose permuted value is 0 takes version 0's id.
+        let key = u32::try_from(
+            seeded_stream("remote-config/demo-config/firebase")() & u64::from(u32::MAX),
+        )
+        .unwrap();
+        let mut inverse: u32 = 1; // Newton's iteration for the inverse of the odd multiplier.
+        for _ in 0..5 {
+            inverse =
+                inverse.wrapping_mul(2_u32.wrapping_sub(0x9e37_79b1_u32.wrapping_mul(inverse)));
+        }
+        let y = key.wrapping_mul(inverse);
+        let zero_version = y ^ (y >> 16);
+        // Version 0's permuted value is the key itself.
+        let version_zero_id = i32::from_ne_bytes(key.to_ne_bytes()).to_string();
         assert_eq!(
-            remote_config_event_id("demo-config", "firebase", 0x8000_0000),
-            "v2147483648",
+            remote_config_event_id("demo-config", "firebase", u64::from(zero_version)),
+            version_zero_id
         );
+        assert_ne!(version_zero_id, "0");
+        // Both signs occur, as in production.
+        let ids: Vec<i32> = (1..=64)
+            .map(|v| {
+                remote_config_event_id("demo-config", "firebase", v)
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        assert!(ids.iter().any(|id| *id < 0) && ids.iter().any(|id| *id > 0));
     }
 
     #[test]
@@ -2642,16 +2703,16 @@ mod remote_config_tests {
         #[test]
         fn committed_remote_config_ids_are_unique_per_version(
             project in "demo-[a-z0-9-]{1,20}",
-            a in 1..=0x7fff_ffff_u32,
-            b in 1..=0x7fff_ffff_u32,
+            a in 1..=u32::MAX,
+            b in 1..=u32::MAX,
         ) {
             prop_assume!(a != b);
             let first = remote_config_event_id(&project, "firebase", u64::from(a));
             let second = remote_config_event_id(&project, "firebase", u64::from(b));
-            // Positive decimal int32, as production's ids (RC-OBSERVE-V2-3).
+            // A non-zero decimal int32, as production's ids (RC-CLOSURE-A).
             for id in [&first, &second] {
-                prop_assert!(id.parse::<i32>().is_ok_and(|id| id > 0), "{id}");
-                prop_assert!(!id.starts_with('-') && (id == "0" || !id.starts_with('0')));
+                prop_assert!(id.parse::<i32>().is_ok_and(|id| id != 0), "{id}");
+                prop_assert_eq!(id.parse::<i32>().unwrap().to_string(), id.clone());
             }
             prop_assert_ne!(first, second);
         }

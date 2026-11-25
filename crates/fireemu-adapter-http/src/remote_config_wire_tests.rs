@@ -114,19 +114,36 @@ proptest! {
         prop_assert_eq!(bytes.last(), Some(&b'\n'));
     }
 
+    /// Production writes Remote Config times as protobuf JSON does, at microsecond precision:
+    /// no fraction on a whole second, three digits on a whole millisecond, otherwise six
+    /// (RC-CLOSURE-A 2026-11-25: `.949`, `.193490`, `.408063`).
     #[test]
-    fn remote_config_times_have_six_fraction_digits(seconds in 0_i64..253_402_300_799, nanos in 0_i128..1_000_000_000) {
+    fn remote_config_times_use_three_or_six_fraction_digits(
+        seconds in 0_i64..253_402_300_799,
+        nanos in prop_oneof![
+            0_i128..1_000_000_000,
+            (0_i128..1_000).prop_map(|ms| ms * 1_000_000),
+            (0_i128..1_000).prop_map(|ms| ms * 1_000_000 + 999),
+            (0_i128..1_000_000).prop_map(|us| us * 1_000),
+        ],
+    ) {
         let time = LogicalInstant::from_nanos(i128::from(seconds) * 1_000_000_000 + nanos);
         let text = micros_rfc3339(time).unwrap();
-        let (whole, fraction) = text.strip_suffix('Z').unwrap().split_once('.').unwrap();
-        prop_assert_eq!(fraction.len(), 6);
-        prop_assert_eq!(fraction, &format!("{nanos:09}")[..6]);
-        prop_assert_eq!(format!("{whole}Z"), LogicalInstant::from_unix_seconds(seconds).to_rfc3339().unwrap());
+        let whole_text = LogicalInstant::from_unix_seconds(seconds).to_rfc3339().unwrap();
+        let micros = nanos / 1_000;
+        let expected = if micros == 0 {
+            whole_text.clone()
+        } else if micros % 1_000 == 0 {
+            format!("{}.{:03}Z", whole_text.strip_suffix('Z').unwrap(), micros / 1_000)
+        } else {
+            format!("{}.{micros:06}Z", whole_text.strip_suffix('Z').unwrap())
+        };
+        prop_assert_eq!(text, expected);
     }
 }
 
 #[test]
-fn versions_report_update_times_with_six_digits_even_at_a_whole_second() {
+fn versions_report_update_times_as_protobuf_writes_them() {
     let stores = RemoteConfigStores::default();
     let reply = at(
         &stores,
@@ -140,7 +157,7 @@ fn versions_report_update_times_with_six_digits_even_at_a_whole_second() {
     );
     assert_eq!(
         body_of(&reply)["version"]["updateTime"],
-        "2025-12-06T05:46:40.000000Z"
+        "2025-12-06T05:46:40Z"
     );
 }
 
@@ -176,6 +193,80 @@ fn a_store_with_a_project_number_tags_versions_as_production() {
     );
     assert_eq!(second.status, 200);
     assert_eq!(second.etag.as_deref(), Some("etag-123456789012-2"));
+    // An unavailable version answers `{}` with the validation tag's form (RC-CLOSURE-A
+    // `r-version-missing`, both passes: 200 `{}`, `etag-<number>-0`).
+    let missing = at(
+        &stores,
+        &settings,
+        CLIENT,
+        "GET",
+        "versionNumber=9223372036854775807",
+        b"",
+        None,
+        now,
+    );
+    assert_eq!(
+        (missing.status, missing.etag.as_deref()),
+        (200, Some("etag-123456789012-0"))
+    );
+}
+
+#[test]
+fn a_rollback_to_an_unknown_client_version_has_the_recorded_message() {
+    let stores = numbered();
+    let settings = RemoteConfigSettings {
+        project_number: Some(NUMBER),
+        ..RemoteConfigSettings::default()
+    };
+    let now = LogicalInstant::from_unix_seconds(T0);
+    let rollback = format!("{CLIENT}:rollback");
+    for body in [
+        &br#"{"versionNumber":"9223372036854775807"}"#[..],
+        br#"{"versionNumber":9223372036854775807}"#,
+    ] {
+        let reply = at(&stores, &settings, &rollback, "POST", "", body, None, now);
+        assert_eq!(reply.status, 404);
+        assert_eq!(
+            error_message(&reply),
+            "[NOT_FOUND]: Template version [9223372036854775807] not found for project [ProjectKey{projectNumber=123456789012, namespace=firebase}]"
+        );
+    }
+    // Other refusals keep their answers; the server namespace and a store without a number keep
+    // the earlier 404.
+    assert_eq!(
+        at(&stores, &settings, &rollback, "POST", "", b"{}", None, now).status,
+        400
+    );
+    let server = "/v1/projects/demo-config/namespaces/firebase-server/remoteConfig:rollback";
+    let reply = at(
+        &stores,
+        &settings,
+        server,
+        "POST",
+        "",
+        br#"{"versionNumber":"99"}"#,
+        None,
+        now,
+    );
+    assert_eq!(
+        (reply.status, error_message(&reply)),
+        (404, "Remote Config template version not found".to_owned())
+    );
+    let plain = RemoteConfigSettings::default();
+    let reply = at(
+        &stores,
+        &plain,
+        &rollback,
+        "POST",
+        "",
+        br#"{"versionNumber":"99"}"#,
+        None,
+        now,
+    );
+    assert_eq!(
+        (reply.status, error_message(&reply)),
+        (404, "Remote Config template version not found".to_owned())
+    );
     let stale = at(
         &stores,
         &settings,
@@ -364,7 +455,7 @@ fn history_filters_refuse_with_the_recorded_messages() {
     let old = list("endTime=2000-01-01T00%3A00%3A00Z");
     assert_eq!(
         error_message(&old),
-        "[VALIDATION_ERROR]: end_time must be no earlier than 2025-09-06T05:46:50.000000Z [2000-01-01T00:00:00Z specified]."
+        "[VALIDATION_ERROR]: end_time must be no earlier than 2025-09-06T05:46:50Z [2000-01-01T00:00:00Z specified]."
     );
     let edge = LogicalInstant::from_nanos(now.as_nanos() - HISTORY_WINDOW_SECONDS * 1_000_000_000);
     assert_eq!(
@@ -1064,6 +1155,11 @@ fn defaults_follow_the_written_order_through_groups_and_rollbacks() {
     };
     assert_eq!(keys(&download("format=XML")), ["z", "m", "q", "c", "k"]);
     assert_eq!(keys(&download("format=PLIST")), ["z", "m", "q", "c", "k"]);
+    // A file with entries is compressed when the request accepts gzip (2026-11-25 RC-CLOSURE-A
+    // passes: `content-encoding: gzip` on every non-empty defaults file); an empty one is not.
+    for format in ["format=JSON", "format=XML", "format=PLIST"] {
+        assert!(download(format).compressible, "{format}");
+    }
     let version = body_of(&published)["version"]["versionNumber"]
         .as_str()
         .unwrap()
@@ -1080,4 +1176,90 @@ fn defaults_follow_the_written_order_through_groups_and_rollbacks() {
         200
     );
     assert_eq!(keys(&download("format=XML")), ["z", "m", "q", "c", "k"]);
+}
+
+#[test]
+fn a_client_expression_in_one_pair_of_parentheses_is_answered_without_it() {
+    let now = LogicalInstant::from_unix_seconds(T0);
+    for settings in [
+        RemoteConfigSettings::default(),
+        RemoteConfigSettings {
+            strict_client_conditions: true,
+            ..RemoteConfigSettings::default()
+        },
+    ] {
+        let stores = RemoteConfigStores::default();
+        let draft = |expression: &str| {
+            serde_json::to_vec(&json!({"conditions": [{"name": "c", "expression": expression}]}))
+                .unwrap()
+        };
+        for (written, answered) in [
+            (
+                "(percent > 0 && percent <= 100)",
+                "percent > 0 && percent <= 100",
+            ),
+            ("((percent > 0))", "(percent > 0)"),
+            (
+                "(percent > 0) && (percent <= 100)",
+                "(percent > 0) && (percent <= 100)",
+            ),
+            (
+                "device.os == ')' && (percent > 0)",
+                "device.os == ')' && (percent > 0)",
+            ),
+            ("(device.os == ')')", "device.os == ')'"),
+            ("(device.os == '(')", "device.os == '('"),
+            ("percent > 0", "percent > 0"),
+        ] {
+            let reply = at(
+                &stores,
+                &settings,
+                CLIENT,
+                "PUT",
+                "validateOnly=true",
+                &draft(written),
+                Some("*"),
+                now,
+            );
+            assert_eq!(reply.status, 200, "{written}");
+            assert_eq!(
+                body_of(&reply)["conditions"][0]["expression"],
+                answered,
+                "{written}"
+            );
+        }
+        // The strict check sees the expression as written: outer parentheses keep acceptance
+        // (coordinator ruling 5), and the published template keeps the answered form.
+        let reply = at(
+            &stores,
+            &settings,
+            CLIENT,
+            "PUT",
+            "",
+            &draft("(percent <= -1)"),
+            Some("*"),
+            now,
+        );
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            body_of(&reply)["conditions"][0]["expression"],
+            "percent <= -1"
+        );
+        // The server namespace keeps its expressions.
+        let server = "/v1/projects/demo-config/namespaces/firebase-server/remoteConfig";
+        let reply = at(
+            &stores,
+            &settings,
+            server,
+            "PUT",
+            "validateOnly=true",
+            &draft("(percent > 0)"),
+            Some("*"),
+            now,
+        );
+        assert_eq!(
+            body_of(&reply)["conditions"][0]["expression"],
+            "(percent > 0)"
+        );
+    }
 }

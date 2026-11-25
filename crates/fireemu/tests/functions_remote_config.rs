@@ -519,7 +519,7 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
         .unwrap()
         .unwrap();
 
-    let time = "2026-08-29T12:01:00.000000Z";
+    let time = "2026-08-29T12:01:00Z";
     let forced = json!({
         "versionNumber": "1", "updateTime": time, "updateOrigin": "REST_API",
         "updateType": "FORCED_UPDATE", "description": "d",
