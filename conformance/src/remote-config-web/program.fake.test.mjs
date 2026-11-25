@@ -841,9 +841,20 @@ test(
   { timeout: 300_000, skip },
   async (t) => {
     for (const [port, options, reason, last] of [
-      // The realtime stream answers 429 when it opens: r1 is never sent.
-      [47840, { client: { streamStatus: 429 } }, /realtime.*answered 429/, "t1-publish"],
-      [47841, { client: { streamStatus: 403 } }, /realtime.*answered 403/, "t1-publish"],
+      // The realtime stream answers 429 or 403 when it opens: r1 is never sent. Which page-side
+      // signal the gate meets first (the hook's stop or the listener's error) depends on timing.
+      [
+        47840,
+        { client: { streamStatus: 429 } },
+        /realtime.*answered 429|listener reported/,
+        "t1-publish",
+      ],
+      [
+        47841,
+        { client: { streamStatus: 403 } },
+        /realtime.*answered 403|listener reported/,
+        "t1-publish",
+      ],
       // Every stream after r4 answers 429 (the SDK's own after r4's update and the reconnect's):
       // r5 is never sent.
       [
