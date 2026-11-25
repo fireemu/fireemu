@@ -316,6 +316,10 @@ function productionAdmin(
     servicesNextPage = false,
     listError = false,
     deleteTime = "2026-11-25T00:00:00Z",
+    appNumber = NUMBER,
+    readbackName = null,
+    pollName = null,
+    leakKeyInTemplate = false,
   } = {},
 ) {
   const keys = [];
@@ -341,7 +345,7 @@ function productionAdmin(
       });
     if (url.host === "firebase.googleapis.com")
       return json(200, {
-        apps: [{ displayName: "listen-l1", appId: `1:${NUMBER}:web:0000000000000000000000` }],
+        apps: [{ displayName: "listen-l1", appId: `1:${appNumber}:web:0000000000000000000000` }],
         ...(appsNextPage ? { nextPageToken: "more" } : {}),
       });
     if (url.host === "apikeys.googleapis.com") {
@@ -360,7 +364,7 @@ function productionAdmin(
         createPolls += 1;
         if (createPolls <= createPollFailures) return keyed(503, {});
         return keyed(200, {
-          name: path,
+          name: pollName ?? path,
           done: true,
           response: { name: keys.at(-1).name, keyString: KEY, displayName: "rc-closure-b-sdk" },
         });
@@ -379,10 +383,10 @@ function productionAdmin(
           : keyed(200, { name: `operations/delete-${keys.length}`, done: false });
       }
       if (url.search === "" && path.startsWith("projects/") && path.includes("/keys/"))
-        return keyed(
-          200,
-          keys.find((k) => k.name === path),
-        );
+        return keyed(200, {
+          ...keys.find((k) => k.name === path),
+          ...(readbackName ? { name: readbackName } : {}),
+        });
       if (listStatus !== 200) return json(listStatus, { error: { code: listStatus } });
       if (listError) return json(200, { error: { code: 500 } });
       return json(200, {
@@ -390,7 +394,14 @@ function productionAdmin(
         ...(listNextPage ? { nextPageToken: "more" } : {}),
       });
     }
-    return fake.admin(url, init);
+    const answer = await fake.admin(url, init);
+    // `leakKeyInTemplate`: a template answer that carries the key once it exists (the leak check
+    // must find it in the journaled body).
+    if (leakKeyInTemplate && keys.length && init.method === "GET") {
+      const doc = await answer.json();
+      return json(200, { ...doc, version: { ...doc.version, description: `leak ${KEY}` } });
+    }
+    return answer;
   };
 }
 
@@ -999,5 +1010,62 @@ test(
     assert.equal(outcome, "TypeError");
     assert.ok(hits.includes("/redirect"), String(hits));
     assert.equal(hits.includes("/hop"), false, String(hits));
+  },
+);
+
+test(
+  "ruling 18 near misses: the app's project number, a read-back of another name, a poll of another operation, an installation DELETE refused",
+  { timeout: 300_000, skip },
+  async (t) => {
+    const app = await productionPass(t, 47852, { admin: { appNumber: "123456789013" } });
+    assert.match(app.stopped, /configured project number is not the provider's/);
+    assert.ok(!casesOf(app.out).includes("k-create"));
+    const back = await productionPass(t, 47853, {
+      admin: { readbackName: `projects/${NUMBER}/locations/global/keys/other` },
+    });
+    assert.equal(back.key.deleted, false);
+    const poll = await productionPass(t, 47854, { admin: { pollName: "operations/other" } });
+    assert.match(poll.stopped, /k-create: operation read 200/);
+    const refused = await productionPass(t, 47855, { client: { deleteFails: true } });
+    assert.ok(
+      refused.open.some((item) =>
+        /^g-one: installation deletion not proved on the wire \(0 of/.test(item),
+      ),
+      JSON.stringify(refused.open),
+    );
+  },
+);
+
+test(
+  "ruling 18 item 3: a key value in a journaled answer is found and masked by the leak check",
+  { timeout: 180_000, skip },
+  async (t) => {
+    const { main, PROJECT: SANDBOX } = await import("./record.mjs");
+    const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-main-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const fake = world({ project: SANDBOX });
+    t.mock.method(console, "log", () => {});
+    const code = await main(
+      ["--send-production", "--out", join(dir, "send-web-1")],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      {
+        token: () => "t",
+        fetchImpl: productionAdmin(fake, { leakKeyInTemplate: true }),
+        openBrowser: (options) => openBrowser({ ...options, fake: fake.client }),
+        timing: TIMING,
+        port: 47856,
+      },
+    );
+    const out = join(dir, "send-web-1");
+    const result = JSON.parse(readFileSync(join(out, "result.json"), "utf8"));
+    assert.equal(code, 1);
+    assert.equal(result.complete, false);
+    assert.ok(
+      result.open.some((item) => /^leak: [0-9]+-g-client\.body held a secret/.test(item)),
+      JSON.stringify(result.open),
+    );
+    const { readdirSync } = await import("node:fs");
+    for (const file of readdirSync(out))
+      assert.ok(!readFileSync(join(out, file), "utf8").includes(KEY), file);
   },
 );
