@@ -1029,7 +1029,7 @@ test(
     const refused = await productionPass(t, 47855, { client: { deleteFails: true } });
     assert.ok(
       refused.open.some((item) =>
-        /^g-one: installation deletion not proved on the wire \(0 of/.test(item),
+        item.startsWith("g-one: installation deletion not proved on the wire (0 of"),
       ),
       JSON.stringify(refused.open),
     );
