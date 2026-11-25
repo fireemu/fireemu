@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { assessSanity } from "./mutation-sanity-result.mjs";
 
@@ -27,12 +27,10 @@ const run = spawnSync(
     `src/lib/unsaved.tsx:${line}`,
     "--test",
     "src/lib/unsaved.test.tsx",
-    "--copy-exclude",
-    "dist",
-    "--copy-exclude",
-    "test-results",
-    "--copy-exclude",
-    "e2e",
+    // targeted-mutation 0.2 refuses an exclusion that does not exist (a fresh checkout has no dist).
+    ...["dist", "test-results", "e2e"]
+      .filter((path) => existsSync(path))
+      .flatMap((path) => ["--copy-exclude", path]),
     "--format",
     "json",
   ],

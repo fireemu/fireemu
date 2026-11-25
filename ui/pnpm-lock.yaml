@@ -48,8 +48,8 @@ importers:
         specifier: ^4.3.3
         version: 4.3.3
       targeted-mutation:
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.2.2
+        version: 0.2.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -692,24 +692,24 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@targeted-mutation/tmt-darwin-arm64@0.1.0':
-    resolution: {integrity: sha512-vEHhUzPmBqPeJt0sWYhbZ9rwZ5x7HPe/55YTGce4M90VpMZA1A1/Rmey4vig/PoxCW/aAALw1pZBaJ/KN/WPFA==}
+  '@targeted-mutation/tmt-darwin-arm64@0.2.2':
+    resolution: {integrity: sha512-UHtDyhsTbGJek0Db075paBEEtWc4+UOuoga04xIJQW9cI2f83/9HcrMIpNRjkMxzArZQvQZJdS5a18v1KmzlRw==}
     cpu: [arm64]
     os: [darwin]
 
-  '@targeted-mutation/tmt-darwin-x64@0.1.0':
-    resolution: {integrity: sha512-PnCQzptGYcCZbrCmWlPzSuiV5vQ/nW9K3LiqBZpwSWWG1zjoYDDUf4HjrQd8DOZwHf27wk3fDyLf2L+8wUusgg==}
+  '@targeted-mutation/tmt-darwin-x64@0.2.2':
+    resolution: {integrity: sha512-PSF2bAgmWV6x5mH7jJeJC2h78Odcw0CUTpxFF4byo3L5Uvv0icDkuaYHaFBuNxywXcsRsT2mOKnPAmrn9zrODg==}
     cpu: [x64]
     os: [darwin]
 
-  '@targeted-mutation/tmt-linux-arm64@0.1.0':
-    resolution: {integrity: sha512-aKqWJCeQcm4A3siXzltQZrr9lmUANy9OqBMV8aBKRXtkj6UoYWs4oZvjj1H0YDzdEuMCI+a0u4pCZc8vuDpPDA==}
+  '@targeted-mutation/tmt-linux-arm64@0.2.2':
+    resolution: {integrity: sha512-Q+rYb3MdSeK2M8QUVEols/s/ZGVe3i9JfsYI1aeLYWfjaUmadREMEYBlL7QxDqoRy54G+AFq2tsLROAUihIAUw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@targeted-mutation/tmt-linux-x64@0.1.0':
-    resolution: {integrity: sha512-0Eq2/yUWYlkuDz8ZARe9Dtlte1zlnKavPlvHJD2EMetWzCfSaW3xF99Q7HWNxslvxYR6gqXa7dY/ePQGfUBhFA==}
+  '@targeted-mutation/tmt-linux-x64@0.2.2':
+    resolution: {integrity: sha512-P3tS1QSjVgWpH88H3qncFLYOa05NKdW4QTt4HRJisKsjOqFJj93aChUparTIPkqjM75nPoPGT3A2dYpJwZT1PQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
@@ -1389,8 +1389,8 @@ packages:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
 
-  targeted-mutation@0.1.0:
-    resolution: {integrity: sha512-yLO6vDs7MEs1z6nJey7XRnHr84TxJfqhWBOi5XUL++sEmrqh40gMFo1L3ZcYtVaYkieHuoqfpAtjGDZkYUTJzw==}
+  targeted-mutation@0.2.2:
+    resolution: {integrity: sha512-TPyYEjed7WXiBSh3RtvEoZMLNgfSk21nYBesyU4SP45iv5E7ZKBvpqJ7CFAZhIx0lWrET6S0rXdvCsIrI2VKJA==}
     engines: {node: ^22.18.0 || >=24.11.0}
     hasBin: true
 
@@ -2018,16 +2018,16 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.3.5(@types/node@26.4.0)(jiti@2.7.0)
 
-  '@targeted-mutation/tmt-darwin-arm64@0.1.0':
+  '@targeted-mutation/tmt-darwin-arm64@0.2.2':
     optional: true
 
-  '@targeted-mutation/tmt-darwin-x64@0.1.0':
+  '@targeted-mutation/tmt-darwin-x64@0.2.2':
     optional: true
 
-  '@targeted-mutation/tmt-linux-arm64@0.1.0':
+  '@targeted-mutation/tmt-linux-arm64@0.2.2':
     optional: true
 
-  '@targeted-mutation/tmt-linux-x64@0.1.0':
+  '@targeted-mutation/tmt-linux-x64@0.2.2':
     optional: true
 
   '@testing-library/dom@10.4.1':
@@ -2607,14 +2607,14 @@ snapshots:
 
   tapable@2.3.3: {}
 
-  targeted-mutation@0.1.0:
+  targeted-mutation@0.2.2:
     dependencies:
       typescript: 6.0.3
     optionalDependencies:
-      '@targeted-mutation/tmt-darwin-arm64': 0.1.0
-      '@targeted-mutation/tmt-darwin-x64': 0.1.0
-      '@targeted-mutation/tmt-linux-arm64': 0.1.0
-      '@targeted-mutation/tmt-linux-x64': 0.1.0
+      '@targeted-mutation/tmt-darwin-arm64': 0.2.2
+      '@targeted-mutation/tmt-darwin-x64': 0.2.2
+      '@targeted-mutation/tmt-linux-arm64': 0.2.2
+      '@targeted-mutation/tmt-linux-x64': 0.2.2
 
   tinybench@2.9.0: {}
 
