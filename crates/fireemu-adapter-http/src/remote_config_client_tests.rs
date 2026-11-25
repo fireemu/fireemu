@@ -402,3 +402,87 @@ fn several_targets_and_nearly_equal_numbers() {
         "id"
     ));
 }
+
+/// Every combination of the PICT table (`remote_config_testdata/client_fetch_pict.tsv`, with the
+/// recorded passes' rows as seeds) against the rules the passes showed.
+#[test]
+fn pict_rows_follow_the_recorded_rules() {
+    let table = include_str!("remote_config_testdata/client_fetch_pict.tsv");
+    let mut rows = table.lines();
+    assert_eq!(rows.next(), Some("Tier\tLevel\tPercentile\tTag\tPublished"));
+    let mut seen = 0;
+    for row in rows {
+        let [tier, level, percentile, tag, published] = row.split('\t').collect::<Vec<_>>()[..]
+        else {
+            panic!("{row}");
+        };
+        seen += 1;
+        let store = TemplateStore::default();
+        if published == "yes" {
+            published_template(&store);
+        }
+        let instance = if percentile == "inside" {
+            inside_half()
+        } else {
+            outside_half()
+        };
+        let mut signals = serde_json::Map::new();
+        if tier != "absent" {
+            signals.insert("fireemu_tier".into(), json!(tier));
+        }
+        if level != "absent" {
+            signals.insert("fireemu_level".into(), json!(level));
+        }
+        let body =
+            serde_json::to_vec(&json!({"app_instance_id": instance, "custom_signals": signals}))
+                .unwrap();
+        let first = fetch(&store.current(), PROJECT, Some("*"), &body);
+        let current = first.etag.clone().unwrap();
+        let if_none_match = match tag {
+            "star" => Some("*".to_owned()),
+            "current" => Some(current.clone()),
+            "stale" => Some("etag-demo-web-firebase-fetch-1".to_owned()),
+            _ => None,
+        };
+        let reply = fetch(&store.current(), PROJECT, if_none_match.as_deref(), &body);
+        let answer: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(reply.etag.as_deref(), Some(current.as_str()), "{row}");
+        if published == "no" {
+            assert_eq!(answer, json!({"state": "NO_TEMPLATE"}), "{row}");
+            continue;
+        }
+        if tag == "current" {
+            assert_eq!(
+                answer,
+                json!({"state": "NO_CHANGE", "templateVersion": "1"}),
+                "{row}"
+            );
+            continue;
+        }
+        let premium = tier == "premium";
+        let message = if premium {
+            "v1-premium"
+        } else if percentile == "inside" {
+            "v1-half"
+        } else {
+            "v1-default"
+        };
+        let high = level.parse::<f64>().is_ok_and(|n| n >= 5.0);
+        assert_eq!(
+            answer["entries"],
+            json!({
+                "fireemu_enabled": if premium { "true" } else { "false" },
+                "fireemu_limit": if high { "20" } else { "10" },
+                "fireemu_message": message,
+                "fireemu_payload": "{\"synthetic\":true}"
+            }),
+            "{row}"
+        );
+        assert_eq!(answer["state"], "UPDATE", "{row}");
+    }
+    assert!(seen >= 20);
+}
+
+fn published_template(store: &TemplateStore) {
+    published(store, "v1", "d");
+}
