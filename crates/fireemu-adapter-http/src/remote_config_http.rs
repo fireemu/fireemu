@@ -791,7 +791,8 @@ fn wrapped_inner(expression: &str) -> Option<&str> {
             _ => {}
         }
     }
-    (depth == 0 && quote.is_none()).then_some(inner)
+    // `()` and other wrappings of nothing keep the earlier answer (ruling 11).
+    (depth == 0 && quote.is_none() && !inner.trim().is_empty()).then_some(inner)
 }
 
 /// Production's refusal of a client rollback to a version that does not exist (RC-CLOSURE-A
