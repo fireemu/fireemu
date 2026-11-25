@@ -2093,7 +2093,7 @@
     },
     "crates/fireemu/src/capabilities.json": {
       "kind": "json-semantic",
-      "value": "e2209239437b38bdbb78983576b2a805ed8bf75597888d3b4d4c57d22076d599"
+      "value": "6db9fbff12e61aa31cc98503dc61a0b554b25db9dc21ebebd556977128f87f60"
     },
     "crates/fireemu/src/config.rs": {
       "kind": "sha256",
