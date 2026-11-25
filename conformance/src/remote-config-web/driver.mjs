@@ -247,7 +247,6 @@ export async function openBrowser({
           if (verdict === "create") own.fids.add(fid);
           if (!fake) return route.continue();
           const answer = await fake(request);
-          if (STOP_STATUSES.has(answer.status)) stop(`${host} answered ${answer.status}`);
           return route.fulfill({
             status: answer.status,
             headers: { "access-control-allow-origin": origin, ...answer.headers },
@@ -264,8 +263,8 @@ export async function openBrowser({
           );
         return route.abort();
       });
-      // Production's answers pass the hook by `route.continue()`: their status is read here, when
-      // the response's headers arrive, before the SDK can act on it.
+      // Every answer's status is read here, when its headers arrive and before the SDK can act on
+      // it: production's (passed by `route.continue()`) and the test fakes' alike, one mechanism.
       context.on("response", (response) => {
         const host = new URL(response.url()).host;
         if (HOSTS.includes(host) && STOP_STATUSES.has(response.status()))

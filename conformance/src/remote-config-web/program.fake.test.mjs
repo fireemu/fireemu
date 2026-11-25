@@ -1275,3 +1275,48 @@ test(
     );
   },
 );
+
+test(
+  "ruling 19 items 1 and 2: an admin-side stop stops the hook; result.json stays not complete until the leak check passed",
+  { timeout: 180_000, skip },
+  async (t) => {
+    let browser = null;
+    const stopped = await productionPass(t, 47869, {
+      admin: { listStatus: 403 },
+      hold: (b) => {
+        browser = b;
+      },
+    });
+    assert.match(stopped.stopped, /key list not complete \(403\)/);
+    assert.match(browser.stopped() ?? "", /^forward program stopped: key list not complete/);
+    // A leak check that cannot finish leaves result.json not complete and pending.
+    const { main, PROJECT: SANDBOX } = await import("./record.mjs");
+    const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-main-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const fake = world({ project: SANDBOX });
+    t.mock.method(console, "log", () => {});
+    await assert.rejects(
+      main(
+        ["--send-production", "--out", join(dir, "send-web-1")],
+        { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+        {
+          token: () => "t",
+          fetchImpl: productionAdmin(fake),
+          openBrowser: async (options) => {
+            const opened = await openBrowser({ ...options, fake: fake.client });
+            return Object.assign(opened, {
+              mask: async () => {
+                throw new Error("test: the leak check cannot finish");
+              },
+            });
+          },
+          timing: TIMING,
+          port: 47870,
+        },
+      ),
+      /the leak check cannot finish/,
+    );
+    const result = JSON.parse(readFileSync(join(dir, "send-web-1", "result.json"), "utf8"));
+    assert.deepEqual([result.complete, result.leakCheck], [false, "pending"]);
+  },
+);
