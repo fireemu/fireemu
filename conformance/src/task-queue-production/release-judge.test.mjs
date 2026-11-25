@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { COMPARISON_KIND } from "./compare-cli.mjs";
 import { EXPORT_KIND, TOLERANCE_FACTOR, judgeTaskQueue } from "./release-judge.mjs";
-import { documentsFor, optionValue, usageOk } from "./release-replay.mjs";
+import { documentsFor, failureLines, optionValue, usageOk } from "./release-replay.mjs";
 
 const read = (name) => JSON.parse(readFileSync(new URL(`../../${name}`, import.meta.url), "utf8"));
 const FILES = {
@@ -148,4 +148,33 @@ test("the command line is local, a binary and an export file", () => {
   assert.equal(optionValue(["--a", "x"], "--a"), "x");
   assert.equal(optionValue(["--a"], "--a"), undefined);
   assert.equal(optionValue(["--a", "--b"], "--a"), undefined);
+});
+
+test("a failed replay names each failing row with its measured values", () => {
+  const summary = (outside, mismatch) => ({
+    structure: { MISMATCH: mismatch, UNKNOWN: 0 },
+    timing: { OUTSIDE: outside },
+  });
+  const documents = {
+    "a.json": { summary: summary(0, 0), rows: [{ case: "ok", structure: "MATCH" }] },
+    "b.json": {
+      summary: summary(1, 1),
+      tolerance: { firstMs: 2000, gapMs: 1000 },
+      rows: [
+        { case: "fine", structure: "MATCH", timing: { verdict: "WITHIN" } },
+        {
+          case: "slow",
+          structure: "MATCH",
+          timing: { verdict: "OUTSIDE", why: "first late", a: 4100, b: 900 },
+        },
+        { case: "wrong", structure: "MISMATCH", timing: { verdict: "NOT_COMPARED" } },
+      ],
+    },
+  };
+  assert.deepEqual(failureLines(documents), [
+    "b.json: the replay has a mismatch, an unknown row or a timing outside the tolerance",
+    '  slow: timing OUTSIDE (first late: 4100 ms against 900 ms; tolerance {"firstMs":2000,"gapMs":1000})',
+    "  wrong: structure MISMATCH",
+  ]);
+  assert.deepEqual(failureLines({ "a.json": documents["a.json"] }), []);
 });

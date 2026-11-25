@@ -64,6 +64,32 @@ export async function replay(binary) {
   };
 }
 
+/**
+ * What a failed replay prints: one line per failing document, then one per failing row with the measured values, so a timing
+ * outside the tolerance on a loaded runner can be told from a changed answer without the export.
+ * @param {Record<string, object>} documents
+ * @returns {string[]}
+ */
+export function failureLines(documents) {
+  const lines = [];
+  for (const [path, document] of Object.entries(documents)) {
+    const { structure, timing } = document.summary;
+    if (!structure.MISMATCH && !structure.UNKNOWN && !timing.OUTSIDE) continue;
+    lines.push(
+      `${path}: the replay has a mismatch, an unknown row or a timing outside the tolerance`,
+    );
+    for (const row of document.rows ?? []) {
+      if (["MISMATCH", "UNKNOWN"].includes(row.structure))
+        lines.push(`  ${row.case}: structure ${row.structure}`);
+      if (row.timing?.verdict === "OUTSIDE")
+        lines.push(
+          `  ${row.case}: timing OUTSIDE (${row.timing.why}: ${row.timing.a} ms against ${row.timing.b} ms; tolerance ${JSON.stringify(document.tolerance)})`,
+        );
+    }
+  }
+  return lines;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   if (!usageOk(argv)) {
@@ -74,15 +100,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await writeFile(resolve(optionValue(argv, "--export")), JSON.stringify(result, null, 2) + "\n", {
     flag: "wx",
   });
-  const failed = Object.entries(result.documents).filter(
-    ([, document]) =>
-      document.summary.structure.MISMATCH ||
-      document.summary.structure.UNKNOWN ||
-      document.summary.timing.OUTSIDE,
-  );
-  for (const [path] of failed)
-    console.error(
-      `${path}: the replay has a mismatch, an unknown row or a timing outside the tolerance`,
-    );
+  const failed = failureLines(result.documents);
+  for (const line of failed) console.error(line);
   process.exit(failed.length === 0 ? 0 : 1);
 }
