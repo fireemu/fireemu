@@ -46,6 +46,10 @@ test(
         generation,
       );
       assert.equal(g.duplicates.length, 0);
+      // Only the pass's own versions reached the handlers: the setup's events were dropped, as
+      // production's handlers were deployed after its baseline.
+      assert.equal(g.unmatched, 0, generation);
+      assert.equal(g.events, 7, generation);
       assert.equal(g.inPublicationOrder, true);
       assert.equal(g.serverDelivery, "none-within-window");
     }

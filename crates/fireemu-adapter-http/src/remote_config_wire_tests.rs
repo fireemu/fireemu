@@ -1210,6 +1210,10 @@ fn a_client_expression_in_one_pair_of_parentheses_is_answered_without_it() {
             ("(device.os == ')')", "device.os == ')'"),
             ("(device.os == '(')", "device.os == '('"),
             ("percent > 0", "percent > 0"),
+            // An open quote or an unclosed parenthesis inside: the outer pair is not one pair.
+            ("(device.os == ')", "(device.os == ')"),
+            ("((percent > 0)", "((percent > 0)"),
+            ("(percent > 0))", "(percent > 0))"),
         ] {
             let reply = at(
                 &stores,

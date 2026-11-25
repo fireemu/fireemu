@@ -79,7 +79,7 @@
     "conformance/src/hosting/run.mjs": "8a47bab9322b0ad283e16fcbbc0f05ce0e5fcaebfeddeecf88865c267b22f72c",
     "conformance/src/release-strict-regression.mjs": "d3b895db973fb3f906f591aa6b3915dbdfd50284d846b460619ed2a6b6f3f9ce",
     "conformance/src/release-strict-regression.test.mjs": "44b84edc30947d8c6b4daf64110305669631c9bde04cf50376f1a61493d902ec",
-    "conformance/src/remote-config-closure.test.mjs": "806a8663df41be815d8d99608376039785fa09fc13b84e63f1121a3d92496d76",
+    "conformance/src/remote-config-closure.test.mjs": "cc91a66f42b8f892a25fcd8313e4ce1b35b6db6e8b8bd68675af6b58825efc86",
     "conformance/src/remote-config-closure/corpus.mjs": "69bdb68bbe1daf0255b1a9ec55fc2cf9c059b6e93a7e146765b97fbec1500b2c",
     "conformance/src/remote-config-closure/evidence.mjs": "78aaff10af30619b9ab91011fcefd1631df192343e8e9f10bba309f496ec0bee",
     "conformance/src/remote-config-closure/known-differences.json": "6af40133a0b30f2001f86cb1707999a70cd06f65068355bebc9c1a68c931f701",

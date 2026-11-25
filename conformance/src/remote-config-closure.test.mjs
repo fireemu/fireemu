@@ -108,7 +108,7 @@ test("the emulator comparisons differ only where strict refuses what production 
   // The emulator profile accepts the client conditions production refused (v-cond-*) and the
   // four server conditions (s-validate-20 to -23), so its server publication carries them too.
   const strictOnly = (id) =>
-    /^v-cond-/.test(id) ||
+    id.startsWith("v-cond-") ||
     /^s-validate-2[0-3]$/.test(id) ||
     ["s1-publish", "s2-data-plane", "s3-server-admin", "s4-wildcard"].includes(id);
   for (const key of ["emulatorVsPass1", "emulatorVsPass2"]) {

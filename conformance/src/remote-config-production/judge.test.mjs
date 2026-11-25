@@ -684,6 +684,8 @@ test("instant reads a time whatever its fraction digits; events match their vers
   assert.equal(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.949000Z"));
   assert.equal(instant("2026-11-24T23:15:08Z"), instant("2026-11-24T23:15:08.000Z"));
   assert.notEqual(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.948Z"));
+  // Digits past the microsecond are not part of a Remote Config time.
+  assert.equal(instant("2026-11-24T23:15:08.123456789Z"), instant("2026-11-24T23:15:08.123456Z"));
   assert.equal(instant("2026-11-24T23:15:08.949+00:00"), null);
   assert.equal(instant(undefined), null);
 });
