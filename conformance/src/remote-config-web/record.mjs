@@ -71,7 +71,6 @@ export function productionAllow(project, grants) {
     if (url.host !== "apikeys.googleapis.com" || url.search) return false;
     const name = url.pathname.slice("/v2/".length);
     if (method === "GET" && grants.operations.has(name)) return true;
-    if (!grants.key) return false;
     return (
       (method === "GET" && (name === grants.key || name === `${grants.key}/keyString`)) ||
       (method === "DELETE" && name === grants.key)

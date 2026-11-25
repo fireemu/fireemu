@@ -31,7 +31,7 @@ const TIMING = {
 };
 
 /** The fake service: client template history, installations, pending realtime streams. */
-function world() {
+function world({ deleteFails = false } = {}) {
   const history = new Map([[27, {}]]);
   let version = 27;
   const pending = [];
@@ -91,14 +91,22 @@ function world() {
     const url = new URL(request.url());
     const expose = { "access-control-expose-headers": "etag" };
     if (url.host === "firebaseinstallations.googleapis.com") {
-      if (request.method() === "DELETE") return { status: 200, headers: {}, body: "{}" };
+      if (request.method() === "DELETE")
+        return deleteFails
+          ? {
+              status: 403,
+              headers: { "content-type": "application/json" },
+              body: '{"error":{"code":403}}',
+            }
+          : { status: 200, headers: {}, body: "{}" };
       if (url.pathname.endsWith("/authTokens:generate"))
         return {
           status: 200,
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ token: "fake-auth-token-2", expiresIn: "604800s" }),
         };
-      const fid = `cFakeFid${fids.length}AAAAAAAAAAA`;
+      // Production returns the id the SDK generated (it is a secret as much as the tokens).
+      const fid = JSON.parse(request.postData()).fid;
       fids.push(fid);
       return {
         status: 200,
@@ -255,7 +263,7 @@ test(
 );
 
 /** The production admin surfaces around the template: services, web apps and the API Keys service. */
-function productionAdmin(fake, { keyLost = false } = {}) {
+function productionAdmin(fake, { keyLost = false, keyStaysLive = false } = {}) {
   const keys = [];
   const json = (status, body) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -283,7 +291,7 @@ function productionAdmin(fake, { keyLost = false } = {}) {
         return json(200, { name: path, done: true, response: {} });
       if (path.endsWith("/keyString")) return json(200, { keyString: KEY });
       if (init.method === "DELETE") {
-        keys.find((k) => k.name === path).deleteTime = "2026-11-25T00:00:00Z";
+        if (!keyStaysLive) keys.find((k) => k.name === path).deleteTime = "2026-11-25T00:00:00Z";
         return keyLost
           ? json(500, {})
           : json(200, { name: `operations/delete-${keys.length}`, done: false });
@@ -397,6 +405,81 @@ test(
       result.open.some((item) => item.includes("A2 lists keys")),
       JSON.stringify(result.open),
     );
+    assert.equal(result.complete, false);
+  },
+);
+
+/** One production-path pass with the given world and admin options. */
+async function productionPass(t, port, { admin = {}, client = {}, cap = 80 } = {}) {
+  const out = mkdtempSync(join(tmpdir(), "rc-closure-b-fake-"));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const fake = world(client);
+  const grants = { operations: new Set(), key: null };
+  const { productionAllow, PROJECT: SANDBOX, adminUrls } = await import("./record.mjs");
+  const allow = productionAllow(SANDBOX, grants);
+  const transport = new Transport({
+    out,
+    allow: (url, method) => url.href.startsWith(ADMIN) || allow(url, method),
+    token: () => "t",
+    maxRequests: 60,
+    timeoutMs: 5000,
+    fetchImpl: productionAdmin(fake, admin),
+  });
+  const browser = await openBrowser({ port, cap, fake: fake.client });
+  t.after(() => browser.close());
+  return observe({
+    transport,
+    browser,
+    urls: { ...adminUrls(SANDBOX), client: ADMIN },
+    project: PROJECT,
+    number: NUMBER,
+    runId: "261125000000abg",
+    timing: TIMING,
+    production: true,
+    grant: (kind, value) => {
+      if (kind === "operation") grants.operations.add(value);
+      if (kind === "key") grants.key = value;
+    },
+  });
+}
+
+test(
+  "fake production: a key whose read-back has no deleteTime stays open",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47815, { admin: { keyStaysLive: true } });
+    assert.equal(result.key.deleted, false);
+    assert.deepEqual(result.open, ["k-readback: no deleteTime (A2 lists keys)"]);
+    assert.equal(result.sandboxAtBaseline, false);
+    assert.equal(result.complete, false);
+  },
+);
+
+test(
+  "fake production: an installation the SDK cannot delete is an open item",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47816, { client: { deleteFails: true } });
+    assert.equal(result.clients.one.deletion.deleted, false);
+    assert.ok(
+      result.open.includes("g-one: installation not deleted (unreadable afterwards; residue)"),
+      JSON.stringify(result.open),
+    );
+    assert.equal(result.complete, false);
+  },
+);
+
+test(
+  "fake production: the page's request cap stops the pass and is recorded",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47817, { cap: 3 });
+    assert.match(result.stopped, /browser: request cap 3|did not open|error/);
+    assert.ok(
+      result.refusals.some((r) => r.reason === "request cap"),
+      JSON.stringify(result.refusals),
+    );
+    assert.equal(result.pageRequests, 3);
     assert.equal(result.complete, false);
   },
 );
