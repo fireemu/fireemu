@@ -441,3 +441,17 @@ test("privacy checks decode three nested layers (ruling 5)", () => {
     /project number/,
   );
 });
+
+test("an earlier run's id in a listed version description is masked", async () => {
+  const { maskText } = await import("./sanitise.mjs");
+  const secrets = { project: "p-x", number: null, run: "261125000000abc" };
+  assert.equal(
+    maskText(
+      "fireemu rc-observe 261124031420xyz c1 and fireemu rc-closure 261125000000abc p1",
+      secrets,
+    ),
+    "fireemu rc-observe OTHER_RUN_ID c1 and fireemu rc-closure RUN_ID p1",
+  );
+  // Only the recorders' marker and run-id form are masked.
+  assert.equal(maskText("version 261124031420xyz", secrets), "version 261124031420xyz");
+});

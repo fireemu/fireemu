@@ -118,8 +118,17 @@ export function comparison({ profile, production, local, known }) {
 
 const render = (value) => JSON.stringify(value, null, 2) + "\n";
 
-/** Problems of one fixture: incomplete, unanswered rows, or a value that is not sanitised. */
-export function fixtureProblems(name, bytes, target) {
+/**
+ * Problems of one fixture: incomplete, unanswered rows, or a value that is not sanitised. `cases`
+ * is the plan's case list; `corpusNumber(digits)` admits a long digit run the corpus itself sends
+ * (the closure corpus's largest version and zero-padded Installation ids).
+ */
+export function fixtureProblems(
+  name,
+  bytes,
+  target,
+  { cases: plan = CASES, corpusNumber = () => false } = {},
+) {
   const problems = [];
   let fixture;
   try {
@@ -136,19 +145,20 @@ export function fixtureProblems(name, bytes, target) {
     if (row.phase !== "response-persisted" || typeof row.status !== "number")
       problems.push(`${name}: ${row.case} is not an answered row`);
   const cases = Array.isArray(fixture.rows) ? fixture.rows.map((row) => row.case) : [];
-  if (!isDeepStrictEqual(cases, CASES))
+  if (!isDeepStrictEqual(cases, plan))
     problems.push(`${name}: the rows are not the cases of the plan`);
   // Plain and encoded (percent-escaped, base64 or base64url) forms of the text.
   const found = new Set();
   for (const text of decodedForms(bytes.toString("utf8"))) {
     if (/etag-[0-9]+-/.test(text)) found.add(`${name}: a numeric ETag`);
-    if (/[0-9]{11,}/.test(text)) found.add(`${name}: a number of 11 or more digits`);
+    if ((text.match(/[0-9]{11,}/g) ?? []).some((digits) => !corpusNumber(digits)))
+      found.add(`${name}: a number of 11 or more digits`);
     const emails =
       text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g) ?? [];
     if (emails.some((email) => email !== PLACEHOLDERS.email))
       found.add(`${name}: an e-mail address`);
     for (const match of text.matchAll(/projects\/([^/"\\?]+)/g))
-      if (match[1] !== PLACEHOLDERS.project)
+      if (match[1] !== PLACEHOLDERS.project && match[1] !== PLACEHOLDERS.number)
         found.add(`${name}: a project id other than ${PLACEHOLDERS.project}`);
   }
   problems.push(...found);

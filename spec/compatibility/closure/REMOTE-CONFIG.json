@@ -47,7 +47,7 @@
     {
       "conditionId": "REMOTE-CONFIG/template-read",
       "description": "Read the current client and server templates and their version and ETag metadata. Check empty projects, unknown namespaces, permission failures and isolation between projects. Includes the defaults download in JSON, XML and property-list form (coordinator ruling D7).",
-      "status": "PLANNED",
+      "status": "VERIFIED",
       "localEvidence": [
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
@@ -55,42 +55,256 @@
         "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs",
         "crates/fireemu-adapter-http/src/remote_config_defaults.rs"
       ],
-      "productionEvidence": []
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "KNOWN_DIFFERENCE",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 21,
+          "counts": {
+            "MATCH": 11,
+            "MATCH_LAYOUT": 9,
+            "KNOWN_DIFFERENCE": 1,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 21,
+          "counts": {
+            "MATCH": 9,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 12,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 21,
+          "counts": {
+            "MATCH": 9,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 12,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER",
+        "KD-PRODUCTION-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/template-validation",
       "description": "Validate parameters, parameter groups and condition references. Compare errors and confirm that validation-only requests leave the current template, history and event stream unchanged.",
-      "status": "PLANNED",
+      "status": "VERIFIED",
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs",
         "crates/fireemu-adapter-http/src/remote_config.rs"
       ],
-      "productionEvidence": []
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "MATCH",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 81,
+          "counts": {
+            "MATCH": 79,
+            "MATCH_LAYOUT": 2,
+            "KNOWN_DIFFERENCE": 0,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 81,
+          "counts": {
+            "MATCH": 43,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 38,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 81,
+          "counts": {
+            "MATCH": 43,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 38,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/template-publish",
       "description": "Publish templates with a matching, missing, stale or wildcard If-Match value. Compare response metadata, version creation and the stored template after concurrent accepted or refused updates.",
-      "status": "PLANNED",
+      "status": "VERIFIED",
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs"
       ],
-      "productionEvidence": []
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "MATCH",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 9,
+          "counts": {
+            "MATCH": 2,
+            "MATCH_LAYOUT": 7,
+            "KNOWN_DIFFERENCE": 0,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 9,
+          "counts": {
+            "MATCH": 2,
+            "MATCH_LAYOUT": 1,
+            "KNOWN_DIFFERENCE": 6,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 9,
+          "counts": {
+            "MATCH": 2,
+            "MATCH_LAYOUT": 1,
+            "KNOWN_DIFFERENCE": 6,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/version-history-and-rollback",
       "description": "List template versions and follow continuation tokens. Compare version-specific reads, rollback to an existing version, and refusal of an unavailable version without a state change.",
-      "status": "PLANNED",
+      "status": "VERIFIED",
       "localEvidence": [
         "crates/fireemu-adapter-http/tests/remote_config_templates.rs",
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/src/remote_config_http.rs",
         "crates/fireemu-adapter-http/src/remote_config_wire_tests.rs"
       ],
-      "productionEvidence": []
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "KNOWN_DIFFERENCE",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 5,
+            "MATCH_LAYOUT": 18,
+            "KNOWN_DIFFERENCE": 1,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 3,
+            "MATCH_LAYOUT": 4,
+            "KNOWN_DIFFERENCE": 17,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 3,
+            "MATCH_LAYOUT": 4,
+            "KNOWN_DIFFERENCE": 17,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER",
+        "KD-PRODUCTION-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/client-fetch-and-activate",
@@ -101,14 +315,67 @@
     {
       "conditionId": "REMOTE-CONFIG/server-template-evaluation",
       "description": "Retrieve the server template through a pinned Admin SDK and compare typed parameters, defaults and evaluation with condition signals in its supported scope.",
-      "status": "PLANNED",
-      "productionEvidence": [],
+      "status": "VERIFIED",
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
       "localEvidence": [
         "crates/fireemu-adapter-http/src/remote_config_http.rs",
         "npm/scripts/testing-worlds.test.mjs",
         "crates/fireemu-adapter-http/src/remote_config_conditions.rs",
         "crates/fireemu-adapter-http/src/remote_config_testdata/server_conditions_dataplane.json"
-      ]
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "MATCH",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 31,
+          "counts": {
+            "MATCH": 24,
+            "MATCH_LAYOUT": 7,
+            "KNOWN_DIFFERENCE": 0,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 31,
+          "counts": {
+            "MATCH": 4,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 27,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 31,
+          "counts": {
+            "MATCH": 4,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 27,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
@@ -119,13 +386,135 @@
     {
       "conditionId": "REMOTE-CONFIG/publish-trigger",
       "description": "Observe which accepted template operations invoke v1 and v2 Functions handlers, and compare version metadata, event envelopes and delivery. Existing injection tests exercise the caller-supplied local event path.",
-      "status": "PLANNED",
+      "status": "VERIFIED",
       "localEvidence": [
         "crates/fireemu/tests/functions_remote_config.rs",
         "crates/fireemu-adapter-http/tests/control.rs",
         "crates/fireemu-adapter-functions/src/events.rs"
       ],
-      "productionEvidence": []
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+          "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+          "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+        }
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "KNOWN_DIFFERENCE",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 10,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 14,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 10,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 14,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 24,
+          "counts": {
+            "MATCH": 10,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 14,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-MEMBER-ORDER",
+        "KD-PRODUCTION-MEMBER-ORDER"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     }
-  ]
+  ],
+  "closureEvidence": {
+    "packet": "RC-CLOSURE-A-V2-2 (two passes, fireemu-oracle-query, 2026-11-25; sandbox ledger 1482-1487, owner ledger 2704-2707)",
+    "recorder": "conformance/src/remote-config-closure/record.mjs",
+    "corpus": "conformance/src/remote-config-closure/corpus.mjs",
+    "judge": "conformance/src/remote-config-production/judge.mjs",
+    "sanitiser": "conformance/src/remote-config-production/sanitise.mjs",
+    "evidence": "conformance/src/remote-config-closure/evidence.mjs",
+    "closureTest": "conformance/src/remote-config-closure.test.mjs",
+    "knownDifferencesPath": "conformance/src/remote-config-closure/known-differences.json",
+    "knownDifferencesSha256": "6af40133a0b30f2001f86cb1707999a70cd06f65068355bebc9c1a68c931f701",
+    "recordingPolicy": {
+      "observedPasses": 2,
+      "requiredPasses": 2,
+      "waiver": null
+    },
+    "recordings": [
+      {
+        "alias": "pass-1",
+        "fixturePath": "conformance/remote-config-closure/closure-a-pass-1.json",
+        "fixtureSha256": "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8"
+      },
+      {
+        "alias": "pass-2",
+        "fixturePath": "conformance/remote-config-closure/closure-a-pass-2.json",
+        "fixtureSha256": "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24"
+      }
+    ],
+    "localRuns": [
+      {
+        "profile": "strict",
+        "fixturePath": "conformance/remote-config-closure/closure-a-local-strict.json",
+        "fixtureSha256": "f4b1c590b9608919adb08481f525a7f8c6e257bff08da955eb64902010805931"
+      },
+      {
+        "profile": "emulator",
+        "fixturePath": "conformance/remote-config-closure/closure-a-local-emulator.json",
+        "fixtureSha256": "9344ee3a2116e49169ad6ac5657db6c9b468bddab6167d2196ab19471bd69854"
+      }
+    ],
+    "comparisons": [
+      {
+        "name": "runVsRun",
+        "comparisonPath": "conformance/remote-config-closure/closure-a-pass-1-vs-pass-2.json",
+        "comparisonSha256": "cfba21db8146c68e4075a16ed52ca2a52f109d679dcf3b2c27d27b160c7a0761"
+      },
+      {
+        "name": "strictVsPass1",
+        "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-1.json",
+        "comparisonSha256": "ce202e8fcd8409932c27afd38ae630a5bdea3f123b2880c4dbf9160a9c9da0d5"
+      },
+      {
+        "name": "strictVsPass2",
+        "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-2.json",
+        "comparisonSha256": "5a7a2be074e1ca9080a914d8a3825b30327f8c65f6bd60f07bd182ca2e16c44b"
+      },
+      {
+        "name": "emulatorVsPass1",
+        "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-1.json",
+        "comparisonSha256": "c643afabfeb426c8c905b4e7170993f83007b3c3e4502b12b67e176843346546"
+      },
+      {
+        "name": "emulatorVsPass2",
+        "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-2.json",
+        "comparisonSha256": "9c9ccd4b20c16d5d0e80b83393135e2c5d0915287013cef1f1adf6674cb8ba12"
+      }
+    ],
+    "emulatorProfile": "The emulator profile is compared but carries no production claim: it accepts the client conditions and the four server conditions production refused, so those validations and the server publication that carries the accepted conditions differ (28 rows of each emulator comparison); every other row matches as in strict."
+  }
 }

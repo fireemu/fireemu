@@ -26,6 +26,7 @@ export const PLACEHOLDERS = {
   project: "PROJECT_ID",
   number: "PROJECT_NUMBER",
   run: "RUN_ID",
+  otherRun: "OTHER_RUN_ID",
   email: "user@example.com",
   name: "Example User",
   image: "https://example.com/user.png",
@@ -57,7 +58,13 @@ export function maskText(text, secrets) {
   let out = text.replace(EMAIL, PLACEHOLDERS.email);
   if (secrets.number) out = out.split(secrets.number).join(PLACEHOLDERS.number);
   out = out.split(secrets.project).join(PLACEHOLDERS.project);
-  return out.split(secrets.run).join(PLACEHOLDERS.run);
+  out = out.split(secrets.run).join(PLACEHOLDERS.run);
+  // An earlier run's id in a version description that a history page lists (RC-CLOSURE-A pass 1
+  // listed the RC-OBSERVE-V2-3 versions): the recorders' run-id form after their marker.
+  return out.replace(
+    /(fireemu rc-(?:observe|closure) )[0-9]{12}[a-z0-9]{3}\b/g,
+    `$1${PLACEHOLDERS.otherRun}`,
+  );
 }
 
 /** Masks every string of a JSON value, and the name and image of every `updateUser` object. */

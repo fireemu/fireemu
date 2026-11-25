@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "note": "Differences known and not aligned in the RC-CLOSURE-A comparisons. Each entry names its rows and fields; a difference outside an entry is a MISMATCH.",
+  "entries": [
+    {
+      "id": "KD-MEMBER-ORDER",
+      "rows": ["*"],
+      "fields": [],
+      "fieldSuffixes": [":member-order"],
+      "appliesTo": ["production-vs-local"],
+      "reason": "Fireemu writes JSON members in sorted key order; production keeps its own order. Member names, values and the layout length are still compared; only the order is not. Documented in docs/remote-config.md.",
+      "authority": "rc-observe coordinator ruling 5 (2026-11-24T06:52Z): record it as a documented difference, no serializer change"
+    },
+    {
+      "id": "KD-PRODUCTION-MEMBER-ORDER",
+      "rows": ["*"],
+      "fields": [],
+      "fieldSuffixes": [":member-order"],
+      "appliesTo": ["production-vs-production"],
+      "reason": "Production's own member order differs between the two passes in event payloads, the rollback answer's parameters and the 401 error metadata (the same members and values, another order), so the run-vs-run comparison does not compare it. Everything else of the two passes is compared.",
+      "authority": "rc-closure stage 5 (2026-11-25): observed in RC-CLOSURE-A passes 1 and 2; for the coordinator's ruling"
+    }
+  ]
+}
