@@ -34,6 +34,26 @@ OUTCOMES = {
     "clean": (0, {"sites": 4, "mutants_run": 5, "findings": [], "unstable": []}, "no-gaps"),
     "findings": (2, {"sites": 4, "mutants_run": 5, "findings": [{}], "unstable": []}, "gaps"),
     "failure": (1, None, "error"),
+    "partial": (
+        0,
+        {
+            "sites": 4, "mutants_run": 5, "evaluation": "partial", "mutants_killed": 4,
+            "mutants_survived": 1, "mutants_not_built": 3, "skipped_sites": 0,
+            "survivor_breakdown": {"reported": 0, "unchanged_not_compared": 1},
+            "findings": [], "unstable": [],
+        },
+        "no-gaps-partial",
+    ),
+    "unreconciled": (
+        0,
+        {
+            "sites": 4, "mutants_run": 5, "evaluation": "partial", "mutants_killed": 3,
+            "mutants_survived": 1, "mutants_not_built": 3,
+            "survivor_breakdown": {"reported": 0, "unchanged_not_compared": 1},
+            "findings": [], "unstable": [],
+        },
+        "error",
+    ),
     "empty": (
         0, {"sites": 0, "mutants_run": 0, "evaluation": "no_sites", "findings": [], "unstable": []},
         "no-sites",
@@ -80,7 +100,7 @@ class CampaignTest(unittest.TestCase):
             if args[1] == "metadata":
                 return subprocess.CompletedProcess(args, 0, json.dumps(METADATA))
             if args == ["cargo", "tmt", "--version"]:
-                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.8.0\n")
+                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.9.0\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
             self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
@@ -134,7 +154,7 @@ class CampaignTest(unittest.TestCase):
                 self.assertEqual(code, expected_code)
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
-                self.assertEqual(summary["tool_version"], "0.8.0")
+                self.assertEqual(summary["tool_version"], "0.9.0")
                 self.assertEqual(summary["since"], "review-base" if scope else None)
                 for result in summary["packages"]:
                     report = OUTCOMES[outcomes[result["package"]]][1]
@@ -187,6 +207,23 @@ class CampaignTest(unittest.TestCase):
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
                 self.assertEqual(summary["packages"][0]["status"], "no-mutants-executed")
+
+    def test_partial_evaluation_is_reported_with_its_counts_and_is_not_no_gaps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "results"
+            code, _ = self.run_campaign(output, ["--package", "core"], [], {"core": "partial"})
+            self.assertEqual(code, 0)
+            result = json.loads((output / "summary.json").read_text())["packages"][0]
+            self.assertEqual(result["status"], "no-gaps-partial")
+            self.assertEqual(result["not_evaluated"], {"mutants_not_built": 3})
+
+    def test_counts_that_do_not_reconcile_are_an_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "results"
+            code, _ = self.run_campaign(output, ["--package", "core"], [], {"core": "unreconciled"})
+            self.assertEqual(code, 1)
+            result = json.loads((output / "summary.json").read_text())["packages"][0]
+            self.assertEqual(result["status"], "error")
 
     def test_launch_error_preserves_later_package_results(self):
         with tempfile.TemporaryDirectory() as directory:

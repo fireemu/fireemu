@@ -5,7 +5,7 @@
 Install the version used by the workspace campaign runner:
 
 ```bash
-cargo install targeted-mutation --version '=0.8.0' --locked
+cargo install targeted-mutation --version '=0.9.0' --locked
 ```
 
 Run mutation tests from an independent, credential-free checkout in a loopback-only sandbox. On a Fireemu development machine, use the local mutation sandbox and run its guard before executing mutants. Give direct invocations their own work directory. TMT sets both Cargo output directories inside it. Keep the paths outside the source checkout so reports and caches stay out of later scans.
@@ -48,6 +48,8 @@ Use `--git-index` for tests that read the Git index and `--copy-fixture conforma
 | Platform-specific or feature-specific Rust tests | Run on the corresponding platform or with the corresponding Cargo features. |
 | Loom, Kani and Quint | Use their dedicated configurations and workflows. |
 | UI, Python runner and external SDK conformance | Use the existing Stryker, mutmut and language-specific CI and conformance commands. |
+
+Since 0.9.0 the JSON report's counts reconcile (`mutants_run = mutants_killed + mutants_survived`, with a `survivor_breakdown`), and `evaluation` is `partial` when some mutants were not evaluated, for example source-only mutants without `--rebuild`. The wrapper reports that as `no-gaps-partial` with the counts under `not_evaluated` in `summary.json`; it is not the same claim as `no-gaps`, so state the counts in a checklist. A report whose counts do not add up is an error.
 
 ## Rust: bounded campaigns
 
