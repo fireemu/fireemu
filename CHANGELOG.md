@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-25
+
 ### Added
 
 - Emulator UI: a Pub/Sub page lists, creates and deletes topics, subscriptions and snapshots, publishes messages, pulls and acknowledges them, and seeks a subscription. It reaches the Pub/Sub listener only through project-scoped topic, subscription and snapshot routes of the sessions' own projects.
@@ -1564,7 +1566,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.65.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.66.0...HEAD
+[0.66.0]: https://github.com/fireemu/fireemu/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/fireemu/fireemu/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/fireemu/fireemu/compare/v0.63.0...v0.64.0
 [0.63.0]: https://github.com/fireemu/fireemu/compare/v0.62.0...v0.63.0
