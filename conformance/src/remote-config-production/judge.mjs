@@ -42,13 +42,27 @@ const HISTORY = /:listVersions$/;
 const ID_KEYS = new Set(["id", "eventId"]);
 const BASELINE_CASES = new Set(["a-client", "a-server"]);
 
-/** The form of an event id: a decimal int32 by sign, anything else by length. */
+/**
+ * The form of an event id: a decimal int32 other than 0, anything else by length. Production's
+ * ids take either sign (RC-CLOSURE-A 2026-11-25: 6 of 14 negative over two passes, e.g.
+ * `-820123519`) and were never 0 (coordinator ruling 5).
+ */
 export function idForm(value) {
   if (typeof value !== "string") return value;
-  // Production's ids are positive, never 0 (coordinator ruling 5).
-  if (/^[1-9][0-9]*$/.test(value) && BigInt(value) <= 2147483647n) return "id:int32-positive";
-  if (/^-[1-9][0-9]*$/.test(value) && BigInt(value) >= -2147483648n) return "id:int32-negative";
+  if (
+    /^-?[1-9][0-9]*$/.test(value) &&
+    BigInt(value) <= 2147483647n &&
+    BigInt(value) >= -2147483648n
+  )
+    return "id:int32";
   return `id:other:${value.length}`;
+}
+
+/** An RFC 3339 UTC time as microseconds, whatever its fraction digits; `null` otherwise. */
+export function instant(text) {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/.exec(text ?? "");
+  if (!m) return null;
+  return BigInt(Date.parse(`${m[1]}Z`)) * 1000n + BigInt((m[2] ?? "").padEnd(6, "0").slice(0, 6));
 }
 
 export const namespaceOf = (path) =>
@@ -57,15 +71,19 @@ export const namespaceOf = (path) =>
 /** The form of one value, with the version numbers of `namespace` as offsets from `base`. */
 const CANONICAL = /^(?:0|[1-9][0-9]*)$/;
 
-export function form(value, base, key = null) {
-  if (Array.isArray(value)) return value.map((item) => form(item, base));
+export function form(value, base, key = null, source = null) {
+  if (Array.isArray(value)) return value.map((item) => form(item, base, null, source));
   if (value && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, form(v, base, k)]));
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, form(v, base, k, source)]));
   if (typeof value === "string") {
     // An id member is read by idForm on both sides, so its form needs no tag.
     if (ID_KEYS.has(key)) return idForm(value);
     const time = TIME.exec(value);
-    if (time) return `t:${time[1]?.length ?? 0}:${time[2]}`;
+    if (time) return `t:\u27e8t:${timeRules(time[1] ?? "")}\u27e9:${time[2]}`;
+    // The baseline version's own rollback source is the sandbox's state, not the pass's
+    // behaviour: it reads as `base-source` on either side (RC-CLOSURE-A pass 2 started on a
+    // rollback to 32, pass 1 on one to 27).
+    if (key === "rollbackSource" && source !== null && value === source) return "v:base-source";
     if (
       VERSION_KEYS.has(key) &&
       CANONICAL.test(value) &&
@@ -73,10 +91,42 @@ export function form(value, base, key = null) {
     )
       return `v:${BigInt(value) - BigInt(base)}`;
     const rollback = /^Rollback to version ((?:0|[1-9][0-9]*))$/.exec(value);
+    if (rollback && source !== null && rollback[1] === source) return "r:base-source";
     if (rollback) return `r:${BigInt(rollback[1]) - BigInt(base)}`;
     return `s:${embedded(value, base)}`;
   }
   return value;
+}
+
+/**
+ * The rendering rules a time's fraction satisfies: `p` as protobuf JSON writes a timestamp (no
+ * fraction, or 3, 6 or 9 digits whose last group is not 000), `m` without trailing zeros; `x<n>`
+ * for neither. Production writes REST times and Gen2 events by `p` and Gen1 events by `m`
+ * (RC-CLOSURE-A 2026-11-25: `.949`, `.193490`, Gen1 `.19349`); two times compare equal when they
+ * share a rule, so the judge does not depend on which digits a run's clock happened to give.
+ */
+export function timeRules(fraction) {
+  const proto =
+    fraction === "" || ([3, 6, 9].includes(fraction.length) && !fraction.endsWith("000"));
+  const minimal = !fraction.endsWith("0");
+  const rules = `${proto ? "p" : ""}${minimal ? "m" : ""}`;
+  return rules || `x${fraction.length}`;
+}
+
+const RULES = /\u27e8t:([a-z0-9]+)\u27e9/g;
+
+/** Whether two compared leaf forms are equal, times compared by a shared rendering rule. */
+export function sameForm(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.replace(RULES, "\u27e8t\u27e9") !== b.replace(RULES, "\u27e8t\u27e9")) return false;
+  const ra = [...a.matchAll(RULES)].map((m) => m[1]);
+  const rb = [...b.matchAll(RULES)].map((m) => m[1]);
+  return ra.every((rule, i) =>
+    rule.startsWith("x") || rb[i].startsWith("x")
+      ? rule === rb[i]
+      : [...rule].some((letter) => rb[i].includes(letter)),
+  );
 }
 
 /**
@@ -88,7 +138,7 @@ function embedded(text, base) {
   return text
     .replace(
       /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?Z/g,
-      (_, fraction) => `\u27e8t:${fraction?.length ?? 0}\u27e9`,
+      (_, fraction) => `\u27e8t:${timeRules(fraction ?? "")}\u27e9`,
     )
     .replace(
       /^(\[VERSION_MISMATCH\]: Expected version )((?:0|[1-9][0-9]*)), found ((?:0|[1-9][0-9]*))/,
@@ -147,7 +197,7 @@ export function diffValues(a, b, path = "body") {
     for (const k of shared) out.push(...diffValues(a[k], b[k], `${path}.${k}`));
     return out;
   }
-  return Object.is(a, b) ? [] : [`${path}:value`];
+  return sameForm(a, b) ? [] : [`${path}:value`];
 }
 
 const historyProjection = (body, base) =>
@@ -158,6 +208,7 @@ const historyProjection = (body, base) =>
 /** The compared projection of one answered row, given the run's baselines. */
 export function projectRow(row, baseline) {
   const base = baseline[namespaceOf(row.path)].version;
+  const source = baseline[namespaceOf(row.path)].source ?? null;
   const history = HISTORY.test(row.path);
   const whole = !history && !BASELINE_CASES.has(row.case);
   let body = history
@@ -194,7 +245,7 @@ export function projectRow(row, baseline) {
     escapes: projectedEscapes(escapes, body),
     bodyBytes: whole ? row.bodyBytes : null,
     body,
-    bodyForm: form(body, base),
+    bodyForm: form(body, base, null, source),
     // A body that is not JSON nor a defaults file is compared as its text.
     text: body === null || body === undefined ? (row.text ?? null) : null,
   };
@@ -237,11 +288,14 @@ function compareAnswers(a, b) {
 
 /** Rows of the events: one per (client step, generation) and one per client step for the shared id. */
 export function eventRows(run) {
-  const steps = new Map(run.versions.map((v) => [`${v.versionNumber}|${v.updateTime}`, v]));
+  // An event names its version by number and time; the time is compared as an instant, since
+  // Gen1 drops trailing zeros that the version keeps (`.19349` for `.193490`).
+  const at = (number, time) => `${number}|${instant(time) ?? time}`;
+  const steps = new Map(run.versions.map((v) => [at(v.versionNumber, v.updateTime), v]));
   const rows = new Map();
   const ids = new Map();
   for (const event of run.events) {
-    const version = steps.get(`${event.versionNumber}|${event.updateTime}`);
+    const version = steps.get(at(event.versionNumber, event.updateTime));
     if (!version) continue;
     const id = `event:${version.namespace}:${version.step}:g${event.generation}`;
     const base = run.baseline[version.namespace].version;
@@ -254,7 +308,7 @@ export function eventRows(run) {
   }
   // The equality relation of all ids: each (step, generation) by the first one with its id.
   const keyed = run.events
-    .map((event) => ({ event, version: steps.get(`${event.versionNumber}|${event.updateTime}`) }))
+    .map((event) => ({ event, version: steps.get(at(event.versionNumber, event.updateTime)) }))
     .filter(({ version }) => version?.namespace === "client")
     .map(({ event, version }) => [`${version.step}:g${event.generation}`, event.eventId])
     .toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
@@ -269,15 +323,34 @@ export function eventRows(run) {
       value: { shared: byGeneration[1] !== undefined && byGeneration[1] === byGeneration[2] },
       valueForm: { shared: byGeneration[1] !== undefined && byGeneration[1] === byGeneration[2] },
     });
-  for (const generation of ["1", "2"]) {
-    const summary = run.summary?.generations?.[generation];
-    if (summary) {
-      // The local baseline publishes deliver events too, so the counts of all and of unmatched
-      // events are not compared; duplicates, steps, order and the value sets are.
-      const { duplicates, events: _events, unmatched: _unmatched, ...rest } = summary;
-      const value = { ...rest, duplicates: duplicates.length };
-      rows.set(`summary:g${generation}`, { value, valueForm: value });
+  // The delivery summary per generation, computed here from the events and the versions (the
+  // recorder's own summary matched times as text, and Gen1 drops trailing zeros): the client and
+  // server steps in arrival order, the steps that arrived more than once, and whether the client
+  // steps arrived in publication order.
+  const publication = new Map(run.versions.map((v, i) => [v, i]));
+  for (const generation of [1, 2]) {
+    const arrived = run.events
+      .filter((event) => event.generation === generation)
+      .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      .map((event) => steps.get(at(event.versionNumber, event.updateTime)))
+      .filter(Boolean);
+    if (!arrived.length && !run.summary?.generations?.[generation]) continue;
+    const seen = new Set();
+    let duplicates = 0;
+    for (const version of arrived) {
+      if (seen.has(version)) duplicates += 1;
+      seen.add(version);
     }
+    const client = [...seen].filter((v) => v.namespace === "client");
+    const value = {
+      clientSteps: client.map((v) => v.step),
+      serverSteps: [...seen].filter((v) => v.namespace === "server").map((v) => v.step),
+      duplicates,
+      inPublicationOrder: client.every(
+        (v, i) => i === 0 || publication.get(client[i - 1]) < publication.get(v),
+      ),
+    };
+    rows.set(`summary:g${generation}`, { value, valueForm: value });
   }
   return rows;
 }
@@ -311,7 +384,22 @@ function applyKnown(id, fields, known, kind) {
 }
 
 /** Compares two sanitised runs. `known` are the entries of known-differences.json. */
-export function compareRuns(left, right, { known = [], kind }) {
+/** The run's baselines with each namespace's baseline rollback source, from its a-* read. */
+function withSources(run) {
+  const source = (caseId) =>
+    run.rows.find((row) => row.case === caseId)?.body?.version?.rollbackSource ?? null;
+  return {
+    ...run,
+    baseline: {
+      client: { ...run.baseline.client, source: source("a-client") },
+      server: { ...run.baseline.server, source: source("a-server") },
+    },
+  };
+}
+
+export function compareRuns(leftRun, rightRun, { known = [], kind }) {
+  const left = withSources(leftRun);
+  const right = withSources(rightRun);
   const byCase = (run) => new Map(run.rows.map((row) => [row.case, row]));
   const a = byCase(left);
   const b = byCase(right);

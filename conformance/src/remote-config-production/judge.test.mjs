@@ -73,14 +73,33 @@ test("form compares versions as offsets from the namespace baseline and times by
     {
       versionNumber: "v:3",
       rollbackSource: "v:1",
-      updateTime: "t:6:Z",
+      updateTime: "t:\u27e8t:pm\u27e9:Z",
       description: "r:1",
       nextPageToken: "v:-3",
       other: "s:30",
     },
   );
   assert.equal(form({ rollbackSource: "0" }, "27").rollbackSource, "s:0");
-  assert.equal(form({ updateTime: "2026-01-01T00:00:00Z" }, "1").updateTime, "t:0:Z");
+  assert.equal(
+    form({ updateTime: "2026-01-01T00:00:00Z" }, "1").updateTime,
+    "t:\u27e8t:pm\u27e9:Z",
+  );
+  assert.equal(
+    form({ updateTime: "2026-01-01T00:00:00.949Z" }, "1").updateTime,
+    "t:\u27e8t:pm\u27e9:Z",
+  );
+  assert.equal(
+    form({ updateTime: "2026-01-01T00:00:00.370Z" }, "1").updateTime,
+    "t:\u27e8t:p\u27e9:Z",
+  );
+  assert.equal(
+    form({ updateTime: "2026-01-01T00:00:00.19349Z" }, "1").updateTime,
+    "t:\u27e8t:m\u27e9:Z",
+  );
+  assert.equal(
+    form({ updateTime: "2026-01-01T00:00:00.250000Z" }, "1").updateTime,
+    "t:\u27e8t:x6\u27e9:Z",
+  );
   assert.equal(form({ nextPageToken: "etag-x-1" }, "1").nextPageToken, "s:etag-x-1");
   // A tag no input string can take: the literal text of a normalised form stays a string.
   assert.equal(form({ updateTime: "t:6:Z" }, "1").updateTime, "s:t:6:Z");
@@ -95,9 +114,15 @@ test("form compares versions as offsets from the namespace baseline and times by
 });
 
 test("idForm and etagForm keep the sign, the prefix kind and the validation tag", () => {
-  assert.equal(idForm("929360796"), "id:int32-positive");
+  assert.equal(idForm("929360796"), "id:int32");
+  assert.equal(idForm("2147483647"), "id:int32");
   assert.equal(idForm("2147483648"), "id:other:10");
-  assert.equal(idForm("-351892884"), "id:int32-negative");
+  // Production's ids take either sign (RC-CLOSURE-A, both passes).
+  assert.equal(idForm("-351892884"), "id:int32");
+  assert.equal(idForm("-2147483648"), "id:int32");
+  assert.equal(idForm("-2147483649"), "id:other:11");
+  assert.equal(idForm("-0"), "id:other:2");
+  assert.equal(idForm("-01"), "id:other:3");
   assert.equal(idForm("01"), "id:other:2");
   assert.equal(idForm("0"), "id:other:1");
   assert.equal(etagForm(null, "1"), null);
@@ -238,10 +263,23 @@ test("eventRows: one row per step and generation, the shared id, duplicates, and
   });
   assert.deepEqual(
     [...rows.keys()],
-    ["event:client:c0:g1", "event:client:c0:g2", "event-ids", "event-id:c0", "summary:g1"],
+    [
+      "event:client:c0:g1",
+      "event:client:c0:g2",
+      "event-ids",
+      "event-id:c0",
+      "summary:g1",
+      "summary:g2",
+    ],
   );
   assert.deepEqual(rows.get("event-id:c0").value, { shared: true });
-  assert.deepEqual(rows.get("summary:g1").value, { clientSteps: ["c0"], duplicates: 1 });
+  // The summary is computed from the events: the third event names no version of the run.
+  assert.deepEqual(rows.get("summary:g1").value, {
+    clientSteps: ["c0"],
+    serverSteps: [],
+    duplicates: 0,
+    inPublicationOrder: true,
+  });
   assert.deepEqual(rows.get("event:client:c0:g1").valueForm.data, { versionNumber: "v:1" });
   const split = eventRows({
     baseline: { client: { version: "27" } },
@@ -404,7 +442,7 @@ test("messages compare their embedded times by form and the stale-tag versions a
       },
       "1",
     ).message,
-    "s:[VALIDATION_ERROR]: start_time [\u27e8t:6\u27e9] must be before end_time [\u27e8t:6\u27e9].",
+    "s:[VALIDATION_ERROR]: start_time [\u27e8t:pm\u27e9] must be before end_time [\u27e8t:pm\u27e9].",
   );
   assert.equal(
     form(
@@ -414,7 +452,7 @@ test("messages compare their embedded times by form and the stale-tag versions a
       },
       "1",
     ).message,
-    "s:end_time must be no earlier than \u27e8t:6\u27e9 [\u27e8t:0\u27e9 specified].",
+    "s:end_time must be no earlier than \u27e8t:pm\u27e9 [\u27e8t:pm\u27e9 specified].",
   );
   assert.equal(
     form({ message: "[VERSION_MISMATCH]: Expected version 30, found 33 for project: x" }, "27")
@@ -602,4 +640,111 @@ test("escapes of a dropped history entry are not compared (ruling 5)", () => {
     compareRuns(left, right, { kind: "production-vs-local" }).rows[0].status,
     "MISMATCH",
   );
+});
+
+test("times compare by a rendering rule both sides satisfy (RC-CLOSURE-A)", async () => {
+  const { sameForm, timeRules } = await import("./judge.mjs");
+  for (const [fraction, rules] of [
+    ["", "pm"],
+    ["949", "pm"],
+    ["370", "p"],
+    ["193490", "p"],
+    ["408063", "pm"],
+    ["19349", "m"],
+    ["37", "m"],
+    ["250000", "x6"],
+    ["000", "x3"],
+    ["1", "m"],
+    ["120", "p"],
+    ["773004124", "pm"],
+    ["773004000", "x9"],
+  ])
+    assert.equal(timeRules(fraction), rules, fraction);
+  const t = (rules) => `t:\u27e8t:${rules}\u27e9:Z`;
+  assert.ok(sameForm(t("pm"), t("p")));
+  assert.ok(sameForm(t("pm"), t("m")));
+  assert.ok(sameForm(t("p"), t("p")));
+  assert.equal(sameForm(t("p"), t("m")), false);
+  assert.equal(sameForm(t("p"), t("x6")), false);
+  assert.ok(sameForm(t("x6"), t("x6")));
+  assert.equal(sameForm(t("x6"), t("x3")), false);
+  assert.equal(sameForm(t("pm"), "t:\u27e8t:pm\u27e9:+01:00"), false);
+  const message = (a, b) => `s:start [\u27e8t:${a}\u27e9] end [\u27e8t:${b}\u27e9]`;
+  assert.ok(sameForm(message("pm", "p"), message("p", "pm")));
+  assert.equal(sameForm(message("pm", "p"), message("p", "m")), false);
+  assert.equal(sameForm(message("pm", "p"), "s:start [\u27e8t:p\u27e9] end"), false);
+  assert.equal(sameForm("s:a", "s:b"), false);
+  assert.equal(sameForm(1, "1"), false);
+  assert.ok(sameForm(null, null));
+});
+
+test("instant reads a time whatever its fraction digits; events match their version by it", async () => {
+  const { instant } = await import("./judge.mjs");
+  assert.equal(instant("2026-11-24T23:15:00.19349Z"), instant("2026-11-24T23:15:00.193490Z"));
+  assert.equal(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.949000Z"));
+  assert.equal(instant("2026-11-24T23:15:08Z"), instant("2026-11-24T23:15:08.000Z"));
+  assert.notEqual(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.948Z"));
+  assert.equal(instant("2026-11-24T23:15:08.949+00:00"), null);
+  assert.equal(instant(undefined), null);
+});
+
+test("eventRows: the summary counts repeated steps, server steps and arrival order", () => {
+  const versions = [
+    {
+      namespace: "client",
+      step: "p1",
+      versionNumber: "28",
+      updateTime: "2026-11-24T23:15:00.193490Z",
+    },
+    {
+      namespace: "client",
+      step: "p5",
+      versionNumber: "29",
+      updateTime: "2026-11-24T23:15:01.000000Z",
+    },
+    { namespace: "server", step: "s1", versionNumber: "10", updateTime: "2026-11-24T23:15:02.5Z" },
+  ];
+  const event = (generation, order, versionNumber, updateTime) => ({
+    generation,
+    order,
+    eventId: `${versionNumber}`,
+    versionNumber,
+    updateTime,
+    data: {},
+    context: {},
+  });
+  const rows = eventRows({
+    baseline: { client: { version: "27" }, server: { version: "9" } },
+    versions,
+    events: [
+      // Gen1 names p1 with the trailing zero dropped, and p5 on a whole second.
+      event(1, 1, "29", "2026-11-24T23:15:01Z"),
+      event(1, 0, "28", "2026-11-24T23:15:00.19349Z"),
+      event(1, 2, "28", "2026-11-24T23:15:00.19349Z"),
+      event(2, 0, "29", "2026-11-24T23:15:01.000Z"),
+      event(2, 1, "10", "2026-11-24T23:15:02.500Z"),
+    ],
+  });
+  assert.deepEqual(rows.get("summary:g1").value, {
+    clientSteps: ["p1", "p5"],
+    serverSteps: [],
+    duplicates: 1,
+    inPublicationOrder: true,
+  });
+  assert.deepEqual(rows.get("summary:g2").value, {
+    clientSteps: ["p5"],
+    serverSteps: ["s1"],
+    duplicates: 0,
+    inPublicationOrder: true,
+  });
+  const reversed = eventRows({
+    baseline: { client: { version: "27" }, server: { version: "9" } },
+    versions,
+    events: [
+      event(1, 0, "29", "2026-11-24T23:15:01Z"),
+      event(1, 1, "28", "2026-11-24T23:15:00.19349Z"),
+    ],
+  });
+  assert.equal(reversed.get("summary:g1").value.inPublicationOrder, false);
+  assert.deepEqual(reversed.get("summary:g1").value.clientSteps, ["p5", "p1"]);
 });

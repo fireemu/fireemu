@@ -42,10 +42,10 @@ export const FILES = {
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
   [FILES.production]: "3eb7fe1f98e3e5a2937c0d14ab694768f82a92f760da5fdfec3839cbb20fba67",
-  [FILES.localStrict]: "d54e63fdf2852b78aa5bda8c899d77c3383fc0449fd31ee3fd8cd04f975ba1a0",
-  [FILES.localEmulator]: "f58d3d4162c4db88e99666bd0ad114f00935df3b8a53567fd3199e5ffe346596",
-  [FILES.strict]: "7ae81cd9fb4afbc04f7ad5177992e911c259cc4b8c9a7dc6926416687019fa52",
-  [FILES.emulator]: "bac44198b40844e5f59c311a3d2135d8fb82f74f8a859759183858801ca40d64",
+  [FILES.localStrict]: "2e261e0b622589784577e96b7701362683f5cef1bc439dbec8c5148ca52ab162",
+  [FILES.localEmulator]: "339af9877794095c12ca428b1300f7ac42511f976d3dcaf047cf3914b4e69c5e",
+  [FILES.strict]: "25937f4cb5e1466bea71898263f243cc5f1a3d407a9eec51842f7856adeae3cf",
+  [FILES.emulator]: "f9c92536ea85d3fb9d6f7e977ca5bfdf2c08cd8607ec02c447ea0e4d65495e81",
   [KNOWN]: "fe11a9434b8eabd5938371e577f743a9f735f6e6d5fe21e5a57609abb798652c",
 };
 
