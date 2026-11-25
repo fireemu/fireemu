@@ -284,7 +284,11 @@ async function passDir(t, files = {}, { ageMs = 3_600_000, pid, lockPid } = {}) 
   if (lockPid !== null)
     writeFileSync(
       join(root, "sandbox-locks", "fireemu-oracle-query.lock"),
-      JSON.stringify({ pid: lockPid ?? spawnSync(process.execPath, ["-e", ""]).pid }),
+      JSON.stringify({
+        pid: lockPid ?? spawnSync(process.execPath, ["-e", ""]).pid,
+        packetId: "RC-CLOSURE-B-V1-3",
+        pass: 1,
+      }),
     );
   const all = { "run.json": { runId: "261125000000abc", pid: gone }, ...files };
   const at = (Date.now() - ageMs) / 1000;
@@ -386,7 +390,15 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
   const { closureRefusal } = await import("./record.mjs");
   const { mkdirSync, writeFileSync, realpathSync } = await import("node:fs");
   const runId = "261125000000abc";
-  const complete = { runId, complete: true, stopped: null, open: [], unknown: [], refusals: [] };
+  const complete = {
+    runId,
+    complete: true,
+    stopped: null,
+    open: [],
+    unknown: [],
+    refusals: [],
+    leakCheck: "done",
+  };
   const verdict = async (result, { a2, acceptance, ledger = "", extra = {} } = {}) => {
     const { dir, pass } = await passDir(t, {
       ...(result ? { "result.json": result } : {}),
@@ -435,8 +447,15 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
     open: [],
     unknown: ["a-keys"],
     refusals: [],
+    leakCheck: "done",
   };
   assert.equal(await verdict(stopped, { a2: {} }), null);
+  // Ruling 20: a leak check that did not finish is open, for closure 1 and closure 2 alike.
+  assert.ok(await verdict({ ...complete, leakCheck: "pending" }));
+  assert.match(
+    await verdict({ ...stopped, leakCheck: "pending" }, { a2: {} }),
+    /no acceptance or recovery record/,
+  );
   // An A2 that holds only atBaseline, names another run or directory, or has an error, closes nothing.
   for (const a2 of [
     { back: { atBaseline: true } },
@@ -755,4 +774,61 @@ test("ruling 19 item 2: the transport masks a known secret before the body's fir
     .map((l) => JSON.parse(l))
     .at(-1);
   assert.equal(row.redacted, true);
+});
+
+// ---- ruling 20 (round-4 Musts and Shoulds) ----
+
+test("ruling 20: the journal's copies of header values are masked; the status is known at the headers", async (t) => {
+  const { Transport } = await import("../remote-config-observe/transport.mjs");
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-headers-"));
+  t.after(() => rmSync(dir, { recursive: true, forced: true, force: true }));
+  const statuses = [];
+  const transport = new Transport({
+    out: dir,
+    allow: () => true,
+    token: () => "t",
+    maxRequests: 2,
+    timeoutMs: 1000,
+    redact: (text) => text.split("AIzaSECRET").join("API_KEY"),
+    fetchImpl: async () =>
+      new Response("{}", {
+        status: 200,
+        headers: { etag: '"AIzaSECRET"', "content-type": "application/json; p=AIzaSECRET" },
+      }),
+  });
+  transport.onStatus = (caseId, status) => statuses.push([caseId, status]);
+  const answer = await transport.send("g-client", "https://example.com/x", {
+    ifMatch: "AIzaSECRET-1",
+  });
+  assert.equal(answer.etag, '"AIzaSECRET"');
+  const journal = readFileSync(join(dir, "journal.jsonl"), "utf8");
+  assert.ok(!journal.includes("AIzaSECRET"), journal);
+  assert.match(journal, /API_KEY-1/);
+  assert.deepEqual(statuses, [["g-client", 200]]);
+  assert.ok(readdirSync(dir).length >= 2);
+});
+
+test("ruling 20: the owner's decision line never carries an envelope id; a direct A2 checks the lock's packet and pass", async (t) => {
+  const { ownerDecision, a2Refusal } = await import("./record.mjs");
+  const line =
+    "- 2026-11-26 | RC-CLOSURE-B decision | packetId=RC-CLOSURE-B-V1-3 runId=r1 decision=accept | owner | chat";
+  assert.ok(ownerDecision(line, "r1", "accept"));
+  assert.equal(
+    ownerDecision(`${line} envelopeId=RC-CLOSURE-B-20261125-01 x`, "r1", "accept"),
+    false,
+  );
+  const { writeFileSync } = await import("node:fs");
+  const result = { "result.json": { runId: "261125000000abc" } };
+  const { pass } = await passDir(t, result);
+  assert.equal(a2Refusal(pass), null);
+  const lock = join(pass, "..", "..", "sandbox-locks", "fireemu-oracle-query.lock");
+  for (const body of [
+    { pid: 999999, packetId: "RC-CLOSURE-B-V1-3", pass: 2 },
+    { pid: 999999, packetId: "RC-CLOSURE-B-V1-2", pass: 1 },
+    { pid: 999999 },
+  ]) {
+    writeFileSync(lock, JSON.stringify(body));
+    assert.match(a2Refusal(pass), /not this packet's lock for this pass/, JSON.stringify(body));
+  }
 });

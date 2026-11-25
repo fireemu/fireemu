@@ -125,9 +125,10 @@ export const isDeleted = (key) => isInstant(key?.deleteTime);
  * A definite refusal of the key create (ruling 19 item 5): a 4xx whose body is Google's error
  * object for that status. It settles "no key was created"; anything else does not.
  */
+/** The definite refusals of a create; a 408 or 499 is a lost answer, never a refusal (ruling 20). */
+export const CREATE_REFUSALS = new Set([400, 401, 403, 404, 409, 429]);
 export const createRefused = (r) =>
-  r.status >= 400 &&
-  r.status < 500 &&
+  CREATE_REFUSALS.has(r.status) &&
   isObject(r.json?.error) &&
   r.json.error.code === r.status &&
   typeof r.json.error.status === "string" &&
@@ -180,6 +181,13 @@ export async function observe(ctx) {
   const { transport: t, urls, runId, timing, browser } = ctx;
   const wait = ctx.wait ?? sleep;
   const result = { runId, stopped: null, open: [], steps: [], baseline: {}, key: {}, clients: {} };
+  // An admin 403 or 429 stops the hook as soon as its headers arrive, before its body is read and
+  // before the forward program sees it (ruling 20); G's own reads are not forward work.
+  let restoring = false;
+  t.onStatus = (caseId, status) => {
+    if (!restoring && (status === 403 || status === 429))
+      browser.stop(`${caseId} answered ${status}`);
+  };
   const clients = {};
   let lastWrite = 0;
   let wrote = false;
@@ -196,6 +204,8 @@ export async function observe(ctx) {
   const write = async (caseId, url, method, body, ifMatch) => {
     await pace();
     await gate();
+    // The hook may have stopped while the gate read its snapshots: checked again at dispatch.
+    if (browser.stopped()) throw new Stop(`browser: ${browser.stopped()}`);
     wrote = true;
     try {
       const r = await t.send(caseId, url, { method, body, ifMatch });
@@ -269,14 +279,24 @@ export async function observe(ctx) {
       // real deleteTime, or the read-back of the key's own name is. Any other shape proves nothing.
       const proves = (key) => isObject(key) && key.name === name && isDeleted(key);
       result.key.deletedBy = proves(done.response) ? ["operation"] : [];
+      let live = false;
       try {
         const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
         result.key.readback = back.status;
         if (back.status === 200 && proves(back.json)) result.key.deletedBy.push("read-back");
+        // A 200 naming the key without a real deleteTime shows it live: that contradicts the
+        // operation and proves nothing (ruling 20).
+        live =
+          back.status === 200 &&
+          isObject(back.json) &&
+          back.json.name === name &&
+          !isDeleted(back.json);
       } catch (error) {
         result.key.readback = error.message;
       }
-      result.key.deleted = result.key.deletedBy.length > 0;
+      if (live) result.key.readbackLive = true;
+      result.key.deleted = !live && result.key.deletedBy.length > 0;
+      if (live) return "k-readback: the key reads live after its deletion";
       return result.key.deleted ? null : "k-readback: no deleteTime";
     } catch (error) {
       result.key.deleted = false;
@@ -493,6 +513,7 @@ export async function observe(ctx) {
     // here on, the installations' deletions keep their reserve (ruling 19 item 1).
     browser.stop(`forward program stopped: ${result.stopped}`);
   } finally {
+    restoring = true;
     // ---- G. restoration ----
     for (const [name, client] of Object.entries(clients)) {
       try {

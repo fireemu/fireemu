@@ -212,6 +212,10 @@ export function a2Refusal(dir, now = Date.now()) {
   // run directories exists and its launcher is gone.
   const lock = readJson(join(dir, "..", "..", "sandbox-locks", "fireemu-oracle-query.lock"));
   if (!lock) return "the project lock is not held";
+  // The lock is this packet's, for this pass (the launcher's own check; ruling 20).
+  const pass = Number(/send-web-([12])$/.exec(dir)?.[1]);
+  if (lock.packetId !== PACKET_ID || lock.pass !== pass)
+    return "the project lock is not this packet's lock for this pass";
   if (recorderAlive(lock.pid)) return "the pass's launcher is still running";
   const checkpoint = [readJson(join(dir, "result.json")), readJson(join(dir, "interrupted.json"))];
   if (!checkpoint.some((c) => c?.runId === run.runId))
@@ -243,7 +247,11 @@ export function closureRefusal(dir, ownerLedger) {
   const interrupted = readJson(join(dir, "interrupted.json"));
   let open;
   if (result?.runId === run.runId) {
+    // A leak check that did not finish is an open item: no closure by the result or by an A2
+    // alone (ruling 20).
+    const checked = result.leakCheck === "done";
     if (
+      checked &&
       result.complete === true &&
       result.stopped === null &&
       sameArray(result.open, []) &&
@@ -252,7 +260,7 @@ export function closureRefusal(dir, ownerLedger) {
     )
       return null;
     if (!Array.isArray(result.open)) return "pass 1's result has no open list";
-    open = result.open;
+    open = checked ? result.open : [...result.open, "leak-check: not done"];
   } else if (interrupted?.runId === run.runId) open = ["interrupted"];
   else return "pass 1 has no result.json of its run";
   const real = realpathSync(dir);
@@ -310,7 +318,9 @@ export function ownerDecision(line, runId, decision) {
     columns[1] === "RC-CLOSURE-B decision" &&
     columns[2] === `packetId=${PACKET_ID} runId=${runId} decision=${decision}` &&
     columns[3] === "owner" &&
-    columns[4].trim().length > 0
+    columns[4].trim().length > 0 &&
+    // Never an envelope's line, so the launcher's E/V count never counts it (ruling 20).
+    !line.includes("envelopeId=")
   );
 }
 

@@ -51,6 +51,7 @@ function world({
   let version = 27;
   const pending = [];
   const fids = [];
+  let fetchDispatches = 0;
   const publish = (content) => {
     version += 1;
     history.set(version, content);
@@ -140,6 +141,7 @@ function world({
         }),
       };
     }
+    if (url.pathname.endsWith(":fetch")) fetchDispatches += 1;
     if (url.pathname.endsWith(":fetch") && fetchStatus !== 200)
       return {
         status: fetchStatus,
@@ -198,7 +200,7 @@ function world({
     }
     return { status: 404, headers: {}, body: "" };
   };
-  return { admin, client, fids, version: () => version, history };
+  return { admin, client, fids, version: () => version, history, fetches: () => fetchDispatches };
 }
 
 test(
@@ -601,7 +603,7 @@ async function productionPass(
       if (kind === "key") grants.key = value;
     },
   });
-  return Object.assign(result, { out });
+  return Object.assign(result, { out, fake });
 }
 
 test(
@@ -613,7 +615,8 @@ test(
     // The key's item stays open (it was never proved deleted) beside the read-back's problem.
     assert.deepEqual(result.open, [
       "k-create: the key may exist until its deletion is read back (A2 lists keys)",
-      "k-readback: no deleteTime (A2 lists keys)",
+      // A 200 read-back naming the key without a deleteTime shows it live (ruling 20).
+      "k-readback: the key reads live after its deletion (A2 lists keys)",
     ]);
     assert.equal(result.sandboxAtBaseline, false);
     assert.equal(result.complete, false);
@@ -1213,6 +1216,15 @@ test(
     const wire = fetched.clients.one?.wire ?? [];
     const sent = wire.filter((e) => e.path.endsWith(":fetch") && e.status !== null);
     assert.equal(sent.length, 1, JSON.stringify(wire.map((e) => [e.path, e.status, e.error])));
+    // Counted where the request is answered (ruling 20): one dispatch; the SDK's retry was made
+    // and refused after the stop.
+    assert.equal(fetched.fake.fetches(), 1);
+    assert.ok(
+      fetched.refusals.some(
+        (r) => r.host === "firebaseremoteconfig.googleapis.com" && r.reason === "after stop",
+      ),
+      JSON.stringify(fetched.refusals),
+    );
     assert.ok(!casesOf(fetched.out).includes("r1-changed"));
     // A 429 on the stream inside r1's 30 s window: the stop comes long before the window's end.
     const windowed = await productionPass(t, 47863, {
@@ -1288,7 +1300,8 @@ test(
       },
     });
     assert.match(stopped.stopped, /key list not complete \(403\)/);
-    assert.match(browser.stopped() ?? "", /^forward program stopped: key list not complete/);
+    // The admin 403 stopped the hook when its headers arrived (ruling 20).
+    assert.equal(browser.stopped(), "a-keys answered 403");
     // A leak check that cannot finish leaves result.json not complete and pending.
     const { main, PROJECT: SANDBOX } = await import("./record.mjs");
     const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-main-"));
@@ -1318,5 +1331,38 @@ test(
     );
     const result = JSON.parse(readFileSync(join(dir, "send-web-1", "result.json"), "utf8"));
     assert.deepEqual([result.complete, result.leakCheck], [false, "pending"]);
+  },
+);
+
+test(
+  "ruling 20: a read-back showing the key live outweighs the delete operation; a 408 create is not a refusal",
+  { timeout: 180_000, skip },
+  async (t) => {
+    const live = await productionPass(t, 47871, {
+      admin: { keyStaysLive: true, deleteOpDeleteTime: "2026-11-26T00:00:00Z" },
+    });
+    assert.equal(live.key.deleted, false);
+    assert.equal(live.key.readbackLive, true);
+    assert.ok(
+      live.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    assert.ok(live.open.some((item) => item.startsWith("k-readback: the key reads live")));
+    assert.equal(live.complete, false);
+    const timeout = await productionPass(t, 47872, {
+      admin: {
+        createRefusal: {
+          status: 408,
+          body: { error: { code: 408, status: "DEADLINE_EXCEEDED", message: "x" } },
+        },
+      },
+    });
+    assert.equal(timeout.key.createRefused, undefined);
+    assert.ok(
+      timeout.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
   },
 );

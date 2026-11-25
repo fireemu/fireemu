@@ -110,16 +110,20 @@ export class Transport {
     if (ifNoneMatch !== undefined) headers["if-none-match"] = ifNoneMatch;
     // A signed URL's query is a credential: journal the path only.
     const shown = signed ? `${target.origin}${target.pathname}` : target.href;
+    // A journaled copy of a header value is masked as a body is (RC-CLOSURE-B ruling 20); the
+    // request itself keeps the original value.
+    const masked = (value) =>
+      typeof value === "string" && this.redact ? this.redact(value) : value;
     this.journal({
       seq,
       case: caseId,
       phase: "before-send",
       method,
       url: shown,
-      ifMatch,
+      ifMatch: masked(ifMatch),
       ...(credentials ? {} : { credentials: false }),
       ...(gzip ? {} : { gzip: false }),
-      ...(ifNoneMatch === undefined ? {} : { ifNoneMatch }),
+      ...(ifNoneMatch === undefined ? {} : { ifNoneMatch: masked(ifNoneMatch) }),
     });
     let response;
     let bytes;
@@ -131,6 +135,8 @@ export class Transport {
         redirect: "manual",
         signal: AbortSignal.timeout(this.timeoutMs),
       });
+      // The status is known when the headers arrive, before the body is read (ruling 20).
+      this.onStatus?.(caseId, response.status);
       bytes = Buffer.from(await response.arrayBuffer());
     } catch (error) {
       return this.fail(seq, caseId, `transport: ${error?.name ?? "error"}`, response?.status);
@@ -168,9 +174,9 @@ export class Transport {
             bytes: bytes.length,
             sha256: createHash("sha256").update(persisted).digest("hex"),
             ...(persisted === bytes ? {} : { redacted: true }),
-            etag,
-            contentType: response.headers.get("content-type"),
-            contentEncoding: response.headers.get("content-encoding"),
+            etag: masked(etag),
+            contentType: masked(response.headers.get("content-type")),
+            contentEncoding: masked(response.headers.get("content-encoding")),
             file,
           },
     );
