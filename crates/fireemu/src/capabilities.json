@@ -389,7 +389,7 @@
     ],
     "status": "implemented",
     "unimplemented": [
-      "Remote Config client SDK fetch-and-activate and real-time updates",
+      "Remote Config Android and Apple client SDK fetch-and-activate and real-time updates (the Web SDK is served as recorded)",
       "protobuf CloudEvents payloads (JSON is what firebase-functions consumes)"
     ],
     "notes": [
