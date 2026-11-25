@@ -639,15 +639,23 @@ export async function observe(ctx) {
   return { result, events };
 }
 
+/** An RFC 3339 UTC time as microseconds, whatever its fraction digits; `null` otherwise. */
+export function microsOf(text) {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/.exec(text ?? "");
+  if (!m) return null;
+  return BigInt(Date.parse(`${m[1]}Z`)) * 1000n + BigInt((m[2] ?? "").padEnd(6, "0").slice(0, 6));
+}
+
 /**
  * The per-generation delivery summary: events attributed to the pass's client and server versions
  * by version number and update time, duplicates, publication order, and the server answer, which is
  * evidence only when the first client publication (p1, before the server phase) reached the handler.
  */
 export function summarise({ events, versions, truncated = false }) {
-  const index = new Map(
-    versions.map((v, i) => [`${v.versionNumber}|${v.updateTime}`, { ...v, i }]),
-  );
+  // An event names its version by number and time, the time read as an instant: Gen1 drops
+  // trailing zeros that the version keeps (RC-CLOSURE-A 2026-11-25: `.19349` for `.193490`).
+  const at = (number, time) => `${number}|${microsOf(time) ?? time}`;
+  const index = new Map(versions.map((v, i) => [at(v.versionNumber, v.updateTime), { ...v, i }]));
   const numbers = (ns) =>
     new Set(versions.filter((v) => v.namespace === ns).map((v) => v.versionNumber));
   const server = numbers("server");
@@ -656,7 +664,7 @@ export function summarise({ events, versions, truncated = false }) {
   for (const generation of [1, 2]) {
     const own = events
       .filter((e) => e.generation === generation)
-      .map((e) => ({ ...e, match: index.get(`${e.versionNumber}|${e.updateTime}`) ?? null }));
+      .map((e) => ({ ...e, match: index.get(at(e.versionNumber, e.updateTime)) ?? null }));
     const client = own.filter((e) => e.match?.namespace === "client");
     const ids = new Map();
     for (const e of own) ids.set(e.eventId, (ids.get(e.eventId) ?? 0) + 1);

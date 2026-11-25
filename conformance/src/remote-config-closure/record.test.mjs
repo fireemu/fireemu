@@ -441,3 +441,25 @@ test("the request cap is taken before the first await: two concurrent sends at o
   assert.equal(transport.count, 3);
   assert.equal(fetched, 3);
 });
+
+test("summarise matches a Gen1 event whose time drops trailing zeros", async () => {
+  const { microsOf } = await import("./record.mjs");
+  const versions = [
+    {
+      namespace: "client",
+      step: "p1",
+      versionNumber: "33",
+      updateTime: "2026-11-24T23:15:00.193490Z",
+    },
+    { namespace: "client", step: "p5", versionNumber: "34", updateTime: "2026-11-24T23:15:01Z" },
+  ];
+  const events = [
+    { generation: 1, eventId: "1", versionNumber: "33", updateTime: "2026-11-24T23:15:00.19349Z" },
+    { generation: 1, eventId: "2", versionNumber: "34", updateTime: "2026-11-24T23:15:01.000Z" },
+    { generation: 1, eventId: "3", versionNumber: "34", updateTime: "2026-11-24T23:15:01.001Z" },
+  ];
+  const g = summarise({ events, versions }).generations[1];
+  assert.deepEqual(g.clientSteps, ["p1", "p5"]);
+  assert.equal(g.unmatched, 1);
+  assert.equal(microsOf("2026-11-24T23:15:01+00:00"), null);
+});

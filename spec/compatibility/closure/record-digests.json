@@ -83,7 +83,7 @@
     "conformance/src/remote-config-closure/corpus.mjs": "69bdb68bbe1daf0255b1a9ec55fc2cf9c059b6e93a7e146765b97fbec1500b2c",
     "conformance/src/remote-config-closure/evidence.mjs": "78aaff10af30619b9ab91011fcefd1631df192343e8e9f10bba309f496ec0bee",
     "conformance/src/remote-config-closure/known-differences.json": "6af40133a0b30f2001f86cb1707999a70cd06f65068355bebc9c1a68c931f701",
-    "conformance/src/remote-config-closure/record.mjs": "d47e8cbb564b89b101acfdcb5de382b0e8c319c9fe94c8c12b8747a5313b10c5",
+    "conformance/src/remote-config-closure/record.mjs": "5aa476752bc0a2a1177647a92324b7ac181c557a487d2211ac4628f55487f9c5",
     "conformance/src/remote-config-production/judge.mjs": "060a126160211927281bbe36c2ce4377e15ee60e78bebceed4f10566923ea759",
     "conformance/src/remote-config-production/sanitise.mjs": "8ef052d47768c5a80fcb7d4c2a314ab7511c72b8a29e60a343e92c867bb0f171",
     "conformance/src/rtdb-finite-families-closure.test.mjs": "0fb70d489213edca6b71670ffe20fc92138cd0cdf0a07f7e3dff93aaa2303303",
