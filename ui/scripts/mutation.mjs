@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 // Mutation testing for the UI's pure logic and core API helpers via `targeted-mutation`.
@@ -49,7 +49,10 @@ if (!hasOption("--test") && !hasOption("--runner")) {
   }
 }
 if (!hasOption("--copy-exclude")) {
-  args.push("--copy-exclude", "dist", "--copy-exclude", "test-results", "--copy-exclude", "e2e");
+  // targeted-mutation 0.2 refuses an exclusion that does not exist (a fresh checkout has no dist).
+  for (const path of ["dist", "test-results", "e2e"]) {
+    if (existsSync(path)) args.push("--copy-exclude", path);
+  }
 }
 if (!hasOption("--timeout")) {
   args.push("--timeout", "180");
