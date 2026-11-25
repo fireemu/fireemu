@@ -73,33 +73,26 @@ test("form compares versions as offsets from the namespace baseline and times by
     {
       versionNumber: "v:3",
       rollbackSource: "v:1",
-      updateTime: "t:\u27e8t:pm\u27e9:Z",
+      updateTime: "t:ok:Z",
       description: "r:1",
       nextPageToken: "v:-3",
       other: "s:30",
     },
   );
   assert.equal(form({ rollbackSource: "0" }, "27").rollbackSource, "s:0");
-  assert.equal(
-    form({ updateTime: "2026-01-01T00:00:00Z" }, "1").updateTime,
-    "t:\u27e8t:pm\u27e9:Z",
-  );
-  assert.equal(
-    form({ updateTime: "2026-01-01T00:00:00.949Z" }, "1").updateTime,
-    "t:\u27e8t:pm\u27e9:Z",
-  );
-  assert.equal(
-    form({ updateTime: "2026-01-01T00:00:00.370Z" }, "1").updateTime,
-    "t:\u27e8t:p\u27e9:Z",
-  );
-  assert.equal(
-    form({ updateTime: "2026-01-01T00:00:00.19349Z" }, "1").updateTime,
-    "t:\u27e8t:m\u27e9:Z",
-  );
-  assert.equal(
-    form({ updateTime: "2026-01-01T00:00:00.250000Z" }, "1").updateTime,
-    "t:\u27e8t:x6\u27e9:Z",
-  );
+  // Times by the field's kind (ruling 11 item 1): protobuf digits for REST and Gen2, no trailing
+  // zeros for Gen1.
+  const at = (time, rule) => form({ updateTime: time }, "1", null, null, rule).updateTime;
+  for (const time of ["00Z", "00.949Z", "00.370Z", "00.193490Z", "00.123456789Z"])
+    assert.equal(at(`2026-01-01T00:00:${time}`, "proto"), "t:ok:Z", time);
+  assert.equal(at("2026-01-01T00:00:00.12Z", "proto"), "t:other:2:12:Z");
+  assert.equal(at("2026-01-01T00:00:00.250000Z", "proto"), "t:other:6:250000:Z");
+  assert.equal(at("2026-01-01T00:00:00.000Z", "proto"), "t:other:3:000:Z");
+  for (const time of ["00Z", "00.949Z", "00.12Z", "00.19349Z", "00.408063Z"])
+    assert.equal(at(`2026-01-01T00:00:${time}`, "minimal"), "t:ok:Z", time);
+  assert.equal(at("2026-01-01T00:00:00.120Z", "minimal"), "t:other:3:120:Z");
+  assert.equal(at("2026-01-01T00:00:00.193490Z", "minimal"), "t:other:6:193490:Z");
+  assert.equal(form({ updateTime: "2026-01-01T00:00:00.12Z" }, "1").updateTime, "t:other:2:12:Z");
   assert.equal(form({ nextPageToken: "etag-x-1" }, "1").nextPageToken, "s:etag-x-1");
   // A tag no input string can take: the literal text of a normalised form stays a string.
   assert.equal(form({ updateTime: "t:6:Z" }, "1").updateTime, "s:t:6:Z");
@@ -274,10 +267,12 @@ test("eventRows: one row per step and generation, the shared id, duplicates, and
   );
   assert.deepEqual(rows.get("event-id:c0").value, { shared: true });
   // The summary is computed from the events: the third event names no version of the run.
+  // The third event names no version of the run: an unmatched delivery (ruling 11 item 3).
   assert.deepEqual(rows.get("summary:g1").value, {
     clientSteps: ["c0"],
     serverSteps: [],
     duplicates: 0,
+    unmatched: 1,
     inPublicationOrder: true,
   });
   assert.deepEqual(rows.get("event:client:c0:g1").valueForm.data, { versionNumber: "v:1" });
@@ -442,7 +437,7 @@ test("messages compare their embedded times by form and the stale-tag versions a
       },
       "1",
     ).message,
-    "s:[VALIDATION_ERROR]: start_time [\u27e8t:pm\u27e9] must be before end_time [\u27e8t:pm\u27e9].",
+    "s:[VALIDATION_ERROR]: start_time [\u27e8t:ok\u27e9] must be before end_time [\u27e8t:ok\u27e9].",
   );
   assert.equal(
     form(
@@ -452,7 +447,7 @@ test("messages compare their embedded times by form and the stale-tag versions a
       },
       "1",
     ).message,
-    "s:end_time must be no earlier than \u27e8t:pm\u27e9 [\u27e8t:pm\u27e9 specified].",
+    "s:end_time must be no earlier than \u27e8t:ok\u27e9 [\u27e8t:ok\u27e9 specified].",
   );
   assert.equal(
     form({ message: "[VERSION_MISMATCH]: Expected version 30, found 33 for project: x" }, "27")
@@ -523,7 +518,7 @@ test("the race pair is one row: one winner each side, refused losers, winners co
     answer(`p7-${label}`, CLIENT, { error: { code: 400, status: code, message: "m" } }, { status });
   const production = runOf({ client: "27", server: "6" }, [
     publish("race-a", "30"),
-    refusal("race-b", 400, "INVALID_ARGUMENT"),
+    refusal("race-b", 412, "FAILED_PRECONDITION"),
   ]);
   const local = runOf({ client: "10", server: "20" }, [
     refusal("race-a", 412, "FAILED_PRECONDITION"),
@@ -535,6 +530,42 @@ test("the race pair is one row: one winner each side, refused losers, winners co
     ["p7-race"],
   );
   assert.equal(rows[0].status, "MATCH_LAYOUT");
+  // The losers are compared by status and the whole error body (ruling 11 item 6): the other
+  // recorded refusal, or the same status with another body, is a difference.
+  const otherRecorded = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    refusal("race-b", 400, "INVALID_ARGUMENT"),
+  ]);
+  assert.ok(
+    compareRuns(production, otherRecorded, {
+      kind: "production-vs-local",
+    }).rows[0].differences.includes("loser.status"),
+  );
+  const forged = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    answer(
+      "p7-race-b",
+      CLIENT,
+      { error: { code: 418, status: "FAILED_PRECONDITION", message: "arbitrary" } },
+      { status: 400 },
+    ),
+  ]);
+  const forgedRow = compareRuns(production, forged, { kind: "production-vs-local" }).rows[0];
+  assert.equal(forgedRow.status, "MISMATCH");
+  assert.ok(forgedRow.differences.includes("loser"));
+  const message = runOf({ client: "10", server: "20" }, [
+    publish("race-a", "13"),
+    answer(
+      "p7-race-b",
+      CLIENT,
+      { error: { code: 400, status: "FAILED_PRECONDITION", message: "other" } },
+      { status: 412 },
+    ),
+  ]);
+  assert.deepEqual(
+    compareRuns(production, message, { kind: "production-vs-local" }).rows[0].differences,
+    ["loser.body.error.message:value"],
+  );
   const both = runOf({ client: "10", server: "20" }, [
     publish("race-a", "13"),
     publish("race-b", "14"),
@@ -547,17 +578,17 @@ test("the race pair is one row: one winner each side, refused losers, winners co
     publish("race-a", "13"),
     refusal("race-b", 404, "NOT_FOUND"),
   ]);
-  assert.deepEqual(
-    compareRuns(production, other, { kind: "production-vs-local" }).rows[0].differences,
-    ["loser"],
+  assert.equal(
+    compareRuns(production, other, { kind: "production-vs-local" }).rows[0].differences[0],
+    "loser",
   );
   const conflict = runOf({ client: "10", server: "20" }, [
     publish("race-a", "13"),
     refusal("race-b", 409, "FAILED_PRECONDITION"),
   ]);
-  assert.deepEqual(
-    compareRuns(production, conflict, { kind: "production-vs-local" }).rows[0].differences,
-    ["loser"],
+  assert.equal(
+    compareRuns(production, conflict, { kind: "production-vs-local" }).rows[0].differences[0],
+    "loser",
   );
   const wrongVersion = runOf({ client: "10", server: "20" }, [
     publish("race-a", "14"),
@@ -642,40 +673,24 @@ test("escapes of a dropped history entry are not compared (ruling 5)", () => {
   );
 });
 
-test("times compare by a rendering rule both sides satisfy (RC-CLOSURE-A)", async () => {
-  const { sameForm, timeRules } = await import("./judge.mjs");
-  for (const [fraction, rules] of [
-    ["", "pm"],
-    ["949", "pm"],
-    ["370", "p"],
-    ["193490", "p"],
-    ["408063", "pm"],
-    ["19349", "m"],
-    ["37", "m"],
-    ["250000", "x6"],
-    ["000", "x3"],
-    ["1", "m"],
-    ["120", "p"],
-    ["773004124", "pm"],
-    ["773004000", "x9"],
-  ])
-    assert.equal(timeRules(fraction), rules, fraction);
-  const t = (rules) => `t:\u27e8t:${rules}\u27e9:Z`;
-  assert.ok(sameForm(t("pm"), t("p")));
-  assert.ok(sameForm(t("pm"), t("m")));
-  assert.ok(sameForm(t("p"), t("p")));
-  assert.equal(sameForm(t("p"), t("m")), false);
-  assert.equal(sameForm(t("p"), t("x6")), false);
-  assert.ok(sameForm(t("x6"), t("x6")));
-  assert.equal(sameForm(t("x6"), t("x3")), false);
-  assert.equal(sameForm(t("pm"), "t:\u27e8t:pm\u27e9:+01:00"), false);
-  const message = (a, b) => `s:start [\u27e8t:${a}\u27e9] end [\u27e8t:${b}\u27e9]`;
-  assert.ok(sameForm(message("pm", "p"), message("p", "pm")));
-  assert.equal(sameForm(message("pm", "p"), message("p", "m")), false);
-  assert.equal(sameForm(message("pm", "p"), "s:start [\u27e8t:p\u27e9] end"), false);
-  assert.equal(sameForm("s:a", "s:b"), false);
-  assert.equal(sameForm(1, "1"), false);
-  assert.ok(sameForm(null, null));
+test("timeForm: protobuf digits or no trailing zeros, by the field's kind", async () => {
+  const { timeForm } = await import("./judge.mjs");
+  for (const [fraction, proto, minimal] of [
+    ["", true, true],
+    ["949", true, true],
+    ["370", true, false],
+    ["193490", true, false],
+    ["408063", true, true],
+    ["19349", false, true],
+    ["12", false, true],
+    ["250000", false, false],
+    ["000", false, false],
+    ["773004124", true, true],
+    ["773004000", false, false],
+  ]) {
+    assert.equal(timeForm(fraction, "proto") === "ok", proto, `proto ${fraction}`);
+    assert.equal(timeForm(fraction, "minimal") === "ok", minimal, `minimal ${fraction}`);
+  }
 });
 
 test("instant reads a time whatever its fraction digits; events match their version by it", async () => {
@@ -684,8 +699,14 @@ test("instant reads a time whatever its fraction digits; events match their vers
   assert.equal(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.949000Z"));
   assert.equal(instant("2026-11-24T23:15:08Z"), instant("2026-11-24T23:15:08.000Z"));
   assert.notEqual(instant("2026-11-24T23:15:08.949Z"), instant("2026-11-24T23:15:08.948Z"));
-  // Digits past the microsecond are not part of a Remote Config time.
-  assert.equal(instant("2026-11-24T23:15:08.123456789Z"), instant("2026-11-24T23:15:08.123456Z"));
+  // The full instant (ruling 11 item 2): a nanosecond apart is another time.
+  assert.notEqual(
+    instant("2026-11-24T23:15:08.123456789Z"),
+    instant("2026-11-24T23:15:08.123456Z"),
+  );
+  assert.notEqual(instant("2026-11-24T23:15:08.120000001Z"), instant("2026-11-24T23:15:08.12Z"));
+  assert.equal(instant("2026-11-24T23:15:08.120Z"), instant("2026-11-24T23:15:08.12Z"));
+  assert.equal(instant("2026-11-24T23:15:08.1234567890Z"), null);
   assert.equal(instant("2026-11-24T23:15:08.949+00:00"), null);
   assert.equal(instant(undefined), null);
 });
@@ -731,12 +752,14 @@ test("eventRows: the summary counts repeated steps, server steps and arrival ord
     clientSteps: ["p1", "p5"],
     serverSteps: [],
     duplicates: 1,
+    unmatched: 0,
     inPublicationOrder: true,
   });
   assert.deepEqual(rows.get("summary:g2").value, {
     clientSteps: ["p5"],
     serverSteps: ["s1"],
     duplicates: 0,
+    unmatched: 0,
     inPublicationOrder: true,
   });
   const reversed = eventRows({

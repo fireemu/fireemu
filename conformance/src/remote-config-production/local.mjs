@@ -9,7 +9,7 @@
 // temporary directory outside the repository. Before the recorder starts, empty client and server templates are published
 // (the production baseline: both namespaces published and empty), ten client and twenty server
 // versions, so the version numbers the run creates in the two namespaces stay disjoint, as they
-// were in production (events carry no namespace). The configured `remoteConfig.updateUser` is the
+// were in production (events carry no namespace). The handlers' events of the setup versions are dropped before the recorder starts, as production's handlers were deployed after its baseline, so every delivery in a fixture belongs to the run. The configured `remoteConfig.updateUser` is the
 // sanitised identity, so the masked production values and the local values are the same text.
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -147,7 +147,8 @@ export async function runLocal(args) {
         if (answer.status !== 200)
           throw new Error(`setup ${path}: ${answer.status} ${await answer.text()}`);
       }
-      if (args.corpus === "closure") await dropSetupEvents(eventsFile, 2 * 10);
+      // Both corpora's setups publish ten client versions; their events are not the run's.
+      await dropSetupEvents(eventsFile, 2 * 10);
       return main(
         [
           "--target",

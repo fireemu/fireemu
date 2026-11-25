@@ -53,23 +53,27 @@ export const COMPARISONS = [
 export const PINS = {
   [FILES.pass1]: "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8",
   [FILES.pass2]: "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24",
-  [FILES.localStrict]: "f4b1c590b9608919adb08481f525a7f8c6e257bff08da955eb64902010805931",
-  [FILES.localEmulator]: "9344ee3a2116e49169ad6ac5657db6c9b468bddab6167d2196ab19471bd69854",
-  [FILES.runVsRun]: "cfba21db8146c68e4075a16ed52ca2a52f109d679dcf3b2c27d27b160c7a0761",
-  [FILES.strictVsPass1]: "ce202e8fcd8409932c27afd38ae630a5bdea3f123b2880c4dbf9160a9c9da0d5",
-  [FILES.strictVsPass2]: "5a7a2be074e1ca9080a914d8a3825b30327f8c65f6bd60f07bd182ca2e16c44b",
-  [FILES.emulatorVsPass1]: "c643afabfeb426c8c905b4e7170993f83007b3c3e4502b12b67e176843346546",
-  [FILES.emulatorVsPass2]: "9c9ccd4b20c16d5d0e80b83393135e2c5d0915287013cef1f1adf6674cb8ba12",
-  [KNOWN]: "6af40133a0b30f2001f86cb1707999a70cd06f65068355bebc9c1a68c931f701",
+  [FILES.localStrict]: "89290190cea5c6edabd1a4bb3e33ee641fb2ee70e0cbec9da546ee9584b8b502",
+  [FILES.localEmulator]: "2adaacfa02799d93a16cdab2cc4dab6b420453a9d8c564a5d5b2da7b3c953c7b",
+  [FILES.runVsRun]: "f0700d0904cfe7bc3c25ab34a680ca6c18f7087ea94aa0eb980be37ee9f6aae7",
+  [FILES.strictVsPass1]: "9436bb66f0f9e0f1270c55d23226ae66206debe5b5d670e617b4ce2ee23eb8f4",
+  [FILES.strictVsPass2]: "665f9310fec9799c8d94d03be98cee09a91eb40fe5690956dcb93fca03883c00",
+  [FILES.emulatorVsPass1]: "b0ad8e78711e33a9687330073aa830a839ac35e70150163995a17e1838c303e6",
+  [FILES.emulatorVsPass2]: "8c7a0eef3d826126c77c5474801a058368781946b3c312e985b1a7c3aad45392",
+  [KNOWN]: "3bf385a7271c432a12f54ee767acdc5c56467df7c408eac676d8e81cf7c1cad0",
 };
 
 export const TRUST_INPUTS = [...Object.values(FILES), KNOWN].toSorted();
+
+/** The defaults files, whose entry order is compared exactly (ruling 6; ruling 11 item 5). */
+export const DEFAULTS_ROWS = ["d-json", "d-xml", "d-plist", "d-explicit"];
 
 /** The content of each known-difference rule, so a rule cannot widen behind its id. */
 export const KNOWN_RULES = [
   {
     id: "KD-MEMBER-ORDER",
     rows: ["*"],
+    exceptRows: DEFAULTS_ROWS,
     fields: [],
     fieldSuffixes: [":member-order"],
     appliesTo: ["production-vs-local"],
@@ -77,6 +81,7 @@ export const KNOWN_RULES = [
   {
     id: "KD-PRODUCTION-MEMBER-ORDER",
     rows: ["*"],
+    exceptRows: DEFAULTS_ROWS,
     fields: [],
     fieldSuffixes: [":member-order"],
     appliesTo: ["production-vs-production"],
@@ -343,13 +348,16 @@ export function verifyEvidence({ list, read, pins = PINS }) {
   } catch {
     known = null;
   }
-  const rules = (known?.entries ?? []).map(({ id, rows, fields, fieldSuffixes, appliesTo }) => ({
-    id,
-    rows,
-    fields,
-    fieldSuffixes,
-    appliesTo,
-  }));
+  const rules = (known?.entries ?? []).map(
+    ({ id, rows, exceptRows, fields, fieldSuffixes, appliesTo }) => ({
+      id,
+      rows,
+      exceptRows,
+      fields,
+      fieldSuffixes,
+      appliesTo,
+    }),
+  );
   if (!isDeepStrictEqual(rules, KNOWN_RULES))
     problems.push(`${KNOWN}: the rules differ from the pinned rules`);
   const options = { cases: CASES, corpusNumber };
@@ -375,6 +383,12 @@ export function verifyEvidence({ list, read, pins = PINS }) {
     }
     if (!isDeepStrictEqual(committed, expected))
       problems.push(`${FILES[key]}: differs from the recomputed comparison`);
+    // The closure's claim: strict matches both passes and the passes match each other, so a
+    // forged local input that the judge flags never passes the check (ruling 11).
+    if (profile !== "emulator" && expected.counts.MISMATCH + expected.counts.UNKNOWN > 0)
+      problems.push(
+        `${FILES[key]}: ${expected.counts.MISMATCH} MISMATCH, ${expected.counts.UNKNOWN} UNKNOWN`,
+      );
   }
   return problems;
 }

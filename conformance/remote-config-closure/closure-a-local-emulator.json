@@ -43907,8 +43907,36 @@
   ],
   "events": [
     {
-      "generation": 2,
+      "generation": 1,
       "order": 0,
+      "receivedAt": "2026-01-01T00:01:40.120Z",
+      "logTimestamp": null,
+      "eventId": "-1372227831",
+      "versionNumber": "11",
+      "updateTime": "2026-01-01T00:01:40.12Z",
+      "data": {
+        "description": "fireemu rc-closure RUN_ID first",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:01:40.12Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "11"
+      },
+      "context": {
+        "eventId": "-1372227831",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:01:40.12Z"
+      }
+    },
+    {
+      "generation": 2,
+      "order": 1,
       "receivedAt": "2026-01-01T00:01:40.120Z",
       "logTimestamp": null,
       "eventId": "-1372227831",
@@ -43939,35 +43967,35 @@
     },
     {
       "generation": 1,
-      "order": 1,
-      "receivedAt": "2026-01-01T00:01:40.120Z",
+      "order": 2,
+      "receivedAt": "2026-01-01T00:01:45.120Z",
       "logTimestamp": null,
-      "eventId": "-1372227831",
-      "versionNumber": "11",
-      "updateTime": "2026-01-01T00:01:40.12Z",
+      "eventId": "147782110",
+      "versionNumber": "12",
+      "updateTime": "2026-01-01T00:01:45.12Z",
       "data": {
-        "description": "fireemu rc-closure RUN_ID first",
+        "description": "fireemu rc-closure RUN_ID second",
         "updateOrigin": "REST_API",
-        "updateTime": "2026-01-01T00:01:40.12Z",
-        "updateType": "INCREMENTAL_UPDATE",
+        "updateTime": "2026-01-01T00:01:45.12Z",
+        "updateType": "FORCED_UPDATE",
         "updateUser": {
           "email": "user@example.com"
         },
-        "versionNumber": "11"
+        "versionNumber": "12"
       },
       "context": {
-        "eventId": "-1372227831",
+        "eventId": "147782110",
         "eventType": "google.firebase.remoteconfig.update",
         "resource": {
           "name": "projects/PROJECT_ID",
           "service": "firebaseremoteconfig.googleapis.com"
         },
-        "timestamp": "2026-01-01T00:01:40.12Z"
+        "timestamp": "2026-01-01T00:01:45.12Z"
       }
     },
     {
       "generation": 2,
-      "order": 2,
+      "order": 3,
       "receivedAt": "2026-01-01T00:01:45.120Z",
       "logTimestamp": null,
       "eventId": "147782110",
@@ -43997,64 +44025,8 @@
       }
     },
     {
-      "generation": 1,
-      "order": 3,
-      "receivedAt": "2026-01-01T00:01:45.120Z",
-      "logTimestamp": null,
-      "eventId": "147782110",
-      "versionNumber": "12",
-      "updateTime": "2026-01-01T00:01:45.12Z",
-      "data": {
-        "description": "fireemu rc-closure RUN_ID second",
-        "updateOrigin": "REST_API",
-        "updateTime": "2026-01-01T00:01:45.12Z",
-        "updateType": "FORCED_UPDATE",
-        "updateUser": {
-          "email": "user@example.com"
-        },
-        "versionNumber": "12"
-      },
-      "context": {
-        "eventId": "147782110",
-        "eventType": "google.firebase.remoteconfig.update",
-        "resource": {
-          "name": "projects/PROJECT_ID",
-          "service": "firebaseremoteconfig.googleapis.com"
-        },
-        "timestamp": "2026-01-01T00:01:45.12Z"
-      }
-    },
-    {
-      "generation": 1,
-      "order": 4,
-      "receivedAt": "2026-01-01T00:01:46.370Z",
-      "logTimestamp": null,
-      "eventId": "1787191407",
-      "versionNumber": "13",
-      "updateTime": "2026-01-01T00:01:46.37Z",
-      "data": {
-        "description": "fireemu rc-closure RUN_ID same",
-        "updateOrigin": "REST_API",
-        "updateTime": "2026-01-01T00:01:46.37Z",
-        "updateType": "INCREMENTAL_UPDATE",
-        "updateUser": {
-          "email": "user@example.com"
-        },
-        "versionNumber": "13"
-      },
-      "context": {
-        "eventId": "1787191407",
-        "eventType": "google.firebase.remoteconfig.update",
-        "resource": {
-          "name": "projects/PROJECT_ID",
-          "service": "firebaseremoteconfig.googleapis.com"
-        },
-        "timestamp": "2026-01-01T00:01:46.37Z"
-      }
-    },
-    {
       "generation": 2,
-      "order": 5,
+      "order": 4,
       "receivedAt": "2026-01-01T00:01:46.370Z",
       "logTimestamp": null,
       "eventId": "1787191407",
@@ -44081,6 +44053,34 @@
         "specversion": "1.0",
         "time": "2026-01-01T00:01:46.370Z",
         "type": "google.firebase.remoteconfig.remoteConfig.v1.updated"
+      }
+    },
+    {
+      "generation": 1,
+      "order": 5,
+      "receivedAt": "2026-01-01T00:01:46.370Z",
+      "logTimestamp": null,
+      "eventId": "1787191407",
+      "versionNumber": "13",
+      "updateTime": "2026-01-01T00:01:46.37Z",
+      "data": {
+        "description": "fireemu rc-closure RUN_ID same",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:01:46.37Z",
+        "updateType": "INCREMENTAL_UPDATE",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "13"
+      },
+      "context": {
+        "eventId": "1787191407",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:01:46.37Z"
       }
     },
     {
@@ -44202,37 +44202,8 @@
       }
     },
     {
-      "generation": 1,
-      "order": 10,
-      "receivedAt": "2026-01-01T00:01:50.120Z",
-      "logTimestamp": null,
-      "eventId": "-2128554366",
-      "versionNumber": "16",
-      "updateTime": "2026-01-01T00:01:50.12Z",
-      "data": {
-        "description": "Rollback to version 11",
-        "rollbackSource": "11",
-        "updateOrigin": "REST_API",
-        "updateTime": "2026-01-01T00:01:50.12Z",
-        "updateType": "ROLLBACK",
-        "updateUser": {
-          "email": "user@example.com"
-        },
-        "versionNumber": "16"
-      },
-      "context": {
-        "eventId": "-2128554366",
-        "eventType": "google.firebase.remoteconfig.update",
-        "resource": {
-          "name": "projects/PROJECT_ID",
-          "service": "firebaseremoteconfig.googleapis.com"
-        },
-        "timestamp": "2026-01-01T00:01:50.12Z"
-      }
-    },
-    {
       "generation": 2,
-      "order": 11,
+      "order": 10,
       "receivedAt": "2026-01-01T00:01:50.120Z",
       "logTimestamp": null,
       "eventId": "-2128554366",
@@ -44259,6 +44230,35 @@
         "specversion": "1.0",
         "time": "2026-01-01T00:01:50.120Z",
         "type": "google.firebase.remoteconfig.remoteConfig.v1.updated"
+      }
+    },
+    {
+      "generation": 1,
+      "order": 11,
+      "receivedAt": "2026-01-01T00:01:50.120Z",
+      "logTimestamp": null,
+      "eventId": "-2128554366",
+      "versionNumber": "16",
+      "updateTime": "2026-01-01T00:01:50.12Z",
+      "data": {
+        "description": "Rollback to version 11",
+        "rollbackSource": "11",
+        "updateOrigin": "REST_API",
+        "updateTime": "2026-01-01T00:01:50.12Z",
+        "updateType": "ROLLBACK",
+        "updateUser": {
+          "email": "user@example.com"
+        },
+        "versionNumber": "16"
+      },
+      "context": {
+        "eventId": "-2128554366",
+        "eventType": "google.firebase.remoteconfig.update",
+        "resource": {
+          "name": "projects/PROJECT_ID",
+          "service": "firebaseremoteconfig.googleapis.com"
+        },
+        "timestamp": "2026-01-01T00:01:50.12Z"
       }
     },
     {
@@ -44328,10 +44328,18 @@
     "generations": {
       "1": {
         "events": 7,
-        "unmatched": 7,
-        "clientSteps": [],
+        "unmatched": 0,
+        "clientSteps": [
+          "p1",
+          "p5",
+          "p6a",
+          "p6b",
+          "p7",
+          "k1",
+          "c9"
+        ],
         "serverSteps": [],
-        "serverDelivery": "not-evidence",
+        "serverDelivery": "none-within-window",
         "duplicates": [],
         "inPublicationOrder": true
       },

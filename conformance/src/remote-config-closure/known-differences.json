@@ -5,20 +5,22 @@
     {
       "id": "KD-MEMBER-ORDER",
       "rows": ["*"],
+      "exceptRows": ["d-json", "d-xml", "d-plist", "d-explicit"],
       "fields": [],
       "fieldSuffixes": [":member-order"],
       "appliesTo": ["production-vs-local"],
-      "reason": "Fireemu writes JSON members in sorted key order; production keeps its own order. Member names, values and the layout length are still compared; only the order is not. Documented in docs/remote-config.md.",
-      "authority": "rc-observe coordinator ruling 5 (2026-11-24T06:52Z): record it as a documented difference, no serializer change"
+      "reason": "Fireemu writes JSON members in sorted key order; production keeps its own order, and that order varies between production passes (RC-CLOSURE-A pass 1 and pass 2 differ in event payloads, the rollback answer's parameters and the 401 error metadata), so no fixed order can be matched. Member names, values and the layout length are still compared; only the order of emitted member-order differences is waived, never an escape, and never the defaults files, whose entry order follows the template (ruling 6). Documented in docs/remote-config.md.",
+      "authority": "rc-observe coordinator ruling 5 (2026-11-24T06:52Z); rc-closure rulings 9 and 11 (2026-11-25)"
     },
     {
       "id": "KD-PRODUCTION-MEMBER-ORDER",
       "rows": ["*"],
+      "exceptRows": ["d-json", "d-xml", "d-plist", "d-explicit"],
       "fields": [],
       "fieldSuffixes": [":member-order"],
       "appliesTo": ["production-vs-production"],
-      "reason": "Production's own member order differs between the two passes in event payloads, the rollback answer's parameters and the 401 error metadata (the same members and values, another order), so the run-vs-run comparison does not compare it. Everything else of the two passes is compared.",
-      "authority": "rc-closure stage 5 (2026-11-25): observed in RC-CLOSURE-A passes 1 and 2; for the coordinator's ruling"
+      "reason": "Production's own member order varies between the two passes (event payloads, the rollback answer's parameters, the 401 error metadata: the same members and values in another order), so the pass-1-vs-pass-2 comparison does not compare it. Only emitted member-order differences are waived, never an escape or the defaults files' entry order; everything else of the two passes is compared.",
+      "authority": "rc-closure coordinator rulings 9 and 11 (2026-11-25): scoped to the pass-1-vs-pass-2 comparison"
     }
   ]
 }

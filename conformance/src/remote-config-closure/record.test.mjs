@@ -443,7 +443,7 @@ test("the request cap is taken before the first await: two concurrent sends at o
 });
 
 test("summarise matches a Gen1 event whose time drops trailing zeros", async () => {
-  const { microsOf } = await import("./record.mjs");
+  const { nanosOf } = await import("./record.mjs");
   const versions = [
     {
       namespace: "client",
@@ -461,5 +461,8 @@ test("summarise matches a Gen1 event whose time drops trailing zeros", async () 
   const g = summarise({ events, versions }).generations[1];
   assert.deepEqual(g.clientSteps, ["p1", "p5"]);
   assert.equal(g.unmatched, 1);
-  assert.equal(microsOf("2026-11-24T23:15:01+00:00"), null);
+  assert.equal(nanosOf("2026-11-24T23:15:01+00:00"), null);
+  // The full instant: one nanosecond apart is another time (ruling 11 item 2).
+  assert.notEqual(nanosOf("2026-11-24T23:15:01.120Z"), nanosOf("2026-11-24T23:15:01.120000001Z"));
+  assert.equal(nanosOf("2026-11-24T23:15:01.120Z"), nanosOf("2026-11-24T23:15:01.12Z"));
 });

@@ -58,11 +58,14 @@ export function idForm(value) {
   return `id:other:${value.length}`;
 }
 
-/** An RFC 3339 UTC time as microseconds, whatever its fraction digits; `null` otherwise. */
+/**
+ * An RFC 3339 UTC time as nanoseconds, whatever its fraction digits (`.120Z` and `.12Z` are one
+ * instant, `.120000001Z` another; ruling 11 item 2); `null` otherwise.
+ */
 export function instant(text) {
-  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/.exec(text ?? "");
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(text ?? "");
   if (!m) return null;
-  return BigInt(Date.parse(`${m[1]}Z`)) * 1000n + BigInt((m[2] ?? "").padEnd(6, "0").slice(0, 6));
+  return BigInt(Date.parse(`${m[1]}Z`)) * 1_000_000_000n + BigInt((m[2] ?? "").padEnd(9, "0"));
 }
 
 export const namespaceOf = (path) =>
@@ -71,15 +74,17 @@ export const namespaceOf = (path) =>
 /** The form of one value, with the version numbers of `namespace` as offsets from `base`. */
 const CANONICAL = /^(?:0|[1-9][0-9]*)$/;
 
-export function form(value, base, key = null, source = null) {
-  if (Array.isArray(value)) return value.map((item) => form(item, base, null, source));
+export function form(value, base, key = null, source = null, rule = "proto") {
+  if (Array.isArray(value)) return value.map((item) => form(item, base, null, source, rule));
   if (value && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, form(v, base, k, source)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, form(v, base, k, source, rule)]),
+    );
   if (typeof value === "string") {
     // An id member is read by idForm on both sides, so its form needs no tag.
     if (ID_KEYS.has(key)) return idForm(value);
     const time = TIME.exec(value);
-    if (time) return `t:\u27e8t:${timeRules(time[1] ?? "")}\u27e9:${time[2]}`;
+    if (time) return `t:${timeForm(time[1] ?? "", rule)}:${time[2]}`;
     // The baseline version's own rollback source is the sandbox's state, not the pass's
     // behaviour: it reads as `base-source` on either side (RC-CLOSURE-A pass 2 started on a
     // rollback to 32, pass 1 on one to 27).
@@ -99,34 +104,17 @@ export function form(value, base, key = null, source = null) {
 }
 
 /**
- * The rendering rules a time's fraction satisfies: `p` as protobuf JSON writes a timestamp (no
- * fraction, or 3, 6 or 9 digits whose last group is not 000), `m` without trailing zeros; `x<n>`
- * for neither. Production writes REST times and Gen2 events by `p` and Gen1 events by `m`
- * (RC-CLOSURE-A 2026-11-25: `.949`, `.193490`, Gen1 `.19349`); two times compare equal when they
- * share a rule, so the judge does not depend on which digits a run's clock happened to give.
+ * Whether a time's fraction is written as the field's kind requires (ruling 11 item 1): `proto` as
+ * protobuf JSON writes a timestamp (REST answers and Gen2 events: no fraction, or 3, 6 or 9 digits
+ * whose last group is not 000; RC-CLOSURE-A `.949`, `.193490`), `minimal` without trailing zeros
+ * (Gen1 events: `.19349`). A conforming time reads `ok`, any other spelling as itself.
  */
-export function timeRules(fraction) {
-  const proto =
-    fraction === "" || ([3, 6, 9].includes(fraction.length) && !fraction.endsWith("000"));
-  const minimal = !fraction.endsWith("0");
-  const rules = `${proto ? "p" : ""}${minimal ? "m" : ""}`;
-  return rules || `x${fraction.length}`;
-}
-
-const RULES = /\u27e8t:([a-z0-9]+)\u27e9/g;
-
-/** Whether two compared leaf forms are equal, times compared by a shared rendering rule. */
-export function sameForm(a, b) {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  if (a.replace(RULES, "\u27e8t\u27e9") !== b.replace(RULES, "\u27e8t\u27e9")) return false;
-  const ra = [...a.matchAll(RULES)].map((m) => m[1]);
-  const rb = [...b.matchAll(RULES)].map((m) => m[1]);
-  return ra.every((rule, i) =>
-    rule.startsWith("x") || rb[i].startsWith("x")
-      ? rule === rb[i]
-      : [...rule].some((letter) => rb[i].includes(letter)),
-  );
+export function timeForm(fraction, rule) {
+  const fits =
+    rule === "minimal"
+      ? !fraction.endsWith("0")
+      : fraction === "" || ([3, 6, 9].includes(fraction.length) && !fraction.endsWith("000"));
+  return fits ? "ok" : `other:${fraction.length}:${fraction}`;
 }
 
 /**
@@ -138,7 +126,7 @@ function embedded(text, base) {
   return text
     .replace(
       /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.(\d+))?Z/g,
-      (_, fraction) => `\u27e8t:${timeRules(fraction ?? "")}\u27e9`,
+      (_, fraction) => `\u27e8t:${timeForm(fraction ?? "", "proto")}\u27e9`,
     )
     .replace(
       /^(\[VERSION_MISMATCH\]: Expected version )((?:0|[1-9][0-9]*)), found ((?:0|[1-9][0-9]*))/,
@@ -197,7 +185,7 @@ export function diffValues(a, b, path = "body") {
     for (const k of shared) out.push(...diffValues(a[k], b[k], `${path}.${k}`));
     return out;
   }
-  return sameForm(a, b) ? [] : [`${path}:value`];
+  return Object.is(a, b) ? [] : [`${path}:value`];
 }
 
 const historyProjection = (body, base) =>
@@ -300,7 +288,14 @@ export function eventRows(run) {
     const id = `event:${version.namespace}:${version.step}:g${event.generation}`;
     const base = run.baseline[version.namespace].version;
     const value = { data: event.data, context: event.context };
-    rows.set(id, rows.has(id) ? { duplicate: true } : { value, valueForm: form(value, base) });
+    // Gen1 writes times without trailing zeros, Gen2 as protobuf does (ruling 11 item 1).
+    const rule = event.generation === 1 ? "minimal" : "proto";
+    rows.set(
+      id,
+      rows.has(id)
+        ? { duplicate: true }
+        : { value, valueForm: form(value, base, null, null, rule) },
+    );
     if (version.namespace === "client") {
       const key = `event-id:${version.step}`;
       ids.set(key, { ...ids.get(key), [event.generation]: event.eventId });
@@ -325,16 +320,17 @@ export function eventRows(run) {
     });
   // The delivery summary per generation, computed here from the events and the versions (the
   // recorder's own summary matched times as text, and Gen1 drops trailing zeros): the client and
-  // server steps in arrival order, the steps that arrived more than once, and whether the client
-  // steps arrived in publication order.
+  // server steps in arrival order, the steps that arrived more than once, whether the client steps
+  // arrived in publication order, and every delivery that names no version of the run (an extra
+  // or unexpected event is a difference, never dropped; ruling 11 item 3).
   const publication = new Map(run.versions.map((v, i) => [v, i]));
   for (const generation of [1, 2]) {
-    const arrived = run.events
+    const delivered = run.events
       .filter((event) => event.generation === generation)
       .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0))
-      .map((event) => steps.get(at(event.versionNumber, event.updateTime)))
-      .filter(Boolean);
-    if (!arrived.length && !run.summary?.generations?.[generation]) continue;
+      .map((event) => steps.get(at(event.versionNumber, event.updateTime)));
+    const arrived = delivered.filter(Boolean);
+    if (!delivered.length && !run.summary?.generations?.[generation]) continue;
     const seen = new Set();
     let duplicates = 0;
     for (const version of arrived) {
@@ -346,6 +342,7 @@ export function eventRows(run) {
       clientSteps: client.map((v) => v.step),
       serverSteps: [...seen].filter((v) => v.namespace === "server").map((v) => v.step),
       duplicates,
+      unmatched: delivered.length - arrived.length,
       inPublicationOrder: client.every(
         (v, i) => i === 0 || publication.get(client[i - 1]) < publication.get(v),
       ),
@@ -358,8 +355,12 @@ export function eventRows(run) {
 function applyKnown(id, fields, known, kind) {
   const entries = known.filter(
     (entry) =>
-      entry.appliesTo.includes(kind) && (entry.rows.includes("*") || entry.rows.includes(id)),
+      entry.appliesTo.includes(kind) &&
+      (entry.rows.includes("*") || entry.rows.includes(id)) &&
+      !(entry.exceptRows ?? []).includes(id),
   );
+  // A suffix waives only a difference the comparison emitted with it (a member-order difference of
+  // a body path), never an escape path, whose pointer can carry any member name (ruling 11 item 4).
   const covered = (field) =>
     entries.find(
       (entry) =>
@@ -369,7 +370,9 @@ function applyKnown(id, fields, known, kind) {
             field.startsWith(`${f}.`) ||
             field.startsWith(`${f}[`) ||
             field.startsWith(`${f}:`),
-        ) || (entry.fieldSuffixes ?? []).some((suffix) => field.endsWith(suffix)),
+        ) ||
+        (!field.startsWith("escapes:") &&
+          (entry.fieldSuffixes ?? []).some((suffix) => field.endsWith(suffix))),
     );
   const remaining = fields.filter((field) => !covered(field));
   const used = [
@@ -478,12 +481,21 @@ function raceVerdict(left, right, known, kind) {
   if (!sa || !sb)
     return { id, status: "UNKNOWN", reason: "race-outcome", differences: [], knownDifferences: [] };
   const fields = [];
+  // The loser is one of the recorded refusals (400 INVALID_ARGUMENT, 2026-11-21; 412
+  // FAILED_PRECONDITION, RC-CLOSURE-A) and both sides answer it alike: status and the whole error
+  // body together (ruling 11 item 6).
   for (const loser of [sa.loser, sb.loser]) {
-    const refused =
-      [400, 412].includes(loser.status) &&
-      ["FAILED_PRECONDITION", "INVALID_ARGUMENT"].includes(loser.body?.error?.status);
-    if (!refused) fields.push("loser");
+    const error = loser.body?.error;
+    const recorded =
+      (loser.status === 400 && error?.code === 400 && error?.status === "INVALID_ARGUMENT") ||
+      (loser.status === 412 && error?.code === 400 && error?.status === "FAILED_PRECONDITION");
+    if (!recorded) fields.push("loser");
   }
+  const loser = compareAnswers(
+    projectRow(sa.loser, left.baseline),
+    projectRow(sb.loser, right.baseline),
+  );
+  fields.push(...loser.fields.map((field) => `loser.${field}`));
   const winner = compareAnswers(
     projectRow(sa.winner, left.baseline),
     projectRow(sb.winner, right.baseline),

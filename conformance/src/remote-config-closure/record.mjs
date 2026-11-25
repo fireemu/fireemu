@@ -639,11 +639,11 @@ export async function observe(ctx) {
   return { result, events };
 }
 
-/** An RFC 3339 UTC time as microseconds, whatever its fraction digits; `null` otherwise. */
-export function microsOf(text) {
-  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z$/.exec(text ?? "");
+/** An RFC 3339 UTC time as nanoseconds, whatever its fraction digits; `null` otherwise. */
+export function nanosOf(text) {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?Z$/.exec(text ?? "");
   if (!m) return null;
-  return BigInt(Date.parse(`${m[1]}Z`)) * 1000n + BigInt((m[2] ?? "").padEnd(6, "0").slice(0, 6));
+  return BigInt(Date.parse(`${m[1]}Z`)) * 1_000_000_000n + BigInt((m[2] ?? "").padEnd(9, "0"));
 }
 
 /**
@@ -654,7 +654,7 @@ export function microsOf(text) {
 export function summarise({ events, versions, truncated = false }) {
   // An event names its version by number and time, the time read as an instant: Gen1 drops
   // trailing zeros that the version keeps (RC-CLOSURE-A 2026-11-25: `.19349` for `.193490`).
-  const at = (number, time) => `${number}|${microsOf(time) ?? time}`;
+  const at = (number, time) => `${number}|${nanosOf(time) ?? time}`;
   const index = new Map(versions.map((v, i) => [at(v.versionNumber, v.updateTime), { ...v, i }]));
   const numbers = (ns) =>
     new Set(versions.filter((v) => v.namespace === ns).map((v) => v.versionNumber));

@@ -375,7 +375,8 @@
       "profiles": {
         "strict": "MATCHES_RECORDED_CASES",
         "emulator": "NO_PRODUCTION_CLAIM"
-      }
+      },
+      "verifiedScope": "Production parity of the server namespace's wire as recorded: the 24 validations, the publication, wildcard publication, rollback and history, the admin read and the serverRemoteConfig data plane the Admin SDK reads (both passes). Evaluation is the Admin SDK's own: Fireemu's local evidence is that the pinned Admin SDK evaluates a local template (npm/scripts/testing-worlds.test.mjs); no same-input comparison of evaluated values against production is recorded, so none is claimed (coordinator ruling 11)."
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
@@ -458,7 +459,7 @@
     "evidence": "conformance/src/remote-config-closure/evidence.mjs",
     "closureTest": "conformance/src/remote-config-closure.test.mjs",
     "knownDifferencesPath": "conformance/src/remote-config-closure/known-differences.json",
-    "knownDifferencesSha256": "6af40133a0b30f2001f86cb1707999a70cd06f65068355bebc9c1a68c931f701",
+    "knownDifferencesSha256": "3bf385a7271c432a12f54ee767acdc5c56467df7c408eac676d8e81cf7c1cad0",
     "recordingPolicy": {
       "observedPasses": 2,
       "requiredPasses": 2,
@@ -480,39 +481,39 @@
       {
         "profile": "strict",
         "fixturePath": "conformance/remote-config-closure/closure-a-local-strict.json",
-        "fixtureSha256": "f4b1c590b9608919adb08481f525a7f8c6e257bff08da955eb64902010805931"
+        "fixtureSha256": "89290190cea5c6edabd1a4bb3e33ee641fb2ee70e0cbec9da546ee9584b8b502"
       },
       {
         "profile": "emulator",
         "fixturePath": "conformance/remote-config-closure/closure-a-local-emulator.json",
-        "fixtureSha256": "9344ee3a2116e49169ad6ac5657db6c9b468bddab6167d2196ab19471bd69854"
+        "fixtureSha256": "2adaacfa02799d93a16cdab2cc4dab6b420453a9d8c564a5d5b2da7b3c953c7b"
       }
     ],
     "comparisons": [
       {
         "name": "runVsRun",
         "comparisonPath": "conformance/remote-config-closure/closure-a-pass-1-vs-pass-2.json",
-        "comparisonSha256": "cfba21db8146c68e4075a16ed52ca2a52f109d679dcf3b2c27d27b160c7a0761"
+        "comparisonSha256": "f0700d0904cfe7bc3c25ab34a680ca6c18f7087ea94aa0eb980be37ee9f6aae7"
       },
       {
         "name": "strictVsPass1",
         "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-1.json",
-        "comparisonSha256": "ce202e8fcd8409932c27afd38ae630a5bdea3f123b2880c4dbf9160a9c9da0d5"
+        "comparisonSha256": "9436bb66f0f9e0f1270c55d23226ae66206debe5b5d670e617b4ce2ee23eb8f4"
       },
       {
         "name": "strictVsPass2",
         "comparisonPath": "conformance/remote-config-closure/closure-a-strict-vs-pass-2.json",
-        "comparisonSha256": "5a7a2be074e1ca9080a914d8a3825b30327f8c65f6bd60f07bd182ca2e16c44b"
+        "comparisonSha256": "665f9310fec9799c8d94d03be98cee09a91eb40fe5690956dcb93fca03883c00"
       },
       {
         "name": "emulatorVsPass1",
         "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-1.json",
-        "comparisonSha256": "c643afabfeb426c8c905b4e7170993f83007b3c3e4502b12b67e176843346546"
+        "comparisonSha256": "b0ad8e78711e33a9687330073aa830a839ac35e70150163995a17e1838c303e6"
       },
       {
         "name": "emulatorVsPass2",
         "comparisonPath": "conformance/remote-config-closure/closure-a-emulator-vs-pass-2.json",
-        "comparisonSha256": "9c9ccd4b20c16d5d0e80b83393135e2c5d0915287013cef1f1adf6674cb8ba12"
+        "comparisonSha256": "8c7a0eef3d826126c77c5474801a058368781946b3c312e985b1a7c3aad45392"
       }
     ],
     "emulatorProfile": "The emulator profile is compared but carries no production claim: it accepts the client conditions and the four server conditions production refused, so those validations and the server publication that carries the accepted conditions differ (28 rows of each emulator comparison); every other row matches as in strict."
