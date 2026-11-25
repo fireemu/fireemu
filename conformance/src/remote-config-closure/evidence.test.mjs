@@ -342,3 +342,38 @@ test("forgery r4 Should: an unrelated change in an emulator carrier row", () => 
     problems.join("\n"),
   );
 });
+
+test("the emulator check: a refusal the emulator suddenly makes, and a refusal of another status", () => {
+  // The emulator answers one refused condition as production does: 27 mismatches, not 28.
+  const files = headFiles();
+  const pass = JSON.parse(files[FILES.pass1]);
+  const refused = rowOf(pass, "v-cond-negation");
+  const fewer = reforge(files, FILES.localEmulator, (fixture) => {
+    const row = rowOf(fixture, "v-cond-negation");
+    for (const key of [
+      "status",
+      "bodyBytes",
+      "skeletonBytes",
+      "escapes",
+      "etag",
+      "body",
+      "contentType",
+      "contentEncoding",
+    ])
+      row[key] = structuredClone(refused[key]);
+  });
+  assert.ok(
+    check(fewer).some((p) => /emulator-vs-pass-1\.json: 27 MISMATCH rows, not 28/.test(p)),
+    check(fewer).join("\n"),
+  );
+  // Production and strict agree on another refusal status: not one of the recorded 400s.
+  const other = reforgeAll([
+    [FILES.pass1, (fixture) => (rowOf(fixture, "v-cond-negation").status = 403)],
+    [FILES.pass2, (fixture) => (rowOf(fixture, "v-cond-negation").status = 403)],
+    [FILES.localStrict, (fixture) => (rowOf(fixture, "v-cond-negation").status = 403)],
+  ]);
+  assert.ok(
+    check(other).some((p) => p.includes("v-cond-negation is not a strict-only refusal")),
+    check(other).join("\n"),
+  );
+});
