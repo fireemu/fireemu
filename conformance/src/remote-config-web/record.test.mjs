@@ -330,7 +330,13 @@ test("ruling 18 item 7: A2 needs the recorder gone, a checkpoint of the run and 
     a2Refusal((await passDir(t, result, { pid: alive.pid })).pass),
     /recorder is still running/,
   );
-  assert.equal(a2Refusal((await passDir(t, result, { pid: process.pid })).pass), null);
+  // Where ps can read a live process's command (not under the mutation sandbox), a pid reused by
+  // another command does not hold A2 back; where it cannot, the pid counts as the recorder.
+  const { spawnSync } = await import("node:child_process");
+  const readable = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "args="]).status === 0;
+  const reused = a2Refusal((await passDir(t, result, { pid: process.pid })).pass);
+  if (readable) assert.equal(reused, null);
+  else assert.match(reused, /recorder is still running/);
 });
 
 test("ruling 18 item 7: main refuses A2 before it reads a token or creates anything", async (t) => {

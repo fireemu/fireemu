@@ -173,7 +173,8 @@ export function recorderAlive(pid) {
   try {
     args = execFileSync("/bin/ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8" });
   } catch {
-    return false;
+    // The pid is alive and its command cannot be read: it may be the recorder.
+    return true;
   }
   return args.includes("remote-config-web/record.mjs") || args.includes("launch-b12.sh");
 }
