@@ -67,7 +67,7 @@ test("the page may load its own files, the three bundles and the three hosts, no
   assert.equal(classify(`${origin}/lib/other.mjs`, origin), "refused");
   for (const file of BUNDLES) assert.equal(classify(`${GSTATIC}${file}`, origin), "bundle");
   assert.equal(classify(`${GSTATIC}firebase-auth.js`, origin), "refused");
-  for (const host of HOSTS) assert.equal(classify(`https://${host}/v1/x`, origin), "allowed");
+  for (const host of HOSTS) assert.equal(classify(`https://${host}/v1/x`, origin), "remote");
   for (const href of [
     "http://firebaseremoteconfig.googleapis.com/v1/x",
     "https://firebaseremoteconfig.googleapis.com:8443/v1/x",
@@ -126,4 +126,177 @@ test("the corpus: two signal sets, the template's conditions and value types", (
   );
   assert.equal(v1.version.description, "fireemu rc-closure-b 261125000000abc v1");
   assert.equal(KEY_ID, "rc-closure-b-sdk");
+});
+
+// ---- RC-CLOSURE-B v1.1 (ruling 16) ----
+
+test("v1.1 item 4: the page's requests by method, host, path and query, bound to the context", async () => {
+  const { requestPolicy } = await import("./driver.mjs");
+  const own = { project: "p-web", key: "K1", fids: new Set() };
+  const fid = "cAAAAAAAAAAAAAAAAAAAAA";
+  const ask = (method, href, { headers = {}, postData } = {}) =>
+    requestPolicy({ method, href, headers, postData }, own);
+  const inst = "https://firebaseinstallations.googleapis.com/v1/projects/p-web/installations";
+  const keyed = { headers: { "x-goog-api-key": "K1" } };
+  // An installation's own requests only after its create named it.
+  assert.equal(ask("POST", `${inst}/${fid}/authTokens:generate`, keyed), "path");
+  assert.equal(ask("POST", inst, { ...keyed, postData: JSON.stringify({ fid }) }), "allowed");
+  assert.equal(ask("POST", `${inst}/${fid}/authTokens:generate`, keyed), "allowed");
+  assert.equal(ask("DELETE", `${inst}/${fid}`, keyed), "delete");
+  for (const [method, href, options, reason] of [
+    [
+      "POST",
+      inst,
+      { headers: { "x-goog-api-key": "K2" }, postData: JSON.stringify({ fid }) },
+      "key",
+    ],
+    ["POST", inst, { ...keyed, postData: JSON.stringify({ fid: "short" }) }, "installation id"],
+    ["POST", `${inst}?x=1`, { ...keyed, postData: JSON.stringify({ fid }) }, "query"],
+    ["GET", `${inst}/${fid}`, keyed, "method"],
+    ["DELETE", `${inst}/cBBBBBBBBBBBBBBBBBBBBB`, keyed, "path"],
+    ["DELETE", inst.replace("p-web", "other") + `/${fid}`, keyed, "path"],
+    ["POST", `${inst}/${fid}/other`, keyed, "path"],
+    [
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/other/namespaces/firebase:fetch?key=K1",
+      {},
+      "path",
+    ],
+    [
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase-server:fetch?key=K1",
+      {},
+      "path",
+    ],
+    [
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K2",
+      {},
+      "query",
+    ],
+    [
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1&x=1",
+      {},
+      "query",
+    ],
+    [
+      "GET",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1",
+      {},
+      "method",
+    ],
+    [
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:streamFetchInvalidations?key=K1",
+      {},
+      "path",
+    ],
+  ])
+    assert.equal(ask(method, href, options), reason, `${method} ${href}`);
+  assert.equal(
+    ask(
+      "POST",
+      "https://firebaseremoteconfig.googleapis.com/v1/projects/p-web/namespaces/firebase:fetch?key=K1",
+    ),
+    "allowed",
+  );
+  assert.equal(
+    ask(
+      "POST",
+      "https://firebaseremoteconfigrealtime.googleapis.com/v1/projects/p-web/namespaces/firebase:streamFetchInvalidations?key=K1",
+    ),
+    "allowed",
+  );
+});
+
+test("v1.1 item 5: a granted name is read only under the full API Keys prefix and in its form", () => {
+  const grants = {
+    operations: new Set(["operations/akmf.1"]),
+    key: `projects/${NUMBER}/locations/global/keys/abc`,
+  };
+  const allow = productionAllow(PROJECT, grants);
+  const ok = (href, method = "GET") => allow(new URL(href), method);
+  assert.ok(ok("https://apikeys.googleapis.com/v2/operations/akmf.1"));
+  assert.ok(ok(`https://apikeys.googleapis.com/v2/${grants.key}`, "DELETE"));
+  for (const [href, method] of [
+    ["https://apikeys.googleapis.com/v1/operations/akmf.1", "GET"],
+    [`https://apikeys.googleapis.com/v1/${grants.key}`, "DELETE"],
+    [`https://apikeys.googleapis.com/v2/${grants.key}#x`, "GET"],
+  ])
+    assert.equal(ok(href, method), false, href);
+  // A grant not in its form is never usable.
+  const bad = productionAllow(PROJECT, {
+    operations: new Set(["projects/x"]),
+    key: "projects/other/keys/x",
+  });
+  assert.equal(bad(new URL("https://apikeys.googleapis.com/v2/projects/x"), "GET"), false);
+  assert.equal(
+    bad(new URL("https://apikeys.googleapis.com/v2/projects/other/keys/x"), "DELETE"),
+    false,
+  );
+});
+
+test("v1.1 item 7: A2 has its own two read-only forms and fails closed on an incomplete key list", async () => {
+  const { a2Allow, readBack } = await import("./record.mjs");
+  const u = adminUrls(PROJECT);
+  const allow = a2Allow(PROJECT);
+  assert.ok(allow(new URL(u.client), "GET"));
+  assert.ok(allow(new URL(u.keysListDeleted), "GET"));
+  for (const [href, method] of [
+    [u.client, "PUT"],
+    [`${u.client}:rollback`, "POST"],
+    [u.keysList, "GET"],
+    [u.keysCreate, "POST"],
+    [u.services, "GET"],
+  ])
+    assert.equal(allow(new URL(href), method), false, `${method} ${href}`);
+  const transport = (keys) => ({
+    count: 2,
+    send: async (caseId) =>
+      caseId === "a2-client"
+        ? { status: 200, json: { version: { versionNumber: "46" } } }
+        : { status: 200, json: keys },
+  });
+  assert.equal((await readBack(transport({ keys: [] }), u)).atBaseline, true);
+  assert.equal(
+    (await readBack(transport({ keys: [], nextPageToken: "more" }), u)).atBaseline,
+    false,
+  );
+  assert.equal(
+    (await readBack(transport({ keys: [{ displayName: KEY_ID }] }), u)).atBaseline,
+    false,
+  );
+});
+
+test("v1.1 item 7: A2 refuses to read within ten minutes of the pass's last activity", async (t) => {
+  const { writeFileSync, utimesSync } = await import("node:fs");
+  const { lastActivity } = await import("./record.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-a2-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const pass = join(dir, "pass");
+  (await import("node:fs")).mkdirSync(pass);
+  writeFileSync(join(pass, "run.json"), '{"runId":"261125000000abc"}\n');
+  writeFileSync(join(pass, "journal.jsonl"), "{}\n");
+  await assert.rejects(
+    main(["--send-production", "--a2-of", pass, "--out", join(dir, "a2")], {
+      FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER,
+    }),
+    /10 minutes after the pass's last activity/,
+  );
+  const old = Date.now() / 1000 - 3600;
+  utimesSync(join(pass, "run.json"), old, old);
+  utimesSync(join(pass, "journal.jsonl"), old, old);
+  assert.ok(Date.now() - lastActivity(pass) > 3_000_000);
+});
+
+test("v1.1 item 8: the SDK bundles are refused unless they are the pinned bytes and version", async (t) => {
+  const { pinnedBundles, BUNDLE_SHA256 } = await import("./driver.mjs");
+  assert.deepEqual(Object.keys(pinnedBundles()), Object.keys(BUNDLE_SHA256));
+  assert.throws(() => pinnedBundles(undefined, "12.18.1"), /not the pinned 12\.18\.0/);
+  const { writeFileSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-bundles-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const file of Object.keys(BUNDLE_SHA256)) writeFileSync(join(dir, file), "export {};\n");
+  assert.throws(() => pinnedBundles(dir, "12.18.0"), /is not the pinned bundle/);
 });

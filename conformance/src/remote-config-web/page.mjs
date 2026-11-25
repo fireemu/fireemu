@@ -85,7 +85,8 @@ const headersOf = (headers) =>
         if (lower === "x-goog-firebase-installations-auth") return [lower, label("TOKEN", value)];
         if (lower.startsWith("x-goog-api-key"))
           return [lower, value === KEY ? "API_KEY" : "OTHER_KEY"];
-        return [lower, value];
+        // Every value is masked: an ETag or any other header can carry a credential.
+        return [lower, maskText(value)];
       }),
   );
 
@@ -98,12 +99,22 @@ const parse = (text) => {
 };
 
 export const wire = [];
+/** The raw text of each open or closed stream, never returned unmasked. */
+const raw = new Map();
+/** A deep copy of a value with every string masked (whatever the page returns to the recorder). */
+const masked = (value) => {
+  if (Array.isArray(value)) return value.map(masked);
+  if (value && typeof value === "object")
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [maskText(k), masked(v)]));
+  return typeof value === "string" ? maskText(value) : value;
+};
 let sequence = 0;
 const started = performance.now();
 const realFetch = window.fetch.bind(window);
 
 window.fetch = async (resource, init) => {
-  const request = new Request(resource, init);
+  // A redirect is an error, never followed: the recorder's hook sees and counts every request.
+  const request = new Request(resource, { ...init, redirect: "error" });
   const url = new URL(request.url);
   const n = (sequence += 1);
   const bodyText = request.method === "GET" ? "" : await request.clone().text();
@@ -148,7 +159,10 @@ window.fetch = async (resource, init) => {
     // The stream is read here frame by frame (chunk by chunk, with its arrival time) while the SDK
     // reads its own copy.
     const [own, copy] = response.body.tee();
+    // The chunks' raw text stays in the page; the recorder sees their arrival times and lengths
+    // and the whole stream masked at once, so a value split across chunks is still masked.
     entry.chunks = [];
+    raw.set(entry, "");
     (async () => {
       const reader = copy.getReader();
       const decoder = new TextDecoder();
@@ -156,10 +170,9 @@ window.fetch = async (resource, init) => {
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
-          entry.chunks.push({
-            at: Math.round(performance.now() - started),
-            text: maskText(decoder.decode(value, { stream: true })),
-          });
+          const text = decoder.decode(value, { stream: true });
+          raw.set(entry, raw.get(entry) + text);
+          entry.chunks.push({ at: Math.round(performance.now() - started), length: text.length });
         }
         entry.ended = "done";
       } catch (error) {
@@ -203,7 +216,7 @@ window.rc = {
         { value: value.asString(), source: value.getSource() },
       ]),
     );
-    return { activated, error, values, lastFetchStatus: remoteConfig.lastFetchStatus };
+    return masked({ activated, error, values, lastFetchStatus: remoteConfig.lastFetchStatus });
   },
   /** Opens the realtime listener; updates are kept with the keys they name. */
   listen() {
@@ -227,16 +240,21 @@ window.rc = {
     subscription = null;
     return true;
   },
-  updates: () => structuredClone(updates),
+  updates: () => masked(updates),
   /** The recorded exchanges since `from` (every value already masked). */
-  wire: (from = 0) => structuredClone(wire.slice(from)),
+  wire: (from = 0) =>
+    masked(
+      wire
+        .slice(from)
+        .map((entry) => (raw.has(entry) ? { ...entry, text: raw.get(entry) } : entry)),
+    ),
   /** Deletes this context's installation through the SDK (the recorded DELETE). */
   async deleteInstallation() {
     try {
       await installationsModule.deleteInstallations(installationsModule.getInstallations(app));
-      return { deleted: true };
+      return masked({ deleted: true });
     } catch (caught) {
-      return { deleted: false, error: caught?.code ?? caught?.name ?? "error" };
+      return masked({ deleted: false, error: caught?.code ?? caught?.name ?? "error" });
     }
   },
 };

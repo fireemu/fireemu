@@ -31,7 +31,12 @@ const TIMING = {
 };
 
 /** The fake service: client template history, installations, pending realtime streams. */
-function world({ deleteFails = false } = {}) {
+function world({
+  deleteFails = false,
+  deleteHangs = false,
+  fetchStatus = 200,
+  echoKey = false,
+} = {}) {
   const history = new Map([[27, {}]]);
   let version = 27;
   const pending = [];
@@ -91,6 +96,7 @@ function world({ deleteFails = false } = {}) {
     const url = new URL(request.url());
     const expose = { "access-control-expose-headers": "etag" };
     if (url.host === "firebaseinstallations.googleapis.com") {
+      if (request.method() === "DELETE" && deleteHangs) return new Promise(() => {});
       if (request.method() === "DELETE")
         return deleteFails
           ? {
@@ -119,16 +125,27 @@ function world({ deleteFails = false } = {}) {
         }),
       };
     }
+    if (url.pathname.endsWith(":fetch") && fetchStatus !== 200)
+      return {
+        status: fetchStatus,
+        headers: { "content-type": "application/json" },
+        body: '{"error":{"code":429}}',
+      };
     if (url.pathname.endsWith(":fetch")) {
       const body = JSON.parse(request.postData());
-      const tag = `etag-v${version}`;
+      // `echoKey`: an answer that carries the key in a value and in its ETag.
+      const key = url.searchParams.get("key");
+      const tag = echoKey ? `etag-v${version}-${key}` : `etag-v${version}`;
       if (request.headers()["if-none-match"] === tag)
         return { status: 304, headers: { etag: tag, ...expose }, body: "" };
       return {
         status: 200,
         headers: { "content-type": "application/json", etag: tag, ...expose },
         body: JSON.stringify({
-          entries: evaluate(history.get(version), body.custom_signals ?? {}),
+          entries: {
+            ...evaluate(history.get(version), body.custom_signals ?? {}),
+            ...(echoKey ? { fireemu_echo: key } : {}),
+          },
           state: "UPDATE",
           templateVersion: String(version),
         }),
@@ -191,10 +208,13 @@ test(
     assert.equal(typeof result.steps.find((s) => s.name === "r-reopen").reopened, "boolean");
     assert.ok(result.steps.find((s) => s.name === "r5-changed").updated);
     const wire = result.clients.one.wire;
-    const frames = wire
-      .filter((e) => e.path.endsWith(":streamFetchInvalidations"))
-      .flatMap((e) => e.chunks ?? []);
-    assert.ok(frames.some((c) => c.text.includes("latestTemplateVersionNumber")));
+    const streamsSeen = wire.filter((e) => e.path.endsWith(":streamFetchInvalidations"));
+    assert.ok(streamsSeen.some((e) => e.text?.includes("latestTemplateVersionNumber")));
+    assert.ok(
+      streamsSeen.every((e) =>
+        (e.chunks ?? []).every((c) => typeof c.length === "number" && !("text" in c)),
+      ),
+    );
     // The key, the installation ids and every installation credential never leave the page.
     const text = JSON.stringify(result);
     for (const secret of [
@@ -263,8 +283,21 @@ test(
 );
 
 /** The production admin surfaces around the template: services, web apps and the API Keys service. */
-function productionAdmin(fake, { keyLost = false, keyStaysLive = false } = {}) {
+function productionAdmin(
+  fake,
+  {
+    keyLost = false,
+    keyStaysLive = false,
+    listStatus = 200,
+    listNextPage = false,
+    appsNextPage = false,
+    createPollFailures = 0,
+    createLost = false,
+    keyProject = NUMBER,
+  } = {},
+) {
   const keys = [];
+  let createPolls = 0;
   const json = (status, body) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   return async (url, init) => {
@@ -277,18 +310,32 @@ function productionAdmin(fake, { keyLost = false, keyStaysLive = false } = {}) {
     if (url.host === "firebase.googleapis.com")
       return json(200, {
         apps: [{ displayName: "listen-l1", appId: `1:${NUMBER}:web:0000000000000000000000` }],
+        ...(appsNextPage ? { nextPageToken: "more" } : {}),
       });
     if (url.host === "apikeys.googleapis.com") {
       const path = url.pathname.slice("/v2/".length);
       if (init.method === "POST") {
-        const name = `projects/${NUMBER}/locations/global/keys/k${keys.length}`;
+        const name = `projects/${keyProject}/locations/global/keys/k${keys.length}`;
         keys.push({ name, displayName: JSON.parse(init.body).displayName });
+        if (createLost) return json(500, {});
         return json(200, { name: `operations/create-${keys.length}`, done: false });
       }
-      if (path.startsWith("operations/create-"))
-        return json(200, { name: path, done: true, response: { name: keys.at(-1).name } });
+      // A done operation carries the created key with its value, as the API Keys service answers.
+      if (path.startsWith("operations/create-")) {
+        createPolls += 1;
+        if (createPolls <= createPollFailures) return json(503, {});
+        return json(200, {
+          name: path,
+          done: true,
+          response: { name: keys.at(-1).name, keyString: KEY, displayName: "rc-closure-b-sdk" },
+        });
+      }
       if (path.startsWith("operations/delete-"))
-        return json(200, { name: path, done: true, response: {} });
+        return json(200, {
+          name: path,
+          done: true,
+          response: { name: keys.at(-1).name, keyString: KEY },
+        });
       if (path.endsWith("/keyString")) return json(200, { keyString: KEY });
       if (init.method === "DELETE") {
         if (!keyStaysLive) keys.find((k) => k.name === path).deleteTime = "2026-11-25T00:00:00Z";
@@ -301,8 +348,10 @@ function productionAdmin(fake, { keyLost = false, keyStaysLive = false } = {}) {
           200,
           keys.find((k) => k.name === path),
         );
+      if (listStatus !== 200) return json(listStatus, { error: { code: listStatus } });
       return json(200, {
         keys: keys.filter((k) => url.search.includes("showDeleted") || !k.deleteTime),
+        ...(listNextPage ? { nextPageToken: "more" } : {}),
       });
     }
     return fake.admin(url, init);
@@ -410,7 +459,7 @@ test(
 );
 
 /** One production-path pass with the given world and admin options. */
-async function productionPass(t, port, { admin = {}, client = {}, cap = 80 } = {}) {
+async function productionPass(t, port, { admin = {}, client = {}, cap = 80, callTimeoutMs } = {}) {
   const out = mkdtempSync(join(tmpdir(), "rc-closure-b-fake-"));
   t.after(() => rmSync(out, { recursive: true, force: true }));
   const fake = world(client);
@@ -425,9 +474,14 @@ async function productionPass(t, port, { admin = {}, client = {}, cap = 80 } = {
     timeoutMs: 5000,
     fetchImpl: productionAdmin(fake, admin),
   });
-  const browser = await openBrowser({ port, cap, fake: fake.client });
+  const browser = await openBrowser({
+    port,
+    cap,
+    fake: fake.client,
+    ...(callTimeoutMs ? { callTimeoutMs } : {}),
+  });
   t.after(() => browser.close());
-  return observe({
+  const result = await observe({
     transport,
     browser,
     urls: { ...adminUrls(SANDBOX), client: ADMIN },
@@ -441,6 +495,7 @@ async function productionPass(t, port, { admin = {}, client = {}, cap = 80 } = {
       if (kind === "key") grants.key = value;
     },
   });
+  return Object.assign(result, { out });
 }
 
 test(
@@ -449,7 +504,11 @@ test(
   async (t) => {
     const result = await productionPass(t, 47815, { admin: { keyStaysLive: true } });
     assert.equal(result.key.deleted, false);
-    assert.deepEqual(result.open, ["k-readback: no deleteTime (A2 lists keys)"]);
+    // The key's item stays open (it was never proved deleted) beside the read-back's problem.
+    assert.deepEqual(result.open, [
+      "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      "k-readback: no deleteTime (A2 lists keys)",
+    ]);
     assert.equal(result.sandboxAtBaseline, false);
     assert.equal(result.complete, false);
   },
@@ -481,5 +540,143 @@ test(
     );
     assert.equal(result.pageRequests, 3);
     assert.equal(result.complete, false);
+  },
+);
+
+// ---- RC-CLOSURE-B v1.1 (ruling 16) ----
+
+test(
+  "v1.1 item 1: the key in the create and delete operations, an ETag and an SDK value never lands in a file",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47821, { client: { echoKey: true } });
+    assert.equal(result.stopped, null, JSON.stringify(result.steps));
+    assert.equal(result.key.deleted, true);
+    const { readdirSync } = await import("node:fs");
+    for (const file of readdirSync(result.out))
+      assert.ok(!readFileSync(join(result.out, file), "utf8").includes(KEY), file);
+    const text = JSON.stringify(result);
+    assert.ok(!text.includes(KEY));
+    // The SDK's value and the ETag that carried the key come back masked.
+    assert.equal(result.clients.one.fetches[0].values.fireemu_echo.value, "API_KEY");
+    assert.ok(result.clients.one.wire.some((e) => e.responseHeaders?.etag?.endsWith("-API_KEY")));
+    const journal = readFileSync(join(result.out, "journal.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    for (const row of journal.filter(
+      (r) => r.case.startsWith("k-") && r.phase === "response-persisted",
+    ))
+      assert.deepEqual([row.file, row.sha256, row.etag], [null, null, null], row.case);
+  },
+);
+
+test("v1.1 item 1: Playwright diagnostics must be off", async () => {
+  await assert.rejects(
+    openBrowser({ port: 47822, cap: 1, env: { DEBUG: "pw:protocol" } }),
+    /diagnostics/,
+  );
+  await assert.rejects(openBrowser({ port: 47822, cap: 1, env: { PWDEBUG: "1" } }), /diagnostics/);
+});
+
+test(
+  "v1.1 item 2: phase A fails closed before any write",
+  { timeout: 120_000, skip },
+  async (t) => {
+    for (const [port, admin, reason] of [
+      [47823, { listStatus: 403 }, /key list not complete \(403\)/],
+      [47824, { listStatus: 429 }, /key list not complete \(429\)/],
+      [47825, { listNextPage: true }, /key list not complete \(200\)/],
+      [47826, { appsNextPage: true }, /web apps list not complete/],
+    ]) {
+      const result = await productionPass(t, port, { admin });
+      assert.match(result.stopped, reason);
+      const journal = readFileSync(join(result.out, "journal.jsonl"), "utf8");
+      assert.ok(
+        !journal.includes('"method":"POST"') && !journal.includes('"method":"PUT"'),
+        JSON.stringify(admin),
+      );
+      assert.deepEqual(result.open, []);
+    }
+  },
+);
+
+test(
+  "v1.1 item 3: a create poll that fails is retried in G and the key is deleted and proved",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47827, { admin: { createPollFailures: 1 } });
+    assert.match(result.stopped, /k-create-poll-0: unknown answer/);
+    assert.equal(result.key.deleted, true);
+    assert.ok(
+      !result.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    assert.equal(result.complete, false);
+  },
+);
+
+test(
+  "v1.1 item 3: an unknown create stays open and the sandbox is not at baseline",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47828, { admin: { createLost: true } });
+    assert.ok(
+      result.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    assert.equal(result.sandboxAtBaseline, false);
+    assert.equal(result.complete, false);
+  },
+);
+
+test(
+  "v1.1 item 5: a created key of another project is not granted and stays open",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47829, { admin: { keyProject: "999999999999" } });
+    assert.match(result.stopped, /unexpected key name/);
+    assert.ok(
+      result.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    assert.equal(result.complete, false);
+  },
+);
+
+test(
+  "v1.1 item 6: a 429 on the page's side stops the forward program and the cleanup still runs",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const result = await productionPass(t, 47830, { client: { fetchStatus: 429 } });
+    assert.match(result.stopped, /throttled|429/);
+    assert.equal(
+      result.steps.some((s) => s.name === "r1-changed"),
+      false,
+    );
+    assert.equal(result.baseline.after.empty, true);
+    assert.equal(result.key.deleted, true);
+    assert.equal(result.clients.one.deletion.deleted, true);
+  },
+);
+
+test(
+  "v1.1 item 4: the installations' deletions have a reserve after the cap, and a hanging call times out",
+  { timeout: 120_000, skip },
+  async (t) => {
+    const capped = await productionPass(t, 47831, { cap: 3 });
+    assert.ok(capped.cleanupRequests >= 1, JSON.stringify(capped.refusals));
+    const hung = await productionPass(t, 47832, {
+      client: { deleteHangs: true },
+      callTimeoutMs: 3000,
+    });
+    assert.ok(
+      hung.open.some((item) => /g-one: page call deleteInstallation timed out/.test(item)),
+      JSON.stringify(hung.open),
+    );
+    assert.equal(hung.complete, false);
   },
 );

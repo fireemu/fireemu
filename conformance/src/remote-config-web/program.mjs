@@ -79,6 +79,10 @@ export function template(
 }
 
 class Stop extends Error {}
+/** The open item of a key that may exist, cleared only by its proved deletion. */
+export const KEY_OPEN =
+  "k-create: the key may exist until its deletion is read back (A2 lists keys)";
+const OPERATION = /^operations\/[A-Za-z0-9._-]+$/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const isEmpty = (doc) =>
   !["parameters", "conditions", "parameterGroups"].some(
@@ -122,12 +126,17 @@ export async function observe(ctx) {
       lastWrite = Date.now();
     }
   };
-  /** Polls an operation of the API Keys service until done; null when not done in the budget. */
-  const operation = async (prefix, name) => {
-    // Only an operation this pass's own create or delete returned may be read.
+  /**
+   * Polls an operation of the API Keys service until done; null when not done in the budget.
+   * Every API Keys answer but the lists is secret: a done operation carries the key's value.
+   */
+  const operation = async (prefix, name, polls = timing.polls) => {
+    // Only an operation this pass's own create or delete returned, in the expected form, may be
+    // read (ruling 16 item 5).
+    if (!OPERATION.test(name ?? "")) throw new Stop(`${prefix}: unexpected operation name`);
     ctx.grant?.("operation", name);
-    for (let i = 0; i < timing.polls; i += 1) {
-      const op = await t.send(`${prefix}-poll-${i}`, `${urls.keysApi}${name}`);
+    for (let i = 0; i < polls; i += 1) {
+      const op = await t.send(`${prefix}-poll-${i}`, `${urls.keysApi}${name}`, { secret: true });
       if (op.status !== 200) throw new Stop(`${prefix}: operation read ${op.status}`);
       if (op.json.done) return op.json;
       await wait(timing.pollMs);
@@ -144,17 +153,25 @@ export async function observe(ctx) {
     }
     return false;
   };
+  /** A 429 on the page's side stops the forward program as an admin 429 does (ruling 16 item 6). */
+  const throttled = async () => {
+    for (const [name, client] of Object.entries(clients))
+      if ((await client.wire()).some((e) => e.status === 429)) throw new Stop(`page ${name}: 429`);
+  };
   const streams = async (client) =>
     (await client.wire()).filter((e) => e.path.endsWith(":streamFetchInvalidations")).length;
 
   /** Deletes the pass's key and reads it back; the problem, or null when it reads deleted. */
   const deleteKey = async (name) => {
     try {
-      const deleted = await t.send("k-delete", `${urls.keysApi}${name}`, { method: "DELETE" });
+      const deleted = await t.send("k-delete", `${urls.keysApi}${name}`, {
+        method: "DELETE",
+        secret: true,
+      });
       if (deleted.status !== 200) return `k-delete: ${deleted.status}`;
       const done = await operation("k-delete", deleted.json.name);
       if (!done || done.error) return "k-delete: operation not done without error";
-      const back = await t.send("k-readback", `${urls.keysApi}${name}`);
+      const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
       result.key.deleted = back.status === 200 && typeof back.json.deleteTime === "string";
       return result.key.deleted ? null : "k-readback: no deleteTime";
     } catch (error) {
@@ -162,6 +179,17 @@ export async function observe(ctx) {
       return error.message;
     }
   };
+
+  /** A key name of this project in the expected form, granted; a Stop otherwise. */
+  const grantKey = (name) => {
+    if (
+      !new RegExp(`^projects/${ctx.number}/locations/global/keys/[A-Za-z0-9-]+$`).test(name ?? "")
+    )
+      throw new Stop("k-create: unexpected key name");
+    ctx.grant?.("key", name);
+    return name;
+  };
+  let createOperation = null;
 
   let base = null;
   try {
@@ -179,11 +207,16 @@ export async function observe(ctx) {
       result.baseline.services = states;
       if (services.status !== 200 || !API_TARGETS.every((s) => states[s] === "ENABLED"))
         throw new Stop("a required API is not ENABLED");
+      // Every assumption read must be a complete 200 before any write (ruling 16 item 2).
       const apps = await t.send("a-web-apps", urls.webApps);
+      if (apps.status !== 200 || apps.json.nextPageToken)
+        throw new Stop(`web apps list not complete (${apps.status})`);
       const app = (apps.json.apps ?? []).find((x) => x.displayName === WEB_APP);
-      if (apps.status !== 200 || !app?.appId) throw new Stop(`web app ${WEB_APP} not found`);
+      if (!app?.appId) throw new Stop(`web app ${WEB_APP} not found`);
       ctx.appId = app.appId;
       const keys = await t.send("a-keys", urls.keysList);
+      if (keys.status !== 200 || keys.json.nextPageToken)
+        throw new Stop(`key list not complete (${keys.status})`);
       if ((keys.json.keys ?? []).some((k) => k.displayName === KEY_ID && !k.deleteTime))
         throw new Stop(`a live key named ${KEY_ID} already exists`);
     }
@@ -191,29 +224,24 @@ export async function observe(ctx) {
     // ---- K. the dedicated API key ----
     if (ctx.production) {
       await pace();
-      let created;
-      try {
-        created = await t.send("k-create", urls.keysCreate, {
-          method: "POST",
-          body: {
-            displayName: KEY_ID,
-            restrictions: { apiTargets: API_TARGETS.map((service) => ({ service })) },
-          },
-        });
-      } catch (error) {
-        if (error instanceof Unknown)
-          result.open.push("k-create: unknown key create (A2 lists keys)");
-        throw error;
-      }
-      if (created.status !== 200) throw new Stop(`k-create: ${created.status}`);
+      // The key may exist from the moment the create is sent: the item is open until its deletion
+      // is read back (ruling 16 item 3). An unknown create or create poll is never settled by an
+      // absence; it needs the owner's acceptance or a recovery packet.
+      result.open.push(KEY_OPEN);
       result.key.createRequested = true;
-      const done = await operation("k-create", created.json.name);
-      if (!done || done.error || !done.response?.name) {
-        result.open.push("k-create: operation not done without error (A2 lists keys)");
-        throw new Stop("key create not settled");
-      }
-      keyName = done.response.name;
-      ctx.grant?.("key", keyName);
+      const created = await t.send("k-create", urls.keysCreate, {
+        method: "POST",
+        body: {
+          displayName: KEY_ID,
+          restrictions: { apiTargets: API_TARGETS.map((service) => ({ service })) },
+        },
+        secret: true,
+      });
+      if (created.status !== 200) throw new Stop(`k-create: ${created.status}`);
+      createOperation = created.json.name ?? null;
+      const done = await operation("k-create", createOperation);
+      if (!done || done.error || !done.response?.name) throw new Stop("key create not settled");
+      keyName = grantKey(done.response.name);
       result.key.created = true;
       const value = await t.send("k-value", `${urls.keysApi}${keyName}/keyString`, {
         secret: true,
@@ -247,6 +275,9 @@ export async function observe(ctx) {
       const again = await clients[name].call("fetch", signals);
       result.clients[name] = { fetches: [first, again] };
       step(`f-${name}`, { first: first.lastFetchStatus, again: again.lastFetchStatus });
+      if ([first, again].some((f) => f.lastFetchStatus === "throttle"))
+        throw new Stop(`f-${name}: throttled`);
+      await throttled();
     }
 
     // ---- R. realtime on installation one ----
@@ -297,6 +328,7 @@ export async function observe(ctx) {
       const window = name === "r1-changed" ? timing.updateWindowMs : timing.quietWindowMs;
       const updated = await until(async () => (await one.updates()).length > before, window);
       step(name, { version: r.json.version?.versionNumber ?? null, updated });
+      await throttled();
     }
     // One reconnect: the listener closed and opened again, then one more changed publication.
     await one.call("unlisten");
@@ -316,6 +348,7 @@ export async function observe(ctx) {
       timing.updateWindowMs,
     );
     step("r5-changed", { version: v5.json.version?.versionNumber ?? null, updated });
+    await throttled();
     await one.call("unlisten");
   } catch (error) {
     result.stopped =
@@ -358,9 +391,19 @@ export async function observe(ctx) {
         result.open.push(`g-client: ${error.message}`);
       }
     }
+    // A create whose operation was not settled is polled again; a key it names is deleted.
+    if (ctx.production && !keyName && createOperation) {
+      try {
+        const done = await operation("g-create", createOperation, timing.polls);
+        if (done && !done.error && done.response?.name) keyName = grantKey(done.response.name);
+      } catch (error) {
+        result.open.push(`g-create: ${error.message}`);
+      }
+    }
     if (ctx.production && keyName) {
       const problem = await deleteKey(keyName);
       if (problem) result.open.push(`${problem} (A2 lists keys)`);
+      else result.open.splice(result.open.indexOf(KEY_OPEN), 1);
     } else if (ctx.production && result.key.createRequested && !keyName) result.key.deleted = false;
   }
   keyValue = null;
@@ -371,6 +414,7 @@ export async function observe(ctx) {
   result.unknown = [...t.unknown];
   result.adminRequests = t.count;
   result.pageRequests = browser.allowedRequests();
+  result.cleanupRequests = browser.cleanupRequests?.() ?? 0;
   result.refusals = browser.refusals;
   result.complete =
     result.stopped === null &&

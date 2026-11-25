@@ -128,7 +128,8 @@ export class Transport {
       status: response.status,
       bytes: bytes.length,
       sha256: secret ? null : createHash("sha256").update(bytes).digest("hex"),
-      etag,
+      // A secret answer's headers are not journaled either (an ETag can carry anything).
+      etag: secret ? null : etag,
       contentType,
       contentEncoding: response.headers.get("content-encoding"),
       file,

@@ -8,7 +8,7 @@
 // credential file or a gcloud override in the environment. Production is sent only with
 // --send-production, which only the packet's launch script passes.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -26,6 +26,14 @@ import {
 
 export const PROJECT = "fireemu-oracle-query";
 export const A2_MAX_REQUESTS = 4;
+export const A2_DELAY_MS = 10 * 60_000;
+
+/** The newest modification time of the files of a run directory (milliseconds since the epoch). */
+export function lastActivity(dir) {
+  const times = readdirSync(dir).map((name) => statSync(join(dir, name)).mtimeMs);
+  if (!times.length) throw new Error(`${dir} is empty`);
+  return Math.max(...times);
+}
 const RC = "https://firebaseremoteconfig.googleapis.com";
 const KEYS = "https://apikeys.googleapis.com/v2/";
 
@@ -68,14 +76,33 @@ export function productionAllow(project, grants) {
       return false;
     const href = url.href;
     if (exact.has(`${method} ${href}`)) return true;
-    if (url.host !== "apikeys.googleapis.com" || url.search) return false;
-    const name = url.pathname.slice("/v2/".length);
-    if (method === "GET" && grants.operations.has(name)) return true;
+    // A granted name is read only under the complete API Keys prefix, and only when it has the
+    // granted type's form (ruling 16 item 5).
+    if (!href.startsWith(KEYS) || url.search || url.hash) return false;
+    const name = href.slice(KEYS.length);
+    if (method === "GET" && OPERATION.test(name) && grants.operations.has(name)) return true;
+    if (!KEY_NAME.test(grants.key ?? "")) return false;
     return (
       (method === "GET" && (name === grants.key || name === `${grants.key}/keyString`)) ||
       (method === "DELETE" && name === grants.key)
     );
   };
+}
+
+const OPERATION = /^operations\/[A-Za-z0-9._-]+$/;
+const KEY_NAME = /^projects\/[0-9]+\/locations\/global\/keys\/[A-Za-z0-9-]+$/;
+
+/** A2's own allow list: its two read-only forms and nothing else (ruling 16 item 7). */
+export function a2Allow(project) {
+  const u = adminUrls(project);
+  const exact = new Set([`GET ${u.client}`, `GET ${u.keysListDeleted}`]);
+  return (url, method, { signed } = {}) =>
+    !signed &&
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    exact.has(`${method} ${url.href}`);
 }
 
 /** A2: the client template and the key list with deleted keys; never throws. */
@@ -92,8 +119,10 @@ export async function readBack(transport, urls) {
     const keys = await transport.send("a2-keys", urls.keysListDeleted);
     const ours = (keys.json.keys ?? []).filter((k) => k.displayName === KEY_ID);
     out.keys = ours.map((k) => ({ deleted: typeof k.deleteTime === "string" }));
+    // An incomplete list (another page) cannot show that no live key is left (ruling 16 item 3).
+    out.keyListComplete = keys.status === 200 && !keys.json.nextPageToken;
     out.atBaseline =
-      out.clientEmpty && keys.status === 200 && ours.every((k) => typeof k.deleteTime === "string");
+      out.clientEmpty && out.keyListComplete && ours.every((k) => typeof k.deleteTime === "string");
   } catch (error) {
     out.errors.push(error.message);
   }
@@ -110,7 +139,14 @@ export async function main(argv, env = process.env) {
   }
   if (args.send !== true) throw new Error("production needs --send-production");
   if (!args.out) throw new Error("--out is required");
-  for (const name of ["GOOGLE_APPLICATION_CREDENTIALS", "FIREBASE_TOKEN", "NODE_OPTIONS"])
+  for (const name of [
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "FIREBASE_TOKEN",
+    "NODE_OPTIONS",
+    "DEBUG",
+    "PWDEBUG",
+    "DEBUG_FILE",
+  ])
     if (env[name]) throw new Error(`${name} must not be set`);
   if (Object.keys(env).some((name) => name.startsWith("CLOUDSDK_")))
     throw new Error("CLOUDSDK_* must not be set");
@@ -135,13 +171,18 @@ export async function main(argv, env = process.env) {
   const urls = adminUrls(PROJECT);
   const transport = new Transport({
     out,
-    allow: productionAllow(PROJECT, grants),
+    allow: args["a2-of"] ? a2Allow(PROJECT) : productionAllow(PROJECT, grants),
     token,
     maxRequests: args["a2-of"] ? A2_MAX_REQUESTS : MAX_ADMIN_REQUESTS,
     timeoutMs: 30_000,
     userProject: PROJECT,
   });
   if (args["a2-of"]) {
+    // A2 reads at least ten minutes after the pass's last activity, whatever ended it: the newest
+    // file of its run directory (every request is journaled before it is sent).
+    const quiet = Date.now() - lastActivity(resolve(args["a2-of"]));
+    if (quiet < A2_DELAY_MS)
+      throw new Error(`A2 needs ${A2_DELAY_MS / 60_000} minutes after the pass's last activity`);
     const runId = JSON.parse(readFileSync(join(resolve(args["a2-of"]), "run.json"), "utf8")).runId;
     writeFileSync(
       join(out, "run.json"),
