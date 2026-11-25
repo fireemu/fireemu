@@ -1,0 +1,226 @@
+{
+  "schema": "rc-closure-b-comparison/1",
+  "kind": "production-vs-local",
+  "rows": 30,
+  "counts": {
+    "MATCH": 16,
+    "MATCH_LAYOUT": 0,
+    "KNOWN_DIFFERENCE": 14,
+    "MISMATCH": 0,
+    "UNKNOWN": 0
+  },
+  "table": [
+    {
+      "id": "step-t1",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-f-one",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-f-two",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r-open",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r1-changed",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r2-metadata",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r3-same",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r4-rollback",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r-reopen",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "step-r5-changed",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "one-1-installation-create",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-INSTALLATIONS-HARNESS"
+      ]
+    },
+    {
+      "id": "one-2-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-3-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-4-realtime",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-5-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-6-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-7-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-8-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-9-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "one-10-installation-delete",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-INSTALLATIONS-HARNESS"
+      ]
+    },
+    {
+      "id": "one-sdk-fetch-1",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "one-sdk-fetch-2",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "one-updates",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "two-1-installation-create",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-INSTALLATIONS-HARNESS"
+      ]
+    },
+    {
+      "id": "two-2-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "two-3-fetch",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ]
+    },
+    {
+      "id": "two-4-installation-delete",
+      "verdict": "KNOWN_DIFFERENCE",
+      "differences": [],
+      "knownDifferences": [
+        "KD-WEB-INSTALLATIONS-HARNESS"
+      ]
+    },
+    {
+      "id": "two-sdk-fetch-1",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "two-sdk-fetch-2",
+      "verdict": "MATCH",
+      "differences": []
+    },
+    {
+      "id": "two-updates",
+      "verdict": "MATCH",
+      "differences": []
+    }
+  ]
+}

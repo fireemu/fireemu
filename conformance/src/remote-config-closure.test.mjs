@@ -32,12 +32,13 @@ test("the committed closure evidence of HEAD is valid", () => {
   assert.deepEqual(verifyEvidence(gitReaders()), []);
 });
 
-test("the parent stays in progress: six stage-A conditions VERIFIED, fetch and realtime planned", () => {
+test("the parent stays in progress: six stage-A conditions VERIFIED, and stage B's two (remote-config-web)", () => {
   assert.equal(record.parentStatus, "IN_PROGRESS");
   const status = Object.fromEntries(record.conditions.map((c) => [c.conditionId, c.status]));
   for (const id of STAGE_A) assert.equal(status[id], "VERIFIED", id);
-  assert.equal(status["REMOTE-CONFIG/client-fetch-and-activate"], "PLANNED");
-  assert.equal(status["REMOTE-CONFIG/realtime-updates"], "PLANNED");
+  // Stage B's conditions are verified by their own evidence (remote-config-web/evidence.mjs).
+  assert.equal(status["REMOTE-CONFIG/client-fetch-and-activate"], "VERIFIED");
+  assert.equal(status["REMOTE-CONFIG/realtime-updates"], "VERIFIED");
   assert.equal(record.conditions.length, 8);
 });
 
@@ -62,7 +63,9 @@ test("each VERIFIED condition cites both passes and its recomputed counts", () =
     assert.equal(entry.comparisonSha256, PINS[entry.comparisonPath]);
     assert.equal(sha(read(entry.comparisonPath)), entry.comparisonSha256);
   }
-  for (const condition of record.conditions.filter((c) => c.status === "VERIFIED")) {
+  for (const condition of record.conditions.filter(
+    (c) => c.status === "VERIFIED" && STAGE_A.includes(c.conditionId),
+  )) {
     const id = condition.conditionId;
     assert.ok(STAGE_A.includes(id), id);
     assert.deepEqual(

@@ -308,9 +308,74 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/client-fetch-and-activate",
-      "description": "Exercise one pinned client SDK with defaults, supported condition matches, changed and unchanged fetches, and activation of fetched values. Capture the SDK requests and exact response shapes before defining the local endpoint contract.",
-      "status": "PLANNED",
-      "productionEvidence": []
+      "description": "As recorded in both RC-CLOSURE-B passes (Web SDK firebase 12.18.0, two installations, two signal sets): the SDK's Installations create and delete requests, its first fetch with If-None-Match * answered 200 UPDATE with the evaluated entries (custom-signal exact match and numeric comparison, seeded percent, the first matching condition in template order, the in-app default left out) and a fetch ETag, its second fetch with that tag answered 200 NO_CHANGE with the same tag, and the values and sources the SDK activated. Fireemu serves the fetch on its control listener (FIREBASE_REMOTE_CONFIG_URL_BASE), matching both passes except the declared differences: the tag's number, the percent outcome for a given installation id, the transport encoding, vary, and the Installations answers, which the comparison harness supplies (fireemu has no Installations service).",
+      "status": "VERIFIED",
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
+          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
+          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+        }
+      ],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/src/remote_config_client.rs",
+        "crates/fireemu-adapter-http/src/remote_config_client_tests.rs",
+        "crates/fireemu-adapter-http/src/server.rs",
+        "crates/fireemu-adapter-http/tests/control.rs",
+        "conformance/src/remote-config-web/local.mjs",
+        "conformance/src/remote-config-web/evidence.test.mjs"
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "KNOWN_DIFFERENCE",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 5,
+            "MATCH_LAYOUT": 7,
+            "KNOWN_DIFFERENCE": 3,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 7,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 8,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 5,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 10,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-INSTALLATIONS-HARNESS",
+        "KD-WEB-PERCENT-INSTALLATION",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/server-template-evaluation",
@@ -379,9 +444,72 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
-      "description": "Observe notification and reconnect behavior when a newer client template is published, including when the fetched values are unchanged.",
-      "status": "PLANNED",
-      "productionEvidence": []
+      "description": "As recorded in both RC-CLOSURE-B passes: one realtime stream per listening installation, answered only when the client template became newer than lastKnownVersionNumber, then one frame per newer version on the same open response for a changed, a metadata-only, a same-content and a rollback publication and one more after the listener closed and reopened (the SDK kept its stream), each followed by the SDK's re-fetch answered 200 UPDATE with a new tag, and one listener update per publication. Fireemu streams the recorded frames and matches both passes except the declared differences (the tag's number, the transport encoding, vary). How long production keeps a stream open, and what it answers when the template is already newer on arrival, were not recorded.",
+      "status": "VERIFIED",
+      "productionEvidence": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
+          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
+          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+        }
+      ],
+      "localEvidence": [
+        "crates/fireemu-adapter-http/src/remote_config_client.rs",
+        "crates/fireemu-adapter-http/src/remote_config_client_tests.rs",
+        "crates/fireemu-adapter-http/src/server.rs",
+        "crates/fireemu-adapter-http/tests/control.rs",
+        "conformance/src/remote-config-web/local.mjs",
+        "conformance/src/remote-config-web/evidence.test.mjs"
+      ],
+      "evidenceType": "production-parity",
+      "observedPasses": 2,
+      "passComparison": "MATCH",
+      "comparisons": {
+        "runVsRun": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 9,
+            "MATCH_LAYOUT": 6,
+            "KNOWN_DIFFERENCE": 0,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass1": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 9,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 6,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        },
+        "strictVsPass2": {
+          "rows": 15,
+          "counts": {
+            "MATCH": 9,
+            "MATCH_LAYOUT": 0,
+            "KNOWN_DIFFERENCE": 6,
+            "MISMATCH": 0,
+            "UNKNOWN": 0
+          }
+        }
+      },
+      "knownDifferences": [
+        "KD-WEB-FETCH-TAG-NUMBER",
+        "KD-WEB-TRANSPORT-ENCODING",
+        "KD-WEB-VARY"
+      ],
+      "profiles": {
+        "strict": "MATCHES_RECORDED_CASES",
+        "emulator": "NO_PRODUCTION_CLAIM"
+      }
     },
     {
       "conditionId": "REMOTE-CONFIG/publish-trigger",
@@ -517,6 +645,74 @@
       }
     ],
     "emulatorProfile": "The emulator profile is compared but carries no production claim: it accepts the client conditions and the four server conditions production refused, so those validations and the server publication that carries the accepted conditions differ (28 rows of each emulator comparison); every other row matches as in strict.",
-    "strictAssumes": "The strict match against the passes assumes the configuration the local runs use: remoteConfig.updateUser set to the sanitised identity and daemon.authProjectNumbers giving the project a number (conformance/src/remote-config-production/local.mjs). Without them the version metadata has no updateUser and the ETags and project-number read take Fireemu's derived number."
+    "strictAssumes": "The strict match against the passes assumes the configuration the local runs use: remoteConfig.updateUser set to the sanitised identity and daemon.authProjectNumbers giving the project a number (conformance/src/remote-config-production/local.mjs). Without them the version metadata has no updateUser and the ETags and project-number read take Fireemu's derived number.",
+    "stageB": {
+      "packet": "RC-CLOSURE-B-V1-3 (two passes, fireemu-oracle-query, 2026-11-25; sandbox ledger 1488-1493, owner ledger 2712-2715)",
+      "recorder": "conformance/src/remote-config-web/record.mjs",
+      "program": "conformance/src/remote-config-web/program.mjs",
+      "judge": "conformance/src/remote-config-web/judge.mjs",
+      "sanitiser": "conformance/src/remote-config-web/sanitise.mjs",
+      "evidence": "conformance/src/remote-config-web/evidence.mjs",
+      "localRunner": "conformance/src/remote-config-web/local.mjs",
+      "closureTest": "conformance/src/remote-config-web/evidence.test.mjs",
+      "knownDifferencesPath": "conformance/src/remote-config-web/known-differences.json",
+      "knownDifferencesSha256": "acd9bfa70cb2f747db8d27cd5bbd7e99aaa37317858e996ba4cf3c6cdaaf58ad",
+      "recordingPolicy": {
+        "observedPasses": 2,
+        "requiredPasses": 2,
+        "waiver": null
+      },
+      "recordings": [
+        {
+          "alias": "pass-1",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
+          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+        },
+        {
+          "alias": "pass-2",
+          "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
+          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+        }
+      ],
+      "localRuns": [
+        {
+          "profile": "strict",
+          "fixturePath": "conformance/remote-config-web/closure-b-local-strict.json",
+          "fixtureSha256": "6c8ac97fbbf9d05f665014fae53f325ed9ee616cf99ee656915f241c6455a417"
+        },
+        {
+          "profile": "emulator",
+          "fixturePath": "conformance/remote-config-web/closure-b-local-emulator.json",
+          "fixtureSha256": "3c714844b9d9c442e43a22135cc737c03cd70643e437cb2225fc7f677f97966a"
+        }
+      ],
+      "comparisons": [
+        {
+          "name": "runVsRun",
+          "comparisonPath": "conformance/remote-config-web/closure-b-pass-1-vs-pass-2.json",
+          "comparisonSha256": "463d24f0a1a1729e398da9ac93b37d95eaba1aa1d0f4e8b083cc8d6f80f8cc11"
+        },
+        {
+          "name": "strictVsPass1",
+          "comparisonPath": "conformance/remote-config-web/closure-b-strict-vs-pass-1.json",
+          "comparisonSha256": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec"
+        },
+        {
+          "name": "strictVsPass2",
+          "comparisonPath": "conformance/remote-config-web/closure-b-strict-vs-pass-2.json",
+          "comparisonSha256": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3"
+        },
+        {
+          "name": "emulatorVsPass1",
+          "comparisonPath": "conformance/remote-config-web/closure-b-emulator-vs-pass-1.json",
+          "comparisonSha256": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec"
+        },
+        {
+          "name": "emulatorVsPass2",
+          "comparisonPath": "conformance/remote-config-web/closure-b-emulator-vs-pass-2.json",
+          "comparisonSha256": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3"
+        }
+      ]
+    }
   }
 }

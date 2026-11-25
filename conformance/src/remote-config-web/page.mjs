@@ -14,6 +14,11 @@ const RC_HOSTS = new Set([
   "firebaseremoteconfig.googleapis.com",
   "firebaseremoteconfigrealtime.googleapis.com",
 ]);
+// A local run's Remote Config base (fireemu): the SDK's documented override, set before it loads.
+if (input.rcBase) {
+  window.FIREBASE_REMOTE_CONFIG_URL_BASE = input.rcBase;
+  RC_HOSTS.add(new URL(input.rcBase).host);
+}
 const INSTALLATIONS = "firebaseinstallations.googleapis.com";
 
 const labels = new Map();

@@ -1,0 +1,22 @@
+[
+  {
+    "id": "KD-WEB-PERCENT-INSTALLATION",
+    "summary": "A seeded percent condition's outcome depends on the installation id, which the SDK draws at random in every context: production's context two fell to the default in pass 1 and inside the half in pass 2. Fireemu evaluates percent with the server template's hash (SHA-256 of <seed>.<installation id>); production's client hash was not recorded, so the outcome for a given id is not claimed."
+  },
+  {
+    "id": "KD-WEB-FETCH-TAG-NUMBER",
+    "summary": "The fetch tag has production's form, etag-<project>-firebase-fetch-<signed 32-bit number>, repeats for the same answer and changes with every version (as recorded); its number is a hash whose input production did not show, so fireemu's number differs."
+  },
+  {
+    "id": "KD-WEB-TRANSPORT-ENCODING",
+    "summary": "Production answered the fetch and the stream gzip-encoded (content-encoding: gzip); fireemu answers them uncompressed. The decoded bodies are compared."
+  },
+  {
+    "id": "KD-WEB-VARY",
+    "summary": "Production's answers carry vary: Origin, X-Origin, Referer; fireemu's carry vary: origin."
+  },
+  {
+    "id": "KD-WEB-INSTALLATIONS-HARNESS",
+    "summary": "Fireemu has no Installations service: the local comparison answers the SDK's Installations requests in the browser harness (coordinator ruling 10), so only the SDK's own requests are compared, not the answers."
+  }
+]

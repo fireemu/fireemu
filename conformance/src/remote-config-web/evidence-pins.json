@@ -1,0 +1,12 @@
+{
+  "conformance/remote-config-web/closure-b-pass-1.json": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b",
+  "conformance/remote-config-web/closure-b-pass-2.json": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f",
+  "conformance/remote-config-web/closure-b-local-strict.json": "6c8ac97fbbf9d05f665014fae53f325ed9ee616cf99ee656915f241c6455a417",
+  "conformance/remote-config-web/closure-b-local-emulator.json": "3c714844b9d9c442e43a22135cc737c03cd70643e437cb2225fc7f677f97966a",
+  "conformance/remote-config-web/closure-b-pass-1-vs-pass-2.json": "463d24f0a1a1729e398da9ac93b37d95eaba1aa1d0f4e8b083cc8d6f80f8cc11",
+  "conformance/remote-config-web/closure-b-strict-vs-pass-1.json": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec",
+  "conformance/remote-config-web/closure-b-strict-vs-pass-2.json": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3",
+  "conformance/remote-config-web/closure-b-emulator-vs-pass-1.json": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec",
+  "conformance/remote-config-web/closure-b-emulator-vs-pass-2.json": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3",
+  "conformance/src/remote-config-web/known-differences.json": "acd9bfa70cb2f747db8d27cd5bbd7e99aaa37317858e996ba4cf3c6cdaaf58ad"
+}

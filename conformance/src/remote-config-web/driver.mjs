@@ -58,10 +58,13 @@ export const originOf = (port) => `http://localhost:${port}`;
  * the three hosts over https without credentials in the URL (then judged by `requestPolicy`), and
  * `refused` for anything else.
  */
-export function classify(href, origin) {
+export function classify(href, origin, rcOrigin = null) {
   const url = new URL(href);
   if (url.origin === origin)
     return url.pathname === "/" || url.pathname === "/lib/page.mjs" ? "page" : "refused";
+  // A local run's Remote Config base (fireemu on loopback), judged by `requestPolicy` as the two
+  // Remote Config hosts are.
+  if (rcOrigin && url.origin === rcOrigin && !url.username && !url.password) return "remote";
   if (href.startsWith(GSTATIC) && BUNDLES.includes(href.slice(GSTATIC.length))) return "bundle";
   if (
     url.protocol === "https:" &&
@@ -106,9 +109,16 @@ const json = (text) => {
 export function requestPolicy({ method, href, headers, postData }, own) {
   const { project, key, appId, fids } = own;
   const url = new URL(href);
+  // A local run serves both Remote Config routes from one base; each is judged as its host's.
+  const host =
+    own.rcOrigin && url.origin === own.rcOrigin
+      ? url.pathname.endsWith(":streamFetchInvalidations")
+        ? "firebaseremoteconfigrealtime.googleapis.com"
+        : "firebaseremoteconfig.googleapis.com"
+      : url.host;
   const base = `/v1/projects/${project}`;
   const keyHeader = headers["x-goog-api-key"];
-  if (url.host === "firebaseinstallations.googleapis.com") {
+  if (host === "firebaseinstallations.googleapis.com") {
     if (url.search !== "") return { verdict: "query" };
     if (keyHeader !== key) return { verdict: "key" };
     if (method === "POST" && url.pathname === `${base}/installations`) {
@@ -136,7 +146,7 @@ export function requestPolicy({ method, href, headers, postData }, own) {
       body: (b) => fids.has(b.appInstanceId) && b.appId === appId && b.project === project,
     },
   };
-  const form = forms[url.host];
+  const form = forms[host];
   if (!form) return { verdict: "host" };
   if (method !== "POST") return { verdict: "method" };
   if (url.pathname !== form.path) return { verdict: "path" };
@@ -171,11 +181,20 @@ export async function openBrowser({
   fake = null,
   callTimeoutMs = CALL_TIMEOUT_MS,
   env = process.env,
+  rcBase = null,
 }) {
+  // `rcBase` (local runs only): the SDK's Remote Config base, passed through to fireemu; the
+  // Installations host is still answered by `fake` (coordinator ruling 10).
+  const rcOrigin = rcBase ? new URL(rcBase).origin : null;
   if (/pw:|\*/.test(env.DEBUG ?? "") || env.PWDEBUG || env.DEBUG_FILE)
     throw new Error("Playwright diagnostics (DEBUG, PWDEBUG, DEBUG_FILE) must be off");
   const bundles = pinnedBundles();
-  const browser = await chromium.launch({ headless: true });
+  // A local run's page (served by the hook, so of no address space of its own) reaches fireemu on
+  // loopback; Chromium's local-network check would refuse that, so a local run turns it off.
+  const browser = await chromium.launch({
+    headless: true,
+    ...(rcOrigin ? { args: ["--disable-features=LocalNetworkAccessChecks"] } : {}),
+  });
   const origin = originOf(port);
   let allowed = 0;
   let reserved = 0;
@@ -201,10 +220,11 @@ export async function openBrowser({
         key: config.apiKey,
         appId: config.appId,
         fids: new Set(),
+        rcOrigin,
       };
       await context.route("**/*", async (route) => {
         const request = route.request();
-        const kind = classify(request.url(), origin);
+        const kind = classify(request.url(), origin, rcOrigin);
         if (kind === "page") {
           const path = new URL(request.url()).pathname;
           return route.fulfill(
@@ -245,7 +265,8 @@ export async function openBrowser({
           else reserved += 1;
           // A create's id becomes this context's only once its request is dispatched.
           if (verdict === "create") own.fids.add(fid);
-          if (!fake) return route.continue();
+          if (!fake || (rcOrigin && new URL(request.url()).origin === rcOrigin))
+            return route.continue();
           const answer = await fake(request);
           return route.fulfill({
             status: answer.status,
@@ -266,8 +287,12 @@ export async function openBrowser({
       // Every answer's status is read here, when its headers arrive and before the SDK can act on
       // it: production's (passed by `route.continue()`) and the test fakes' alike, one mechanism.
       context.on("response", (response) => {
-        const host = new URL(response.url()).host;
-        if (HOSTS.includes(host) && STOP_STATUSES.has(response.status()))
+        const url = new URL(response.url());
+        const host = url.host;
+        if (
+          (HOSTS.includes(host) || url.origin === rcOrigin) &&
+          STOP_STATUSES.has(response.status())
+        )
           stop(`${host} answered ${response.status()}`);
       });
       const page = await context.newPage();
@@ -275,7 +300,7 @@ export async function openBrowser({
         (input) => {
           window.__RC_INPUT = input;
         },
-        { config, sdk: GSTATIC },
+        { config, sdk: GSTATIC, ...(rcBase ? { rcBase } : {}) },
       );
       await page.goto(`${origin}/`);
       await page.waitForFunction(() => window.rcReady === true, null, { timeout: 30_000 });

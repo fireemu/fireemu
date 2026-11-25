@@ -1,0 +1,535 @@
+{
+  "schema": "rc-closure-b-fixture/1",
+  "runId": "RUN_ID",
+  "complete": true,
+  "stopped": null,
+  "open": [],
+  "baseline": {
+    "before": "53",
+    "after": "60"
+  },
+  "steps": [
+    {
+      "name": "t1",
+      "version": "54"
+    },
+    {
+      "name": "f-one",
+      "first": "success",
+      "again": "success"
+    },
+    {
+      "name": "f-two",
+      "first": "success",
+      "again": "success"
+    },
+    {
+      "name": "r-open",
+      "opened": true
+    },
+    {
+      "name": "r1-changed",
+      "version": "55",
+      "updated": true
+    },
+    {
+      "name": "r2-metadata",
+      "version": "56",
+      "updated": true
+    },
+    {
+      "name": "r3-same",
+      "version": "57",
+      "updated": true
+    },
+    {
+      "name": "r4-rollback",
+      "version": "58",
+      "updated": true
+    },
+    {
+      "name": "r-reopen",
+      "reopened": false
+    },
+    {
+      "name": "r5-changed",
+      "version": "59",
+      "updated": true
+    }
+  ],
+  "clients": {
+    "one": {
+      "fetches": [
+        {
+          "activated": true,
+          "error": null,
+          "values": {
+            "fireemu_enabled": {
+              "value": "true",
+              "source": "remote"
+            },
+            "fireemu_limit": {
+              "value": "20",
+              "source": "remote"
+            },
+            "fireemu_message": {
+              "value": "v1-premium",
+              "source": "remote"
+            },
+            "fireemu_payload": {
+              "value": "{\"synthetic\":true}",
+              "source": "remote"
+            }
+          },
+          "lastFetchStatus": "success"
+        },
+        {
+          "activated": false,
+          "error": null,
+          "values": {
+            "fireemu_enabled": {
+              "value": "true",
+              "source": "remote"
+            },
+            "fireemu_limit": {
+              "value": "20",
+              "source": "remote"
+            },
+            "fireemu_message": {
+              "value": "v1-premium",
+              "source": "remote"
+            },
+            "fireemu_payload": {
+              "value": "{\"synthetic\":true}",
+              "source": "remote"
+            }
+          },
+          "lastFetchStatus": "success"
+        }
+      ],
+      "updates": [
+        {
+          "keys": [
+            "fireemu_message"
+          ]
+        },
+        {
+          "keys": [
+            "fireemu_message"
+          ]
+        },
+        {
+          "keys": [
+            "fireemu_message"
+          ]
+        },
+        {
+          "keys": [
+            "fireemu_message"
+          ]
+        },
+        {
+          "keys": [
+            "fireemu_message"
+          ]
+        }
+      ],
+      "wire": [
+        {
+          "n": 1,
+          "host": "firebaseinstallations.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/installations",
+          "query": "",
+          "requestHeaders": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-goog-api-key": "API_KEY"
+          },
+          "status": 200,
+          "requestLayout": {
+            "fid": "string:22",
+            "authVersion": "string:6",
+            "appId": "string:42",
+            "sdkVersion": "string:8"
+          },
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseLayout": {
+            "name": "string:59",
+            "fid": "string:22",
+            "refreshToken": "string:113",
+            "authToken": {
+              "token": "string:316",
+              "expiresIn": "string:7"
+            }
+          },
+          "responseBytes": 628
+        },
+        {
+          "n": 2,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "*"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-858687517",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v1-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"54\"\n}\n"
+        },
+        {
+          "n": 3,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-858687517"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-858687517",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"state\": \"NO_CHANGE\",\n  \"templateVersion\": \"54\"\n}\n"
+        },
+        {
+          "n": 4,
+          "host": "firebaseremoteconfigrealtime.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:streamFetchInvalidations",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "accept": "application/json",
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-858687517",
+            "x-goog-api-key": "API_KEY",
+            "x-goog-firebase-installations-auth": "TOKEN_1"
+          },
+          "status": 200,
+          "requestBody": "{\"project\":\"PROJECT_ID\",\"namespace\":\"firebase\",\"lastKnownVersionNumber\":\"54\",\"appId\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"sdkVersion\":\"12.18.0\",\"appInstanceId\":\"FID_1\"}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "text": "[{\n  \"latestTemplateVersionNumber\": \"55\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"56\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"57\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"58\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"59\"\n}\n",
+          "chunkLengths": [
+            43,
+            45,
+            45,
+            45,
+            45
+          ]
+        },
+        {
+          "n": 5,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-858687517"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-2145169853",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v2-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"55\"\n}\n"
+        },
+        {
+          "n": 6,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-2145169853"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-2145169884",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v2-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"56\"\n}\n"
+        },
+        {
+          "n": 7,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-2145169884"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-2145169915",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v2-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"57\"\n}\n"
+        },
+        {
+          "n": 8,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-2145169915"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-2145169946",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v2-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"58\"\n}\n"
+        },
+        {
+          "n": 9,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-2145169946"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"premium\",\"fireemu_level\":\"7\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-1709649596",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"true\",\n    \"fireemu_limit\": \"20\",\n    \"fireemu_message\": \"v5-premium\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"59\"\n}\n"
+        },
+        {
+          "n": 10,
+          "host": "firebaseinstallations.googleapis.com",
+          "method": "DELETE",
+          "path": "/v1/projects/PROJECT_ID/installations/FID_1",
+          "query": "",
+          "requestHeaders": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-goog-api-key": "API_KEY"
+          },
+          "status": 200,
+          "requestLayout": null,
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseLayout": {},
+          "responseBytes": 3
+        }
+      ]
+    },
+    "two": {
+      "fetches": [
+        {
+          "activated": true,
+          "error": null,
+          "values": {
+            "fireemu_enabled": {
+              "value": "false",
+              "source": "remote"
+            },
+            "fireemu_limit": {
+              "value": "10",
+              "source": "remote"
+            },
+            "fireemu_message": {
+              "value": "v1-half",
+              "source": "remote"
+            },
+            "fireemu_payload": {
+              "value": "{\"synthetic\":true}",
+              "source": "remote"
+            }
+          },
+          "lastFetchStatus": "success"
+        },
+        {
+          "activated": false,
+          "error": null,
+          "values": {
+            "fireemu_enabled": {
+              "value": "false",
+              "source": "remote"
+            },
+            "fireemu_limit": {
+              "value": "10",
+              "source": "remote"
+            },
+            "fireemu_message": {
+              "value": "v1-half",
+              "source": "remote"
+            },
+            "fireemu_payload": {
+              "value": "{\"synthetic\":true}",
+              "source": "remote"
+            }
+          },
+          "lastFetchStatus": "success"
+        }
+      ],
+      "updates": [],
+      "wire": [
+        {
+          "n": 1,
+          "host": "firebaseinstallations.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/installations",
+          "query": "",
+          "requestHeaders": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-goog-api-key": "API_KEY"
+          },
+          "status": 200,
+          "requestLayout": {
+            "fid": "string:22",
+            "authVersion": "string:6",
+            "appId": "string:42",
+            "sdkVersion": "string:8"
+          },
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseLayout": {
+            "name": "string:59",
+            "fid": "string:22",
+            "refreshToken": "string:113",
+            "authToken": {
+              "token": "string:317",
+              "expiresIn": "string:7"
+            }
+          },
+          "responseBytes": 629
+        },
+        {
+          "n": 2,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "*"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"basic\",\"fireemu_level\":\"3\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-635737553",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"entries\": {\n    \"fireemu_enabled\": \"false\",\n    \"fireemu_limit\": \"10\",\n    \"fireemu_message\": \"v1-half\",\n    \"fireemu_payload\": \"{\\\"synthetic\\\":true}\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"54\"\n}\n"
+        },
+        {
+          "n": 3,
+          "host": "firebaseremoteconfig.googleapis.com",
+          "method": "POST",
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch",
+          "query": "?key=API_KEY",
+          "requestHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json",
+            "if-none-match": "etag-PROJECT_ID-firebase-fetch-635737553"
+          },
+          "status": 200,
+          "requestBody": "{\"sdk_version\":\"12.18.0\",\"app_instance_id\":\"FID_1\",\"app_instance_id_token\":\"TOKEN_1\",\"app_id\":\"1:PROJECT_NUMBER:web:WEB_APP_HASH\",\"language_code\":\"en-US\",\"custom_signals\":{\"fireemu_tier\":\"basic\",\"fireemu_level\":\"3\"}}",
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "etag": "etag-PROJECT_ID-firebase-fetch-635737553",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseBody": "{\n  \"state\": \"NO_CHANGE\",\n  \"templateVersion\": \"54\"\n}\n"
+        },
+        {
+          "n": 4,
+          "host": "firebaseinstallations.googleapis.com",
+          "method": "DELETE",
+          "path": "/v1/projects/PROJECT_ID/installations/FID_1",
+          "query": "",
+          "requestHeaders": {
+            "accept": "application/json",
+            "content-type": "application/json",
+            "x-goog-api-key": "API_KEY"
+          },
+          "status": 200,
+          "requestLayout": null,
+          "responseHeaders": {
+            "content-encoding": "gzip",
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "responseLayout": {},
+          "responseBytes": 3
+        }
+      ]
+    }
+  },
+  "installations": [
+    {
+      "name": "one",
+      "dispatched": 1,
+      "proved": 1
+    },
+    {
+      "name": "two",
+      "dispatched": 1,
+      "proved": 1
+    }
+  ]
+}
