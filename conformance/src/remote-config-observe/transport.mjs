@@ -24,9 +24,29 @@ export class Transport {
    * @param {number} o.timeoutMs per request
    * @param {typeof fetch} [o.fetchImpl]
    * @param {string} [o.userProject] x-goog-user-project for Google APIs
+   * @param {(text: string) => string} [o.redact] masks known secret values in a body before it is
+   *   first written (the body file and its digest are of the masked bytes)
    */
-  constructor({ out, allow, token, maxRequests, timeoutMs, fetchImpl = fetch, userProject }) {
-    Object.assign(this, { out, allow, token, maxRequests, timeoutMs, fetchImpl, userProject });
+  constructor({
+    out,
+    allow,
+    token,
+    maxRequests,
+    timeoutMs,
+    fetchImpl = fetch,
+    userProject,
+    redact,
+  }) {
+    Object.assign(this, {
+      out,
+      allow,
+      token,
+      maxRequests,
+      timeoutMs,
+      fetchImpl,
+      userProject,
+      redact,
+    });
     this.count = 0;
     this.unknown = [];
   }
@@ -118,7 +138,14 @@ export class Transport {
     // `secret: true` (an API key's value): the body is neither persisted nor digested; the journal
     // keeps its status and length only, and the caller holds the value in memory.
     const file = secret ? null : `${String(seq).padStart(3, "0")}-${caseId}.body`;
-    if (file) writeFileSync(join(this.out, file), bytes);
+    // A known secret in a body is masked before the first write (RC-CLOSURE-B ruling 19 item 2).
+    let persisted = bytes;
+    if (file && this.redact) {
+      const text = bytes.toString("utf8");
+      const masked = this.redact(text);
+      if (masked !== text) persisted = Buffer.from(masked, "utf8");
+    }
+    if (file) writeFileSync(join(this.out, file), persisted);
     const etag = response.headers.get("etag");
     // A secret answer's row is the closed set {seq, case, phase, status, bytes, file, secret}: no
     // header value of it is journaled (an ETag, a content type or an encoding can carry anything).
@@ -139,7 +166,8 @@ export class Transport {
             phase: "response-persisted",
             status: response.status,
             bytes: bytes.length,
-            sha256: createHash("sha256").update(bytes).digest("hex"),
+            sha256: createHash("sha256").update(persisted).digest("hex"),
+            ...(persisted === bytes ? {} : { redacted: true }),
             etag,
             contentType: response.headers.get("content-type"),
             contentEncoding: response.headers.get("content-encoding"),

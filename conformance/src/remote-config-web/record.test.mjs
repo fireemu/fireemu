@@ -270,14 +270,22 @@ test("v1.1 item 7: A2 has its own two read-only forms and fails closed on an inc
 });
 
 /** A pass directory with run.json (a pid that has exited) and the given files, aged `ageMs`. */
-async function passDir(t, files = {}, { ageMs = 3_600_000, pid } = {}) {
+async function passDir(t, files = {}, { ageMs = 3_600_000, pid, lockPid } = {}) {
   const { mkdirSync, writeFileSync, utimesSync } = await import("node:fs");
   const { spawnSync } = await import("node:child_process");
-  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-a2-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const root = mkdtempSync(join(tmpdir(), "rc-closure-b-a2-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // The live layout: <base>/rc-closure/send-web-1 beside <base>/sandbox-locks.
+  const dir = join(root, "rc-closure");
   const pass = join(dir, "send-web-1");
-  mkdirSync(pass);
+  mkdirSync(pass, { recursive: true });
+  mkdirSync(join(root, "sandbox-locks"));
   const gone = pid ?? spawnSync(process.execPath, ["-e", ""]).pid;
+  if (lockPid !== null)
+    writeFileSync(
+      join(root, "sandbox-locks", "fireemu-oracle-query.lock"),
+      JSON.stringify({ pid: lockPid ?? spawnSync(process.execPath, ["-e", ""]).pid }),
+    );
   const all = { "run.json": { runId: "261125000000abc", pid: gone }, ...files };
   const at = (Date.now() - ageMs) / 1000;
   for (const [name, body] of Object.entries(all)) {
@@ -471,15 +479,22 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
   };
   assert.match(await verdict(open, { a2: {} }), /no acceptance or recovery record/);
   const record = { runId, open: open.open, kind: "owner-acceptance", ledgerLine: 2 };
-  const line = `- 2026-11-25 | RC-CLOSURE-B accept ${runId} | owner`;
+  const line = `- 2026-11-26 | RC-CLOSURE-B decision | packetId=RC-CLOSURE-B-V1-3 runId=${runId} decision=accept | owner | chat 2026-11-26`;
   assert.equal(await verdict(open, { a2: {}, acceptance: record, ledger: `x\n${line}\n` }), null);
   for (const [acceptance, ledger] of [
     [{ ...record, open: [KEY_OPEN] }, `x\n${line}\n`],
     [{ ...record, runId: "other" }, `x\n${line}\n`],
     [{ ...record, kind: "self" }, `x\n${line}\n`],
     [{ ...record, ledgerLine: 1 }, `x\n${line}\n`],
-    [record, `x\n- 2026-11-25 | RC-CLOSURE-B recovery ${runId}\n`],
-    [record, `x\n- 2026-11-25 | accept ${runId}\n`],
+    // Matched by exact fields, never by substrings (ruling 19 item 4).
+    [record, `x\n${line.replace("decision=accept", "decision=recovery")}\n`],
+    [record, `x\n- 2026-11-26 | RC-CLOSURE-B ${runId} owner did not accept | owner | x\n`],
+    [record, `x\n${line.replace("decision=accept", "decision=accept-pending")}\n`],
+    [record, `x\n${line.replace("decision=accept", "decision=accept not")}\n`],
+    [record, `x\n${line.replace("RC-CLOSURE-B-V1-3", "RC-CLOSURE-B-V1-2")}\n`],
+    [record, `x\n${line.replace(runId, "261125000000abd")}\n`],
+    [record, `x\n${line.replace("| owner |", "| coordinator |")}\n`],
+    [record, `x\n${line} | extra\n`],
   ])
     assert.ok(await verdict(open, { a2: {}, acceptance, ledger }), JSON.stringify(acceptance));
   assert.match(await verdict(open, { acceptance: record, ledger: `x\n${line}\n` }), /no A2/);
@@ -491,7 +506,7 @@ test("ruling 18 item 2: a pass is closed only by its complete result, an A2 of i
       a2: {},
       extra: interrupted,
       acceptance: { runId, open: ["interrupted"], kind: "recovery", ledgerLine: 1 },
-      ledger: `- RC-CLOSURE-B recovery ${runId} done\n`,
+      ledger: `${line.replace("decision=accept", "decision=recovery")}\n`,
     }),
     null,
   );
@@ -507,7 +522,11 @@ test("ruling 18 item 6: A2 is at baseline only for the baseline's shape and a co
       caseId === "a2-client" ? { status: 200, json: client } : { status: keysStatus, json: keys },
   });
   const base = { version: { versionNumber: "46" } };
-  const deleted = { displayName: KEY_ID, name: "k", deleteTime: "2026-11-25T00:00:00.123Z" };
+  const deleted = {
+    displayName: KEY_ID,
+    name: `projects/${NUMBER}/locations/global/keys/k0`,
+    deleteTime: "2026-11-25T00:00:00.123Z",
+  };
   const back = await readBack(transport(base, { keys: [deleted] }), u, { runId: "r", a2Of: "/d" });
   assert.deepEqual([back.atBaseline, back.runId, back.a2Of], [true, "r", "/d"]);
   assert.equal((await readBack(transport(base, {}), u)).atBaseline, true);
@@ -614,4 +633,126 @@ test("ruling 18 item 6: the baseline has exactly the recorded empty shape; delet
   assert.equal(isDeleted({ deleteTime: "2026-11-25T00:00:00.123456789Z" }), true);
   for (const deleteTime of ["", "2026-11-25", "x", "2026-11-25T00:00:00+09:00", 0, undefined])
     assert.equal(isDeleted({ deleteTime }), false, String(deleteTime));
+});
+
+// ---- RC-CLOSURE-B v1.3 (ruling 19) ----
+
+test("ruling 19 items 1 and 3: A2 sends nothing after a 403 or 429, and accepts only well-formed keys and real instants", async () => {
+  const { readBack } = await import("./record.mjs");
+  const u = adminUrls(PROJECT);
+  const base = { version: { versionNumber: "46" } };
+  for (const status of [403, 429]) {
+    const sent = [];
+    const back = await readBack(
+      {
+        get count() {
+          return sent.length;
+        },
+        send: async (caseId) => {
+          sent.push(caseId);
+          return { status, json: { error: { code: status } } };
+        },
+      },
+      u,
+    );
+    assert.deepEqual(sent, ["a2-client"]);
+    assert.equal(back.atBaseline, false);
+    assert.equal(back.requests, 1);
+  }
+  const transport = (keys) => ({
+    count: 2,
+    send: async (caseId) =>
+      caseId === "a2-client" ? { status: 200, json: base } : { status: 200, json: keys },
+  });
+  const key = (extra = {}) => ({
+    name: `projects/${NUMBER}/locations/global/keys/k0`,
+    displayName: KEY_ID,
+    deleteTime: "2026-11-26T00:00:00Z",
+    ...extra,
+  });
+  assert.equal((await readBack(transport({ keys: [key()] }), u)).atBaseline, true);
+  for (const keys of [
+    { keys: [null] },
+    { keys: ["x"] },
+    { keys: [{}] },
+    { keys: [key({ name: "k0" })] },
+    { keys: [key({ displayName: 7 })] },
+    { keys: [key({ deleteTime: "2026-02-30T00:00:00Z" })] },
+    { keys: [key({ deleteTime: "2026-11-26T24:00:00Z" })] },
+    { keys: [key(), null] },
+  ])
+    assert.equal((await readBack(transport(keys), u)).atBaseline, false, JSON.stringify(keys));
+  const { isInstant } = await import("./program.mjs");
+  for (const ok of ["2026-11-26T00:00:00Z", "2024-02-29T23:59:59.123456789Z"])
+    assert.ok(isInstant(ok), ok);
+  for (const bad of [
+    "2026-02-30T00:00:00Z",
+    "2025-02-29T00:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-11-26T23:60:00Z",
+    "2026-11-26T00:00:60Z",
+    "2026-11-31T00:00:00Z",
+  ])
+    assert.equal(isInstant(bad), false, bad);
+});
+
+test("ruling 19 item 7: a stream that ended with an error is a page problem; the listener's own close is not", async () => {
+  const { pageProblem } = await import("./program.mjs");
+  const stream = { host: "h", method: "POST", path: "/v1/x:streamFetchInvalidations", status: 200 };
+  assert.equal(pageProblem([{ ...stream, ended: "done" }], []), null);
+  assert.equal(pageProblem([{ ...stream, ended: "error:AbortError" }], []), null);
+  assert.match(
+    pageProblem([{ ...stream, ended: "error:TypeError" }], []),
+    /stream ended with TypeError/,
+  );
+});
+
+test("ruling 19 item 7: the recorder's A2 makes the launcher's lock-holder check", async (t) => {
+  const { a2Refusal } = await import("./record.mjs");
+  const { spawn } = await import("node:child_process");
+  const result = { "result.json": { runId: "261125000000abc" } };
+  assert.equal(a2Refusal((await passDir(t, result)).pass), null);
+  assert.match(
+    a2Refusal((await passDir(t, result, { lockPid: null })).pass),
+    /project lock is not held/,
+  );
+  const launcher = spawn("/bin/bash", [
+    "-c",
+    "sleep 60 & c=$!; trap 'kill $c' TERM; wait $c",
+    "launch-b13.sh",
+  ]);
+  t.after(() => launcher.kill());
+  assert.match(
+    a2Refusal((await passDir(t, result, { lockPid: launcher.pid })).pass),
+    /launcher is still running/,
+  );
+});
+
+test("ruling 19 item 2: the transport masks a known secret before the body's first write", async (t) => {
+  const { Transport } = await import("../remote-config-observe/transport.mjs");
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "rc-closure-b-redact-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const secrets = new Set(["AIzaSECRET"]);
+  const transport = new Transport({
+    out: dir,
+    allow: () => true,
+    token: () => "t",
+    maxRequests: 2,
+    timeoutMs: 1000,
+    redact: (text) => [...secrets].reduce((out, s) => out.split(s).join("API_KEY"), text),
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ version: { description: "x AIzaSECRET" } }), { status: 200 }),
+  });
+  const answer = await transport.send("g-client", "https://example.com/x");
+  // The caller sees the answer; the file never held the secret.
+  assert.equal(answer.json.version.description, "x AIzaSECRET");
+  const body = readdirSync(dir).find((f) => f.endsWith(".body"));
+  assert.equal(readFileSync(join(dir, body), "utf8"), '{"version":{"description":"x API_KEY"}}');
+  const row = readFileSync(join(dir, "journal.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l))
+    .at(-1);
+  assert.equal(row.redacted, true);
 });

@@ -104,8 +104,34 @@ export function baselineEmpty(doc) {
 /** A deletion time as the API Keys service writes it: RFC 3339 in UTC, never empty. */
 export const DELETE_TIME =
   /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,9})?Z$/;
-export const isDeleted = (key) =>
-  typeof key?.deleteTime === "string" && DELETE_TIME.test(key.deleteTime);
+/** Whether a string is a real instant in that form: the calendar fields are checked (ruling 19). */
+export function isInstant(text) {
+  const m = typeof text === "string" ? DELETE_TIME.exec(text) : null;
+  if (!m) return false;
+  const [y, mo, d, h, mi, sec] = text.slice(0, 19).split(/[-T:]/).map(Number);
+  const at = new Date(Date.UTC(y, mo - 1, d, h, mi, sec));
+  return (
+    at.getUTCFullYear() === y &&
+    at.getUTCMonth() === mo - 1 &&
+    at.getUTCDate() === d &&
+    at.getUTCHours() === h &&
+    at.getUTCMinutes() === mi &&
+    at.getUTCSeconds() === sec
+  );
+}
+export const isDeleted = (key) => isInstant(key?.deleteTime);
+
+/**
+ * A definite refusal of the key create (ruling 19 item 5): a 4xx whose body is Google's error
+ * object for that status. It settles "no key was created"; anything else does not.
+ */
+export const createRefused = (r) =>
+  r.status >= 400 &&
+  r.status < 500 &&
+  isObject(r.json?.error) &&
+  r.json.error.code === r.status &&
+  typeof r.json.error.status === "string" &&
+  typeof r.json.error.message === "string";
 
 /**
  * A complete read: 200, a JSON object without an `error` member and without a nextPageToken
@@ -128,6 +154,14 @@ export function pageProblem(wire, updates) {
     const stream = (e.path ?? "").endsWith(":streamFetchInvalidations");
     if (e.error !== undefined && !(stream && e.error === "AbortError"))
       return `${e.host} request failed (${e.error})`;
+    // A stream whose body ended with an error other than the listener's own close (ruling 19).
+    if (
+      stream &&
+      typeof e.ended === "string" &&
+      e.ended.startsWith("error:") &&
+      e.ended !== "error:AbortError"
+    )
+      return `${e.host} stream ended with ${e.ended.slice("error:".length)}`;
     if (e.status === null || e.status === undefined) continue;
     if (e.status === 200) continue;
     if (e.status === 304 && (e.path ?? "").endsWith(":fetch")) continue;
@@ -231,12 +265,18 @@ export async function observe(ctx) {
       if (deleted.status !== 200 || !isObject(deleted.json)) return `k-delete: ${deleted.status}`;
       const done = await operation("k-delete", deleted.json.name);
       if (!done || done.error) return "k-delete: operation not done without error";
-      const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
-      result.key.deleted =
-        back.status === 200 &&
-        isObject(back.json) &&
-        back.json.name === name &&
-        isDeleted(back.json);
+      // Two accepted proofs (ruling 19 item 5): the done operation's response is the key with a
+      // real deleteTime, or the read-back of the key's own name is. Any other shape proves nothing.
+      const proves = (key) => isObject(key) && key.name === name && isDeleted(key);
+      result.key.deletedBy = proves(done.response) ? ["operation"] : [];
+      try {
+        const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
+        result.key.readback = back.status;
+        if (back.status === 200 && proves(back.json)) result.key.deletedBy.push("read-back");
+      } catch (error) {
+        result.key.readback = error.message;
+      }
+      result.key.deleted = result.key.deletedBy.length > 0;
       return result.key.deleted ? null : "k-readback: no deleteTime";
     } catch (error) {
       result.key.deleted = false;
@@ -317,6 +357,12 @@ export async function observe(ctx) {
         },
         secret: true,
       });
+      if (createRefused(created)) {
+        // Positive evidence that nothing was created: the item is settled here.
+        result.key.createRefused = created.status;
+        result.open.splice(result.open.indexOf(KEY_OPEN), 1);
+        throw new Stop(`k-create: refused ${created.status}`);
+      }
       if (created.status !== 200 || !isObject(created.json))
         throw new Stop(`k-create: ${created.status}`);
       createOperation = created.json.name ?? null;
@@ -443,6 +489,9 @@ export async function observe(ctx) {
   } catch (error) {
     result.stopped =
       error instanceof Stop || error instanceof Unknown ? error.message : `error: ${error.message}`;
+    // A forward stop from any side stops the hook too: the SDK's own requests are refused from
+    // here on, the installations' deletions keep their reserve (ruling 19 item 1).
+    browser.stop(`forward program stopped: ${result.stopped}`);
   } finally {
     // ---- G. restoration ----
     for (const [name, client] of Object.entries(clients)) {
@@ -507,7 +556,13 @@ export async function observe(ctx) {
       const problem = await deleteKey(keyName);
       if (problem) result.open.push(`${problem} (A2 lists keys)`);
       else if (result.open.includes(KEY_OPEN)) result.open.splice(result.open.indexOf(KEY_OPEN), 1);
-    } else if (ctx.production && result.key.createRequested && !keyName) result.key.deleted = false;
+    } else if (
+      ctx.production &&
+      result.key.createRequested &&
+      !keyName &&
+      !result.key.createRefused
+    )
+      result.key.deleted = false;
   }
   keyValue = null;
   result.sandboxAtBaseline =

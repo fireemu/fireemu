@@ -186,6 +186,8 @@ function world({
           headers: { "content-type": "application/json" },
           body: '[{\n  "featureDisabled": true\n}',
         };
+      if (streamAfterPublish === "429")
+        return { status: 429, headers: { "content-type": "application/json" }, body: "{}" };
       if (streamAfterPublish === "redirect")
         return { status: 302, headers: { location: "https://elsewhere.example/x" }, body: "" };
       return {
@@ -338,6 +340,9 @@ function productionAdmin(
     readbackName = null,
     pollName = null,
     leakKeyInTemplate = false,
+    createRefusal = null,
+    deleteOpDeleteTime = null,
+    readbackStatus = 200,
   } = {},
 ) {
   const keys = [];
@@ -375,6 +380,11 @@ function productionAdmin(
         const name = `projects/${keyProject}/locations/global/keys/k${keys.length}`;
         keys.push({ name, displayName: JSON.parse(init.body).displayName });
         if (createLost) return keyed(500, {});
+        // `createRefusal`: a definite 4xx, with Google's error body or another.
+        if (createRefusal) {
+          keys.pop();
+          return keyed(createRefusal.status, createRefusal.body);
+        }
         return keyed(200, {
           name: operationName ?? `operations/create-${keys.length}`,
           done: false,
@@ -394,7 +404,11 @@ function productionAdmin(
         return keyed(200, {
           name: path,
           done: true,
-          response: { name: keys.at(-1).name, keyString: KEY },
+          response: {
+            name: keys.at(-1).name,
+            keyString: KEY,
+            ...(deleteOpDeleteTime ? { deleteTime: deleteOpDeleteTime } : {}),
+          },
         });
       if (path.endsWith("/keyString")) return keyed(200, { keyString: KEY });
       if (init.method === "DELETE") {
@@ -403,6 +417,15 @@ function productionAdmin(
           ? keyed(500, {})
           : keyed(200, { name: `operations/delete-${keys.length}`, done: false });
       }
+      if (
+        url.search === "" &&
+        path.startsWith("projects/") &&
+        path.includes("/keys/") &&
+        readbackStatus !== 200
+      )
+        return keyed(readbackStatus, {
+          error: { code: readbackStatus, status: "NOT_FOUND", message: "x" },
+        });
       if (url.search === "" && path.startsWith("projects/") && path.includes("/keys/"))
         return keyed(200, {
           ...keys.find((k) => k.name === path),
@@ -540,7 +563,7 @@ test(
 async function productionPass(
   t,
   port,
-  { admin = {}, client = {}, cap = 80, callTimeoutMs, number = NUMBER, hold } = {},
+  { admin = {}, client = {}, cap = 80, callTimeoutMs, number = NUMBER, hold, timing = TIMING } = {},
 ) {
   const out = mkdtempSync(join(tmpdir(), "rc-closure-b-fake-"));
   t.after(() => rmSync(out, { recursive: true, force: true }));
@@ -571,7 +594,7 @@ async function productionPass(
     project: PROJECT,
     number,
     runId: "261125000000abg",
-    timing: TIMING,
+    timing,
     production: true,
     grant: (kind, value) => {
       if (kind === "operation") grants.operations.add(value);
@@ -1079,15 +1102,25 @@ test(
     );
     const out = join(dir, "send-web-1");
     const result = JSON.parse(readFileSync(join(out, "result.json"), "utf8"));
-    assert.equal(code, 1);
-    assert.equal(result.complete, false);
-    assert.ok(
-      result.open.some((item) => /^leak: [0-9]+-g-client\.body held a secret/.test(item)),
-      JSON.stringify(result.open),
-    );
+    // Ruling 19 item 2: the transport masks the key before the body's first write; the final scan
+    // finds nothing left, and result.json's complete is written after it.
+    assert.equal(code, 0, JSON.stringify([result.stopped, result.open]));
+    assert.equal(result.leakCheck, "done");
+    assert.ok(!result.open.some((item) => item.startsWith("leak:")));
     const { readdirSync } = await import("node:fs");
     for (const file of readdirSync(out))
       assert.ok(!readFileSync(join(out, file), "utf8").includes(KEY), file);
+    const redacted = readFileSync(join(out, "journal.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((r) => r.redacted === true);
+    assert.ok(
+      redacted.some((r) => r.case === "g-client"),
+      JSON.stringify(redacted),
+    );
+    const body = readdirSync(out).find((f) => f.endsWith("-g-client.body"));
+    assert.ok(readFileSync(join(out, body), "utf8").includes("leak API_KEY"));
   },
 );
 
@@ -1143,12 +1176,91 @@ test(
     const out = join(dir, "send-web-1");
     const result = JSON.parse(readFileSync(join(out, "result.json"), "utf8"));
     assert.match(result.stopped, /t1-publish: 400/);
-    assert.ok(
-      result.open.some((item) => item.startsWith("leak: ")),
-      JSON.stringify(result.open),
-    );
+    assert.equal(result.leakCheck, "done");
     const { readdirSync } = await import("node:fs");
     for (const file of readdirSync(out))
       assert.ok(!readFileSync(join(out, file), "utf8").includes(KEY), file);
+  },
+);
+
+// ---- RC-CLOSURE-B v1.3 (ruling 19) ----
+
+/** The journal's rows of one pass. */
+const rowsOf = (out) =>
+  readFileSync(join(out, "journal.jsonl"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+
+test(
+  "ruling 19 item 1: the hook stops at the answer: one fetch call's 429 lets no retry out; a 429 inside a window stops before the window ends",
+  { timeout: 300_000, skip },
+  async (t) => {
+    // The SDK retries a 429 inside the same fetch call; the hook refuses the retry.
+    const fetched = await productionPass(t, 47862, { client: { fetchStatus: 429 } });
+    assert.match(fetched.stopped ?? "", /firebaseremoteconfig\.googleapis\.com answered 429/);
+    const wire = fetched.clients.one?.wire ?? [];
+    const sent = wire.filter((e) => e.path.endsWith(":fetch") && e.status !== null);
+    assert.equal(sent.length, 1, JSON.stringify(wire.map((e) => [e.path, e.status, e.error])));
+    assert.ok(!casesOf(fetched.out).includes("r1-changed"));
+    // A 429 on the stream inside r1's 30 s window: the stop comes long before the window's end.
+    const windowed = await productionPass(t, 47863, {
+      client: { streamAfterPublish: "429" },
+      timing: { ...TIMING, updateWindowMs: 30_000 },
+    });
+    assert.match(windowed.stopped ?? "", /answered 429/);
+    const rows = rowsOf(windowed.out).filter((r) => r.phase === "before-send");
+    const at = (c) => Date.parse(rows.find((r) => r.case === c).at);
+    assert.ok(
+      at("g-client") - at("r1-changed") < 15_000,
+      String(at("g-client") - at("r1-changed")),
+    );
+    assert.ok(!casesOf(windowed.out).includes("r2-metadata"));
+  },
+);
+
+test(
+  "ruling 19 item 5: a definite 4xx create and a delete operation with the deleted key settle without the owner",
+  { timeout: 300_000, skip },
+  async (t) => {
+    const google = { error: { code: 400, status: "INVALID_ARGUMENT", message: "x" } };
+    const refused = await productionPass(t, 47864, {
+      admin: { createRefusal: { status: 400, body: google } },
+    });
+    assert.match(refused.stopped, /k-create: refused 400/);
+    assert.deepEqual(refused.open, []);
+    assert.equal(refused.key.createRefused, 400);
+    assert.equal(refused.sandboxAtBaseline, true);
+    // A 4xx without Google's error body is not a definite refusal: the key's item stays open.
+    const bare = await productionPass(t, 47865, {
+      admin: { createRefusal: { status: 400, body: {} } },
+    });
+    assert.ok(
+      bare.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
+    const other = await productionPass(t, 47866, {
+      admin: { createRefusal: { status: 400, body: { error: { ...google.error, code: 403 } } } },
+    });
+    assert.ok(other.open.length > 0);
+    // The done delete operation proves the deletion even when the read-back answers 404.
+    const byOperation = await productionPass(t, 47867, {
+      admin: { deleteOpDeleteTime: "2026-11-26T00:00:00.5Z", readbackStatus: 404 },
+    });
+    assert.equal(byOperation.key.deleted, true);
+    assert.deepEqual(byOperation.key.deletedBy, ["operation"]);
+    assert.equal(byOperation.key.readback, 404);
+    assert.deepEqual(byOperation.open, []);
+    // An operation response with an impossible date proves nothing; a 404 read-back neither.
+    const impossible = await productionPass(t, 47868, {
+      admin: { deleteOpDeleteTime: "2026-02-30T00:00:00Z", readbackStatus: 404 },
+    });
+    assert.equal(impossible.key.deleted, false);
+    assert.ok(
+      impossible.open.includes(
+        "k-create: the key may exist until its deletion is read back (A2 lists keys)",
+      ),
+    );
   },
 );

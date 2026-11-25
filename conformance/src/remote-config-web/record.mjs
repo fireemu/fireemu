@@ -130,6 +130,12 @@ export async function readBack(transport, urls, { runId = null, a2Of = null } = 
   try {
     const client = await transport.send("a2-client", urls.client);
     out.clientEmpty = client.status === 200 && baselineEmpty(client.json);
+    // The second read goes out only after a 200 to the first (ruling 19 item 1).
+    if (client.status !== 200) {
+      out.errors.push(`a2-client: ${client.status}`);
+      out.requests = transport.count;
+      return out;
+    }
     const keys = await transport.send("a2-keys", urls.keysListDeleted);
     const list = keys.json;
     // A complete list: 200, an object with no error member and no further page (ruling 16 item 3).
@@ -140,7 +146,19 @@ export async function readBack(transport, urls, { runId = null, a2Of = null } = 
       !Array.isArray(list) &&
       !("error" in list) &&
       !("nextPageToken" in list) &&
-      (list.keys === undefined || Array.isArray(list.keys));
+      (list.keys === undefined ||
+        // Every entry a well-formed key object (ruling 19 item 3).
+        (Array.isArray(list.keys) &&
+          list.keys.every(
+            (k) =>
+              k !== null &&
+              typeof k === "object" &&
+              !Array.isArray(k) &&
+              typeof k.name === "string" &&
+              KEY_NAME.test(k.name) &&
+              (k.displayName === undefined || typeof k.displayName === "string") &&
+              (k.deleteTime === undefined || isDeleted(k)),
+          )));
     const ours = out.keyListComplete
       ? (list.keys ?? []).filter((k) => k?.displayName === KEY_ID)
       : [];
@@ -176,7 +194,7 @@ export function recorderAlive(pid) {
     // The pid is alive and its command cannot be read: it may be the recorder.
     return true;
   }
-  return args.includes("remote-config-web/record.mjs") || args.includes("launch-b12.sh");
+  return args.includes("remote-config-web/record.mjs") || args.includes("launch-b13.sh");
 }
 
 /**
@@ -190,6 +208,11 @@ export function a2Refusal(dir, now = Date.now()) {
   if (!run || typeof run.runId !== "string" || !Number.isInteger(run.pid))
     return "the pass has no run.json with its runId and pid";
   if (recorderAlive(run.pid)) return "the pass's recorder is still running";
+  // The same lock-holder check as the launcher's (ruling 19 item 7): the project lock beside the
+  // run directories exists and its launcher is gone.
+  const lock = readJson(join(dir, "..", "..", "sandbox-locks", "fireemu-oracle-query.lock"));
+  if (!lock) return "the project lock is not held";
+  if (recorderAlive(lock.pid)) return "the pass's launcher is still running";
   const checkpoint = [readJson(join(dir, "result.json")), readJson(join(dir, "interrupted.json"))];
   if (!checkpoint.some((c) => c?.runId === run.runId))
     return "the pass has no completion or interruption checkpoint";
@@ -265,10 +288,30 @@ export function closureRefusal(dir, ownerLedger) {
   } catch {
     line = "";
   }
-  const word = record.kind === "owner-acceptance" ? "accept" : "recovery";
-  if (!(line.includes("RC-CLOSURE-B") && line.includes(run.runId) && line.includes(word)))
-    return "the acceptance record's owner-ledger line does not name the packet, the run and the kind";
+  const decision = record.kind === "owner-acceptance" ? "accept" : "recovery";
+  if (!ownerDecision(line, run.runId, decision))
+    return "the acceptance record's owner-ledger line is not the decision line of the packet, the run and the kind";
   return null;
+}
+
+export const PACKET_ID = "RC-CLOSURE-B-V1-3";
+
+/**
+ * The owner's decision line, matched by exact fields (ruling 19 item 4):
+ *   - <date> | RC-CLOSURE-B decision | packetId=<PACKET_ID> runId=<runId> decision=<accept|recovery> | <who> | <source>
+ * Five ` | `-separated columns; the third holds exactly those three fields in that order and
+ * nothing else. It carries no envelopeId, so the launcher's E/V count never sees it.
+ */
+export function ownerDecision(line, runId, decision) {
+  const columns = line.split(" | ");
+  return (
+    columns.length === 5 &&
+    /^- [0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(columns[0]) &&
+    columns[1] === "RC-CLOSURE-B decision" &&
+    columns[2] === `packetId=${PACKET_ID} runId=${runId} decision=${decision}` &&
+    columns[3] === "owner" &&
+    columns[4].trim().length > 0
+  );
 }
 
 /** The variables that would send the browser or its diagnostics elsewhere (ruling 18 item 8). */
@@ -361,6 +404,13 @@ export async function main(argv, env = process.env, deps = {}) {
     });
   const grants = { operations: new Set(), key: null };
   const urls = adminUrls(PROJECT);
+  // The key's value, once read, is masked in every body before it is written (ruling 19 item 2).
+  const secrets = new Set();
+  const redact = (text) => {
+    let out = text;
+    for (const secret of secrets) if (secret) out = out.split(secret).join("API_KEY");
+    return out;
+  };
   const transport = new Transport({
     out,
     allow: allowFor(args, grants),
@@ -368,6 +418,7 @@ export async function main(argv, env = process.env, deps = {}) {
     maxRequests: args["a2-of"] ? A2_MAX_REQUESTS : MAX_ADMIN_REQUESTS,
     timeoutMs: 30_000,
     userProject: PROJECT,
+    redact,
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
   });
   if (args["a2-of"]) {
@@ -389,7 +440,6 @@ export async function main(argv, env = process.env, deps = {}) {
     port: deps.port ?? 47853,
     cap: MAX_PAGE_REQUESTS,
   });
-  const secrets = new Set();
   let result;
   try {
     result = await observe({
@@ -414,14 +464,18 @@ export async function main(argv, env = process.env, deps = {}) {
       );
       delete client.wire;
     }
+    // result.json is first written not complete; its final `complete` is written only once the
+    // leak check has passed (ruling 19 item 2), so an interrupted or failed check never closes.
+    const complete = result.complete;
+    result.complete = false;
+    result.leakCheck = "pending";
     writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
     // The leak check runs while the key and the pages' secrets are still known (ruling 18 item 3).
     const leaked = await leakCheck(out, secrets, browser);
-    if (leaked.length) {
-      result.complete = false;
-      for (const name of leaked) result.open.push(`leak: ${name} held a secret (masked copy kept)`);
-      writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
-    }
+    for (const name of leaked) result.open.push(`leak: ${name} held a secret (masked copy kept)`);
+    result.complete = complete && leaked.length === 0;
+    result.leakCheck = "done";
+    writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
   } finally {
     secrets.clear();
     await browser.close();

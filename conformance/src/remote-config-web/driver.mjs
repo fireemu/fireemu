@@ -148,6 +148,12 @@ export function requestPolicy({ method, href, headers, postData }, own) {
   return { verdict: "allowed" };
 }
 
+/**
+ * The answers that stop the hook itself (ruling 19 item 1): seen at the response boundary, so an
+ * SDK retry inside the same page call is refused before it leaves; the cleanup reserve stays.
+ */
+export const STOP_STATUSES = new Set([403, 429]);
+
 /** The installation deletions admitted beyond the cap and after a stop, for the cleanup. */
 export const CLEANUP_RESERVE = 4;
 /** The wall-clock bound of one page call. */
@@ -241,6 +247,7 @@ export async function openBrowser({
           if (verdict === "create") own.fids.add(fid);
           if (!fake) return route.continue();
           const answer = await fake(request);
+          if (STOP_STATUSES.has(answer.status)) stop(`${host} answered ${answer.status}`);
           return route.fulfill({
             status: answer.status,
             headers: { "access-control-allow-origin": origin, ...answer.headers },
@@ -256,6 +263,13 @@ export async function openBrowser({
               : `refused request to ${host} (${reason})`,
           );
         return route.abort();
+      });
+      // Production's answers pass the hook by `route.continue()`: their status is read here, when
+      // the response's headers arrive, before the SDK can act on it.
+      context.on("response", (response) => {
+        const host = new URL(response.url()).host;
+        if (HOSTS.includes(host) && STOP_STATUSES.has(response.status()))
+          stop(`${host} answered ${response.status()}`);
       });
       const page = await context.newPage();
       await page.addInitScript(
