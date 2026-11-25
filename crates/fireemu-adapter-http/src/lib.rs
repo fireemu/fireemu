@@ -8,6 +8,7 @@ pub mod identity_framing;
 pub mod identity_toolkit;
 pub mod oidc;
 pub mod remote_config;
+pub mod remote_config_client;
 mod remote_config_client_conditions;
 mod remote_config_conditions;
 mod remote_config_defaults;

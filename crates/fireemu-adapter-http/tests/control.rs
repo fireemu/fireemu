@@ -4934,3 +4934,167 @@ async fn remote_config_race_loser_is_decided_on_arrival_even_with_a_slow_body() 
     server.abort();
     let _ = server.await;
 }
+
+/// One HTTP/1.1 exchange on a fresh connection (the answer read to its end).
+async fn exchange(addr: std::net::SocketAddr, request: String) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+}
+
+fn publish_request(addr: std::net::SocketAddr, message: &str) -> String {
+    let body = json!({
+        "conditions": [{"name": "premium", "expression": "app.customSignal['tier'].exactlyMatches(['premium'])"}],
+        "parameters": {"message": {"defaultValue": {"value": format!("{message}-default")}, "conditionalValues": {"premium": {"value": format!("{message}-premium")}}}}
+    })
+    .to_string();
+    format!("PUT /v1/projects/demo-app/remoteConfig HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nAuthorization: Bearer test-token\r\nIf-Match: *\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+}
+
+fn fetch_request(addr: std::net::SocketAddr, project: &str, tag: &str) -> String {
+    let body = r#"{"app_instance_id":"cAAAAAAAAAAAAAAAAAAAAA","app_id":"1:1:web:ab","custom_signals":{"tier":"premium"}}"#;
+    format!("POST /v1/projects/{project}/namespaces/firebase:fetch?key=K HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nOrigin: http://localhost:5173\r\nIf-None-Match: {tag}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+}
+
+fn header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+    response
+        .split("\r\n\r\n")
+        .next()?
+        .lines()
+        .find_map(|line| {
+            line.split_once(": ")
+                .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+        })
+        .map(|(_, value)| value)
+}
+
+#[tokio::test]
+async fn the_web_client_fetch_needs_no_control_token_and_answers_update_then_no_change() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state(Arc::new(AtomicUsize::new(0)))),
+    ));
+    assert!(exchange(addr, publish_request(addr, "v1"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    let first = exchange(addr, fetch_request(addr, "demo-app", "*")).await;
+    assert!(first.starts_with("HTTP/1.1 200 "), "{first}");
+    assert!(first.ends_with("\"entries\": {\n    \"message\": \"v1-premium\"\n  },\n  \"state\": \"UPDATE\",\n  \"templateVersion\": \"1\"\n}\n"), "{first}");
+    assert_eq!(
+        header(&first, "content-type"),
+        Some("application/json; charset=UTF-8")
+    );
+    assert_eq!(
+        header(&first, "access-control-allow-origin"),
+        Some("http://localhost:5173")
+    );
+    assert_eq!(
+        header(&first, "access-control-expose-headers"),
+        Some("etag")
+    );
+    let tag = header(&first, "etag").unwrap().to_owned();
+    assert!(tag.starts_with("etag-demo-app-firebase-fetch-"), "{tag}");
+    let again = exchange(addr, fetch_request(addr, "demo-app", &tag)).await;
+    assert!(
+        again.ends_with("{\n  \"state\": \"NO_CHANGE\",\n  \"templateVersion\": \"1\"\n}\n"),
+        "{again}"
+    );
+    assert_eq!(header(&again, "etag"), Some(tag.as_str()));
+    // Another project is not this emulator's.
+    let other = exchange(addr, fetch_request(addr, "other-app", "*")).await;
+    assert!(other.starts_with("HTTP/1.1 404 "), "{other}");
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per_version() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(state(Arc::new(AtomicUsize::new(0)))),
+    ));
+    assert!(exchange(addr, publish_request(addr, "v1"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    let body = r#"{"project":"demo-app","namespace":"firebase","lastKnownVersionNumber":"1","appId":"1:1:web:ab","sdkVersion":"12.18.0","appInstanceId":"cAAAAAAAAAAAAAAAAAAAAA"}"#;
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(format!("POST /v1/projects/demo-app/namespaces/firebase:streamFetchInvalidations?key=K HTTP/1.1\r\nHost: {addr}\r\nOrigin: http://localhost:5173\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes())
+        .await
+        .unwrap();
+    // Nothing is answered while no newer version exists (production held its headers too).
+    let mut buffer = vec![0; 4096];
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(700),
+        stream.read(&mut buffer)
+    )
+    .await
+    .is_err());
+    assert!(exchange(addr, publish_request(addr, "v2"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    let mut seen = String::new();
+    while !seen.contains("\"latestTemplateVersionNumber\": \"2\"") {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+    assert!(seen.starts_with("HTTP/1.1 200 "), "{seen}");
+    assert_eq!(
+        header(&seen, "content-type"),
+        Some("application/json; charset=UTF-8")
+    );
+    assert!(
+        seen.contains("[{\n  \"latestTemplateVersionNumber\": \"2\"\n}\n"),
+        "{seen:?}"
+    );
+    // A same-content publication is a new version and another frame on the same response.
+    assert!(exchange(addr, publish_request(addr, "v2"))
+        .await
+        .starts_with("HTTP/1.1 200 "));
+    while !seen.contains("\"latestTemplateVersionNumber\": \"3\"") {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+    assert!(
+        seen.contains(",\r\n{\n  \"latestTemplateVersionNumber\": \"3\"\n}\n"),
+        "{seen:?}"
+    );
+    // An older lastKnownVersionNumber gets its first frame at once.
+    let late = r#"{"lastKnownVersionNumber":"0"}"#;
+    let mut other = tokio::net::TcpStream::connect(addr).await.unwrap();
+    other
+        .write_all(format!("POST /v1/projects/demo-app/namespaces/firebase:streamFetchInvalidations HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\n\r\n{late}", late.len()).as_bytes())
+        .await
+        .unwrap();
+    let mut late_seen = String::new();
+    while !late_seen.contains("\"latestTemplateVersionNumber\": \"3\"") {
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), other.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(n > 0, "{late_seen:?}");
+        late_seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+    server.abort();
+    let _ = server.await;
+}

@@ -17,8 +17,39 @@ use crate::control::{self, ControlState, PublishEventError};
 use crate::identity_toolkit::{handle_with, AuthState, RequestHeaders};
 use crate::{
     remote_config::{Error as RemoteConfigError, RemoteConfigStores, TemplateStore, Version},
+    remote_config_client::{self, ClientAction},
     remote_config_http,
 };
+
+/// How long a realtime stream holds its answer for a newer client template before it answers
+/// without a frame (production held it until the publication; its bound was not recorded).
+const STREAM_HOLD: std::time::Duration = std::time::Duration::from_secs(60);
+/// How often a realtime stream reads the client template's version.
+const STREAM_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long one realtime stream stays open (production's bound was not recorded).
+const STREAM_LIFETIME: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// A response body that is either written at once or streamed (the realtime route).
+type Body = http_body_util::Either<Full<Bytes>, ChannelBody>;
+
+/// A streamed body fed by a channel; it ends when the sender is dropped.
+pub struct ChannelBody {
+    frames: tokio::sync::mpsc::Receiver<Bytes>,
+}
+
+impl hyper::body::Body for ChannelBody {
+    type Data = Bytes;
+    type Error = std::convert::Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Bytes>, Self::Error>>> {
+        self.frames
+            .poll_recv(cx)
+            .map(|frame| frame.map(|bytes| Ok(hyper::body::Frame::data(bytes))))
+    }
+}
 
 /// Maximum accepted request body (spec 33.3 input budget).
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
@@ -162,6 +193,16 @@ async fn respond(
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
+    if let (Some(control), Some(stores), "POST") = (&control, &remote_config, method) {
+        let endpoint = path
+            .split_once('?')
+            .map_or(path.as_ref(), |(endpoint, _)| endpoint);
+        if let Some((project, ClientAction::Fetch)) = remote_config_client::client_route(endpoint) {
+            return Ok(
+                client_fetch_response(control, stores, project, &parts, incoming, origin).await,
+            );
+        }
+    }
     if let (Some(control), Some(store)) = (&control, &remote_config) {
         let (endpoint, query) = path.split_once('?').unwrap_or((&path, ""));
         if let Some(route) = remote_config_http::route(endpoint) {
@@ -488,6 +529,179 @@ async fn remote_config_response(
 }
 
 /// Renders one JSON response, optionally forbidding every cache.
+/// The Web client's fetch (RC-CLOSURE-B): no control capability, the default project only.
+async fn client_fetch_response(
+    control: &ControlState,
+    stores: &RemoteConfigStores,
+    project: &str,
+    parts: &hyper::http::request::Parts,
+    incoming: Incoming,
+    origin: Option<&str>,
+) -> Response<Full<Bytes>> {
+    let reply = if project == control.default_project {
+        match fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await {
+            Ok(bytes) => remote_config_client::fetch(
+                &stores.client.current(),
+                project,
+                parts
+                    .headers
+                    .get(hyper::header::IF_NONE_MATCH)
+                    .and_then(|value| value.to_str().ok()),
+                &bytes,
+            ),
+            Err(_) => remote_config_client::FetchReply {
+                status: 413,
+                body: br#"{"error":{"code":413,"status":"RESOURCE_EXHAUSTED"}}"#.to_vec(),
+                etag: None,
+            },
+        }
+    } else {
+        remote_config_client::FetchReply {
+            status: 404,
+            body: br#"{"error":{"code":404,"status":"NOT_FOUND"}}"#.to_vec(),
+            etag: None,
+        }
+    };
+    let mut builder = with_cors(
+        Response::builder().status(
+            StatusCode::from_u16(reply.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        ),
+        origin,
+    )
+    .header("content-type", "application/json; charset=UTF-8")
+    .header("access-control-expose-headers", "etag");
+    if let Some(etag) = reply.etag {
+        builder = builder.header("etag", etag);
+    }
+    builder
+        .body(Full::new(Bytes::from(reply.body)))
+        .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+}
+
+/// One connection's request: the realtime stream, or every other route through `respond`.
+#[allow(clippy::too_many_arguments)]
+async fn serve_request(
+    state: Arc<AuthState>,
+    control: Option<Arc<ControlState>>,
+    remote_config: Option<Arc<RemoteConfigStores>>,
+    blocking_auth_slots: Option<Arc<Semaphore>>,
+    peer_ip: Option<String>,
+    remote_peer: bool,
+    req: Request<Incoming>,
+) -> Result<Response<Body>, hyper::Error> {
+    let stream = req.method() == hyper::Method::POST
+        && matches!(
+            remote_config_client::client_route(req.uri().path()),
+            Some((_, ClientAction::Stream))
+        );
+    if let (true, Some(control), Some(stores)) = (stream, &control, &remote_config) {
+        let local = fireemu_core_session::host_guard::admits_request(
+            req.version() == hyper::Version::HTTP_2,
+            req.headers()
+                .get_all(hyper::header::HOST)
+                .iter()
+                .map(hyper::header::HeaderValue::as_bytes),
+        )
+        .is_ok()
+            && req
+                .headers()
+                .get("origin")
+                .and_then(|v| v.to_str().ok())
+                .is_none_or(crate::identity_toolkit::origin_is_local);
+        if local {
+            return Ok(client_stream_response(control, stores.clone(), req).await);
+        }
+    }
+    respond(
+        state,
+        control,
+        remote_config,
+        blocking_auth_slots,
+        peer_ip,
+        remote_peer,
+        req,
+    )
+    .await
+    .map(|response| response.map(http_body_util::Either::Left))
+}
+
+/// The Web client's realtime stream (RC-CLOSURE-B): the answer waits for a client template newer
+/// than `lastKnownVersionNumber`, then one frame per newer version on one open response.
+async fn client_stream_response(
+    control: &ControlState,
+    stores: Arc<RemoteConfigStores>,
+    req: Request<Incoming>,
+) -> Response<Body> {
+    let (parts, incoming) = req.into_parts();
+    let origin = parts.headers.get("origin").and_then(|v| v.to_str().ok());
+    let project = remote_config_client::client_route(parts.uri.path()).map(|(project, _)| project);
+    if project != Some(control.default_project.as_str()) {
+        return finish(
+            404,
+            &serde_json::json!({"error": {"code": 404, "status": "NOT_FOUND"}}),
+            origin,
+            true,
+        )
+        .map(http_body_util::Either::Left);
+    }
+    let Ok(bytes) = fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await
+    else {
+        return finish(
+            413,
+            &serde_json::json!({"error": {"code": 413, "status": "RESOURCE_EXHAUSTED"}}),
+            origin,
+            true,
+        )
+        .map(http_body_util::Either::Left);
+    };
+    let last_known = remote_config_client::last_known(&bytes);
+    let newer = |stores: &RemoteConfigStores| {
+        let current = stores.client.current();
+        (current.change() != crate::remote_config::Change::Initial && current.number() > last_known)
+            .then(|| current.number())
+    };
+    let held = tokio::time::Instant::now() + STREAM_HOLD;
+    let mut first = newer(&stores);
+    while first.is_none() && tokio::time::Instant::now() < held {
+        tokio::time::sleep(STREAM_POLL).await;
+        first = newer(&stores);
+    }
+    let (frames, receiver) = tokio::sync::mpsc::channel::<Bytes>(16);
+    tokio::spawn(async move {
+        let mut sent = last_known;
+        let mut opened = false;
+        if let Some(version) = first {
+            if frames
+                .send(Bytes::from(remote_config_client::frame(true, version)))
+                .await
+                .is_err()
+            {
+                return;
+            }
+            (sent, opened) = (version, true);
+        }
+        let end = tokio::time::Instant::now() + STREAM_LIFETIME;
+        while tokio::time::Instant::now() < end && !frames.is_closed() {
+            tokio::time::sleep(STREAM_POLL).await;
+            let current = stores.client.current();
+            if current.change() != crate::remote_config::Change::Initial && current.number() > sent
+            {
+                let frame = remote_config_client::frame(!opened, current.number());
+                if frames.send(Bytes::from(frame)).await.is_err() {
+                    return;
+                }
+                (sent, opened) = (current.number(), true);
+            }
+        }
+    });
+    with_cors(Response::builder().status(StatusCode::OK), origin)
+        .header("content-type", "application/json; charset=UTF-8")
+        .body(http_body_util::Either::Right(ChannelBody {
+            frames: receiver,
+        }))
+        .unwrap_or_else(|_| Response::new(http_body_util::Either::Left(Full::new(Bytes::new()))))
+}
+
 fn finish(
     status: u16,
     body: &serde_json::Value,
@@ -765,7 +979,7 @@ async fn serve_inner(
                 DrainBounds::for_largest_body(MAX_BODY_BYTES),
             ));
             let svc = service_fn(move |req| {
-                respond(
+                serve_request(
                     state.clone(),
                     control.clone(),
                     remote_config.clone(),

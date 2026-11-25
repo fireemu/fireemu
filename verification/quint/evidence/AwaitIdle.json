@@ -118,7 +118,9 @@
     "crates/fireemu-adapter-http/src/lib.rs",
     "crates/fireemu-adapter-http/src/oidc.rs",
     "crates/fireemu-adapter-http/src/remote_config.rs",
+    "crates/fireemu-adapter-http/src/remote_config_client.rs",
     "crates/fireemu-adapter-http/src/remote_config_client_conditions.rs",
+    "crates/fireemu-adapter-http/src/remote_config_client_tests.rs",
     "crates/fireemu-adapter-http/src/remote_config_conditions.rs",
     "crates/fireemu-adapter-http/src/remote_config_defaults.rs",
     "crates/fireemu-adapter-http/src/remote_config_http.rs",
@@ -682,7 +684,7 @@
     },
     "crates/fireemu-adapter-http/src/lib.rs": {
       "kind": "sha256",
-      "value": "df91ba073353870aa121abcc6eccecd090a96ec5f3801be887077b95ebba5f8b"
+      "value": "7e07a0f7ddd8007349003a7d022d16a21654032eebc6ead25873edce7942ef9e"
     },
     "crates/fireemu-adapter-http/src/oidc.rs": {
       "kind": "sha256",
@@ -692,9 +694,17 @@
       "kind": "sha256",
       "value": "412577dcf852fd03d9aa4e473ba5b18510caf85e580b5480d3ed8514ae662d66"
     },
+    "crates/fireemu-adapter-http/src/remote_config_client.rs": {
+      "kind": "sha256",
+      "value": "22518d4e0b3f8d447ed87a3a6c5ad2b79ecccd9cf4c066b93ebcb6a88a363d4b"
+    },
     "crates/fireemu-adapter-http/src/remote_config_client_conditions.rs": {
       "kind": "sha256",
       "value": "84549c0899a84ac17ddeea24fc2504b7e4d6c20927eebb1d0c24892faa00df4b"
+    },
+    "crates/fireemu-adapter-http/src/remote_config_client_tests.rs": {
+      "kind": "sha256",
+      "value": "b53ac0927bb8a59e0254e2d15cd4e6acf91c705b819fd85265c04f304527e6ff"
     },
     "crates/fireemu-adapter-http/src/remote_config_conditions.rs": {
       "kind": "sha256",
@@ -738,7 +748,7 @@
     },
     "crates/fireemu-adapter-http/src/server.rs": {
       "kind": "sha256",
-      "value": "df3c43d81172e6b1c950e33d6694d1d91bf0f28583ae211bb96d1c066535629d"
+      "value": "c8274c193bfa1cd70dccc4646a75f9959c30e91131e22825a8da38c61466c8d9"
     },
     "crates/fireemu-adapter-http/src/signing.rs": {
       "kind": "sha256",
