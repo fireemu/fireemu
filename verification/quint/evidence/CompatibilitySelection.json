@@ -2104,7 +2104,7 @@
     },
     "crates/fireemu/src/capabilities.json": {
       "kind": "json-semantic",
-      "value": "e2209239437b38bdbb78983576b2a805ed8bf75597888d3b4d4c57d22076d599"
+      "value": "6db9fbff12e61aa31cc98503dc61a0b554b25db9dc21ebebd556977128f87f60"
     },
     "crates/fireemu/src/config.rs": {
       "kind": "sha256",
@@ -2304,7 +2304,7 @@
     },
     "verification/quint/evidence/cargo-authority.json": {
       "kind": "json-semantic",
-      "value": "8cd7be5d47f47f2f8cfc54b6966da78617de6dfb7c6d081f5eb46f5a08a8644b"
+      "value": "4358d049d9872d96e40e8a4a675ca11a9798bffcdcdb41eae3cbc645bbc4a8f6"
     },
     "verification/quint/java/io/fireemu/verification/LoopbackServerProviderAgent.java": {
       "kind": "sha256",
