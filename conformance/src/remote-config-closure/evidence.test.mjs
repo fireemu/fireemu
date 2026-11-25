@@ -184,3 +184,74 @@ test("conditions own the rows: one owner each, and counts by condition", () => {
   });
   assert.equal(Object.keys(CONDITION_ROWS).length, 6);
 });
+
+// The Codex r3 forgeries (ruling 11), each a forged local strict fixture with every comparison and
+// pin recomputed: the evidence check refuses each through the comparisons it recomputes.
+const refusedForgery = (change) => {
+  const problems = check(reforge(headFiles(), FILES.localStrict, change));
+  assert.ok(
+    problems.some((p) => /closure-a-strict-vs-pass-[12]\.json: [1-9][0-9]* MISMATCH/.test(p)),
+    problems.join("\n"),
+  );
+};
+const rowOf = (fixture, caseId) => fixture.rows.find((row) => row.case === caseId);
+const eventOf = (fixture, versionNumber, generation) =>
+  fixture.events.find((e) => e.versionNumber === versionNumber && e.generation === generation);
+
+test("forgery r3-1: a REST time in Gen1's spelling, and a Gen1 time in REST's", () => {
+  refusedForgery((fixture) => {
+    const row = rowOf(fixture, "p1-publish");
+    row.body.version.updateTime = row.body.version.updateTime.replace(".120Z", ".12Z");
+    row.bodyBytes -= 1;
+  });
+  refusedForgery((fixture) => {
+    const version = rowOf(fixture, "p1-publish").body.version.versionNumber;
+    const event = eventOf(fixture, version, 1);
+    const longer = (t) => t.replace(/\.12Z$/, ".120Z");
+    event.updateTime = longer(event.updateTime);
+    event.data.updateTime = longer(event.data.updateTime);
+    event.context.timestamp = longer(event.context.timestamp);
+  });
+});
+
+test("forgery r3-2: an event a nanosecond after its version is another instant", () => {
+  refusedForgery((fixture) => {
+    const version = rowOf(fixture, "p1-publish").body.version.versionNumber;
+    const event = eventOf(fixture, version, 2);
+    const later = (t) => t.replace(/\.120Z$/, ".120000001Z");
+    event.updateTime = later(event.updateTime);
+    event.data.updateTime = later(event.data.updateTime);
+    event.context.time = later(event.context.time);
+  });
+});
+
+test("forgery r3-3: an extra delivery that names no version of the run", () => {
+  refusedForgery((fixture) => {
+    const version = rowOf(fixture, "p1-publish").body.version.versionNumber;
+    const extra = structuredClone(eventOf(fixture, version, 2));
+    const other = (t) => t.replace(/\.120Z$/, ".999Z");
+    extra.updateTime = other(extra.updateTime);
+    extra.data.updateTime = other(extra.data.updateTime);
+    extra.context.time = other(extra.context.time);
+    extra.order = fixture.events.length;
+    fixture.events.push(extra);
+  });
+});
+
+test("forgery r3-5: the defaults file in sorted order", () => {
+  refusedForgery((fixture) => {
+    const row = rowOf(fixture, "d-json");
+    const { fireemu_source: source, fireemu_count: count, ...rest } = row.body;
+    row.body = { fireemu_count: count, fireemu_source: source, ...rest };
+  });
+});
+
+test("forgery r3-6: an unrecorded race loser with the recorded error status", () => {
+  refusedForgery((fixture) => {
+    const loser = ["p7-race-a", "p7-race-b"]
+      .map((c) => rowOf(fixture, c))
+      .find((r) => r.status !== 200);
+    loser.status = 400;
+    loser.body = { error: { code: 418, message: "arbitrary", status: "FAILED_PRECONDITION" } };
+  });
+});

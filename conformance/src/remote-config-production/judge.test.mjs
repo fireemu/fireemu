@@ -773,3 +773,30 @@ test("eventRows: the summary counts repeated steps, server steps and arrival ord
   assert.equal(reversed.get("summary:g1").value.inPublicationOrder, false);
   assert.deepEqual(reversed.get("summary:g1").value.clientSteps, ["p5", "p1"]);
 });
+
+test("forgery r3-4: an escape under a member named like the suffix is never waived", async () => {
+  const { escapeMap } = await import("./sanitise.mjs");
+  const left = '{"a:member-order":"\\u0078","b:member-order":"y"}';
+  const right = '{"a:member-order":"x","b:member-order":"\\u0079"}';
+  const run = (raw) =>
+    runOf({ client: "27", server: "6" }, [
+      answer("r-identity", CLIENT, JSON.parse(raw), { escapes: escapeMap(raw) }),
+    ]);
+  for (const [kind, known] of [
+    ["production-vs-local", [MEMBER_ORDER]],
+    [
+      "production-vs-production",
+      [
+        {
+          ...MEMBER_ORDER,
+          id: "KD-PRODUCTION-MEMBER-ORDER",
+          appliesTo: ["production-vs-production"],
+        },
+      ],
+    ],
+  ]) {
+    const row = compareRuns(run(left), run(right), { known, kind }).rows[0];
+    assert.equal(row.status, "MISMATCH", kind);
+    assert.deepEqual(row.knownDifferences, [], kind);
+  }
+});
