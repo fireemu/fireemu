@@ -51,15 +51,15 @@ export const COMPARISONS = [
 
 /** The closed table: every file of DIR, and the known differences, with its sha256. */
 export const PINS = {
-  [FILES.pass1]: "4eb0a35005088a87ab625ed746307f7f24ea54ee622948c50baf4b0a3e7e20d8",
-  [FILES.pass2]: "927015ea88c9c44864401cbf794c64cb626032c13bf5b2d7168b04bf2ff92c24",
-  [FILES.localStrict]: "89290190cea5c6edabd1a4bb3e33ee641fb2ee70e0cbec9da546ee9584b8b502",
-  [FILES.localEmulator]: "2adaacfa02799d93a16cdab2cc4dab6b420453a9d8c564a5d5b2da7b3c953c7b",
-  [FILES.runVsRun]: "f0700d0904cfe7bc3c25ab34a680ca6c18f7087ea94aa0eb980be37ee9f6aae7",
-  [FILES.strictVsPass1]: "9436bb66f0f9e0f1270c55d23226ae66206debe5b5d670e617b4ce2ee23eb8f4",
-  [FILES.strictVsPass2]: "665f9310fec9799c8d94d03be98cee09a91eb40fe5690956dcb93fca03883c00",
-  [FILES.emulatorVsPass1]: "b0ad8e78711e33a9687330073aa830a839ac35e70150163995a17e1838c303e6",
-  [FILES.emulatorVsPass2]: "8c7a0eef3d826126c77c5474801a058368781946b3c312e985b1a7c3aad45392",
+  [FILES.pass1]: "71b163e924bdeb77b8e62983a67471ac7b5c02e9e0171966dde82ee78fe4b23e",
+  [FILES.pass2]: "10bd2b8210971cc16f00607b9678c64555d0ae2f642ec227418ab94aea44cc40",
+  [FILES.localStrict]: "fa53f04e4020aa8491a58332f7a8e401bc9b2ade85936ccb8d43de4361b0a5c0",
+  [FILES.localEmulator]: "916d511dfa23e0a55d08ab04ce5f985b97baa899d50a41862d59385741ec5b7d",
+  [FILES.runVsRun]: "226a9fed69f2643d6e640dfc7f4776ba601785e38c54fd9246075777af5bbd06",
+  [FILES.strictVsPass1]: "c2e3dcf4de31a0009268e429dcba09509452f38554a7d5720224e0e015ba7237",
+  [FILES.strictVsPass2]: "49200fba319bc07928fbd34a6f1c24d1ef86cd642f8c1dae02668a6c58bdbbef",
+  [FILES.emulatorVsPass1]: "f60081d313ff6c89a0cc37e6b8ec6cb71a5c574c03339fe1e1790bc8020cea1c",
+  [FILES.emulatorVsPass2]: "b60e063d7921587bd67c9170601567a94e718fd63acf259ad5d9c03b0c47a0bd",
   [KNOWN]: "3bf385a7271c432a12f54ee767acdc5c56467df7c408eac676d8e81cf7c1cad0",
 };
 

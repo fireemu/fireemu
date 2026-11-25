@@ -246,7 +246,8 @@ test("sanitiseRun keeps the Remote Config rows only, masked, with the recorded l
     server: { version: "6", empty: true },
   });
   assert.equal(fixture.events[0].context.resource, "projects/PROJECT_ID");
-  assert.deepEqual(fixture.summary.generations[1].projectValues, ["PROJECT_ID"]);
+  // The recorder's summary is not kept (ruling 12): the judge computes it from the events.
+  assert.equal(Object.hasOwn(fixture, "summary"), false);
   const text = JSON.stringify(fixture);
   for (const secret of [PROJECT, NUMBER, RUN, "owner@corp", "Owner Name", "lh3.example"])
     assert.ok(!text.includes(secret), secret);

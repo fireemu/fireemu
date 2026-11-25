@@ -324,13 +324,14 @@ export function eventRows(run) {
   // arrived in publication order, and every delivery that names no version of the run (an extra
   // or unexpected event is a difference, never dropped; ruling 11 item 3).
   const publication = new Map(run.versions.map((v, i) => [v, i]));
-  for (const generation of [1, 2]) {
+  // A run without events (a comparison of answers only) has no delivery summary; otherwise both
+  // generations have one, so a generation that received nothing is a difference too.
+  for (const generation of run.events.length ? [1, 2] : []) {
     const delivered = run.events
       .filter((event) => event.generation === generation)
       .toSorted((a, b) => (a.order ?? 0) - (b.order ?? 0))
       .map((event) => steps.get(at(event.versionNumber, event.updateTime)));
     const arrived = delivered.filter(Boolean);
-    if (!delivered.length && !run.summary?.generations?.[generation]) continue;
     const seen = new Set();
     let duplicates = 0;
     for (const version of arrived) {

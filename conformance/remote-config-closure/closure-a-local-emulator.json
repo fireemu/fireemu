@@ -44321,45 +44321,5 @@
         "timestamp": "2026-01-01T00:02:26.37Z"
       }
     }
-  ],
-  "summary": {
-    "versionRangesOverlap": false,
-    "logTruncated": false,
-    "generations": {
-      "1": {
-        "events": 7,
-        "unmatched": 0,
-        "clientSteps": [
-          "p1",
-          "p5",
-          "p6a",
-          "p6b",
-          "p7",
-          "k1",
-          "c9"
-        ],
-        "serverSteps": [],
-        "serverDelivery": "none-within-window",
-        "duplicates": [],
-        "inPublicationOrder": true
-      },
-      "2": {
-        "events": 7,
-        "unmatched": 0,
-        "clientSteps": [
-          "p1",
-          "p5",
-          "p6a",
-          "p6b",
-          "p7",
-          "k1",
-          "c9"
-        ],
-        "serverSteps": [],
-        "serverDelivery": "none-within-window",
-        "duplicates": [],
-        "inPublicationOrder": true
-      }
-    }
-  }
+  ]
 }

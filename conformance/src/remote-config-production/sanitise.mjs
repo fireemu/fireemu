@@ -8,7 +8,9 @@
 // Remote Config routes (local) are kept; the infrastructure rows of a production run (Service
 // Usage, IAM, Functions deploys, logs) are dropped and only counted.
 //
-// Replaced everywhere (strings in bodies, paths, headers, events and the summary):
+// The recorder's own delivery summary is not kept: the judge computes it from the events and the
+// versions (coordinator ruling 12, Should 4; the recorder's summary of a production pass matched
+// times as text). Replaced everywhere (strings in bodies, paths, headers and events):
 //   - the project id -> PROJECT_ID, the project number (read from the production ETags) ->
 //     PROJECT_NUMBER, the run id -> RUN_ID;
 //   - any e-mail address -> user@example.com; a non-empty `updateUser.name` -> Example User and a
@@ -277,7 +279,6 @@ export function sanitiseRun({ run, journal, events, result, files }) {
     rows,
     versions: maskValue(result.versions ?? [], secrets),
     events: maskValue(events, secrets),
-    summary: maskValue(result.summary ?? null, secrets),
   };
   assertSanitised(JSON.stringify(fixture), secrets);
   return fixture;

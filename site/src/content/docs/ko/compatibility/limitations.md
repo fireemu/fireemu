@@ -49,7 +49,7 @@ App Hosting과 Data Connect는 현재 지원하지 않습니다. Firebase Extens
 
 ### Cloud Functions
 
-- Fireemu가 이벤트를 전달하지 않는 제품의 트리거(예: 보류 중인 Data Connect). Fireemu의 로컬 템플릿 관리로 Remote Config 클라이언트 템플릿을 게시하거나 롤백하면 2026-11-21에 프로덕션에서 기록한 형태의 이벤트가 v1 및 v2 핸들러에 전달됩니다. 서버 템플릿 게시는 이벤트를 전달하지 않으며, 2026-11-24의 프로덕션 기록에서도 전달되지 않았습니다. 중복 전달과 순서 보장은 확인되지 않았습니다(범위를 제한한 한 번의 기록에서는 각 이벤트가 한 번씩 순서대로 도착했습니다).
+- Fireemu가 이벤트를 전달하지 않는 제품의 트리거(예: 보류 중인 Data Connect). Fireemu의 로컬 템플릿 관리로 Remote Config 클라이언트 템플릿을 게시하거나 롤백하면 2026-11-21에 프로덕션에서 기록한 형태의 이벤트가 v1 및 v2 핸들러에 전달됩니다. 서버 템플릿 게시는 이벤트를 전달하지 않으며, 2026-11-24와 2026-11-25의 세 번의 프로덕션 기록에서도 5분 안에 전달되지 않았습니다. 중복 전달과 순서 보장은 확인되지 않았습니다(범위를 제한한 세 번의 기록에서는 각 이벤트가 한 번씩 순서대로 도착했습니다).
 - Dart 코드베이스와 Firestore 이벤트 이외의 protobuf CloudEvents 수신. Firestore 이벤트는 Python SDK에는 protobuf로, Node 2세대 함수에는 `strict`에서 protobuf로 전달됩니다.
 - Storage 아카이브 이벤트의 정확한 형태는 아직 녹화되지 않았습니다.
 - Python 코드베이스는 HTTP, 호출 가능(callable), Firestore, Pub/Sub, Storage, Eventarc, Realtime Database, 예약, 작업 큐, Auth 차단 함수를 제공합니다. 실제 시간만 볼 수 있고(가상 시계 없음), `venv`와 Python 바이트코드 캐시에 대한 편집은 무시한 채 애플리케이션 소스 변경을 다시 로드하며, macOS와 Linux에서만 실행됩니다. 설치된 의존성을 바꾼 뒤에는 Fireemu를 다시 시작하십시오. 호출 가능 함수의 App Check 토큰은 Python SDK가 App Check 에뮬레이터의 키로 검증합니다(제한 사용 소비 없음, 명시적인 App Check 구성이 있으면 시작을 거부). [Cloud Functions (Python)](../../products/functions-python/)을 참고하십시오.
