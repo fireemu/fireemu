@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 
 def run_package(package, output, scope, env):
@@ -52,10 +52,31 @@ def run_package(package, output, scope, env):
         expected_code, status = 3, "no-mutants-executed"
     elif evaluation is None and mutants_run > 0:
         expected_code, status = 0, "no-gaps"
+    elif evaluation == "partial" and mutants_run > 0:
+        # No gap among the evaluated mutants, but some were not evaluated (for example source-only
+        # mutants without --rebuild). The counts below say how many; this is not "no-gaps".
+        expected_code, status = 0, "no-gaps-partial"
     else:
         return result
+    # Since 0.9.0 the counts reconcile; a report whose counts do not add up is an error.
+    if "mutants_survived" in report:
+        try:
+            breakdown = report["survivor_breakdown"]
+            if (
+                report["mutants_run"] != report["mutants_killed"] + report["mutants_survived"]
+                or report["mutants_survived"] != sum(breakdown.values())
+            ):
+                return result
+        except (KeyError, TypeError, AttributeError):
+            return result
     if code == expected_code:
         result.update(status=status, sites=sites, mutants_run=mutants_run)
+        if status == "no-gaps-partial":
+            result["not_evaluated"] = {
+                key: report[key]
+                for key in ("mutants_not_built", "mutants_not_evaluated", "skipped_sites")
+                if type(report.get(key)) is int and report[key] > 0
+            }
     return result
 
 
