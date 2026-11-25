@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { inflateRawSync } from "node:zlib";
 import {
   CANDIDATES,
@@ -36,7 +36,17 @@ const PROJECT = "fireemu-oracle-query";
 const NUMBER = "123456789012";
 const RUN = "2611240000abc";
 const N = names(RUN);
-const scratch = () => mkdtempSync(join(tmpdir(), "rc-observe-"));
+// Every run directory a test makes is removed after the file's tests, passed or failed (the
+// selftest's private TMPDIR must end empty).
+const scratches = [];
+const scratch = () => {
+  const dir = mkdtempSync(join(tmpdir(), "rc-observe-"));
+  scratches.push(dir);
+  return dir;
+};
+after(() => {
+  for (const dir of scratches) rmSync(dir, { recursive: true, force: true });
+});
 const journal = (out) =>
   readFileSync(join(out, "journal.jsonl"), "utf8")
     .trim()

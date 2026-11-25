@@ -11,7 +11,14 @@
 // versions, so the version numbers the run creates in the two namespaces stay disjoint, as they
 // were in production (events carry no namespace). The handlers' events of the setup versions are dropped before the recorder starts, as production's handlers were deployed after its baseline, so every delivery in a fixture belongs to the run. The configured `remoteConfig.updateUser` is the
 // sanitised identity, so the masked production values and the local values are the same text.
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -98,83 +105,90 @@ export async function runLocal(args) {
   const { main } = await import(
     pathToFileURL(join(ROOT, RECORDERS[args.corpus ?? "observe"])).href
   );
-  const source = args["functions-source"] ? resolve(args["functions-source"]) : handlers();
+  const own = !args["functions-source"];
+  const source = own ? handlers() : resolve(args["functions-source"]);
   const eventsFile = resolve(args["events-file"]);
   // The functions runtime passes the source's dotenv chain to the handlers, not the daemon environment.
   writeFileSync(join(source, ".env"), `REMOTE_CONFIG_OUTPUT=${eventsFile}\n`);
-  return withTestWorld(
-    {
-      projectId: "demo-rc-observe",
-      services: ["functions"],
-      functionsSource: source,
-      binaryPath: resolve(args.binary),
-      config: {
-        schemaVersion: 1,
-        profile: args.profile,
-        ...(args.corpus === "closure"
-          ? { daemon: { authProjectNumbers: { "demo-rc-observe": LOCAL_PROJECT_NUMBER } } }
-          : {}),
-        remoteConfig: {
-          updateUser: {
-            email: PLACEHOLDERS.email,
-            name: PLACEHOLDERS.name,
-            imageUrl: PLACEHOLDERS.image,
-          },
-        },
-      },
-      env: { ...process.env, NODE_PATH: "" },
-    },
-    async (world) => {
-      const base = world.endpoints.control.apiBaseUrl;
-      const token = world.environment.FIREEMU_CONTROL_TOKEN;
-      // The closure corpus's times fall on whole milliseconds ending in zero (.120, .370, ...),
-      // so they exercise production's shortened forms: three digits in the REST answers and
-      // Gen2 events, the trailing zero dropped in Gen1 events (the judge compares times by the
-      // rendering rule both sides satisfy).
-      if (args.corpus === "closure") await world.clock.set("2026-01-01T00:00:00.120Z");
-      const setup = args.corpus === "closure" ? CLOSURE_SETUP : SETUP.map((path) => ["PUT", path]);
-      for (const [method, path, target] of setup) {
-        const rollback = method === "POST";
-        const answer = await fetch(new URL(`projects/${world.projectId}/${path}`, base), {
-          method,
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-            ...(rollback ? {} : { "if-match": "*" }),
-          },
-          body: rollback ? JSON.stringify({ versionNumber: target }) : "{}",
-        });
-        if (answer.status !== 200)
-          throw new Error(`setup ${path}: ${answer.status} ${await answer.text()}`);
-      }
-      // Both corpora's setups publish ten client versions; their events are not the run's.
-      await dropSetupEvents(eventsFile, 2 * 10);
-      return main(
-        [
-          "--target",
-          "local",
-          "--base",
-          base,
-          "--project",
-          world.projectId,
-          "--events-file",
-          eventsFile,
-          "--out",
-          resolve(args.out),
-        ],
-        {
-          ...process.env,
-          FIREEMU_CONTROL_TOKEN: token,
+  try {
+    return await withTestWorld(
+      {
+        projectId: "demo-rc-observe",
+        services: ["functions"],
+        functionsSource: source,
+        binaryPath: resolve(args.binary),
+        config: {
+          schemaVersion: 1,
+          profile: args.profile,
           ...(args.corpus === "closure"
-            ? { FIREEMU_LOCAL_PROJECT_NUMBER: LOCAL_PROJECT_NUMBER }
+            ? { daemon: { authProjectNumbers: { "demo-rc-observe": LOCAL_PROJECT_NUMBER } } }
             : {}),
+          remoteConfig: {
+            updateUser: {
+              email: PLACEHOLDERS.email,
+              name: PLACEHOLDERS.name,
+              imageUrl: PLACEHOLDERS.image,
+            },
+          },
         },
-        // The closure corpus filters history by update time, so the virtual clock moves 1.25 s
-        // before each write and the versions get distinct times.
-        { tick: () => world.clock.advance(1250) },
-      );
-    },
-  );
+        env: { ...process.env, NODE_PATH: "" },
+      },
+      async (world) => {
+        const base = world.endpoints.control.apiBaseUrl;
+        const token = world.environment.FIREEMU_CONTROL_TOKEN;
+        // The closure corpus's times fall on whole milliseconds ending in zero (.120, .370, ...),
+        // so they exercise production's shortened forms: three digits in the REST answers and
+        // Gen2 events, the trailing zero dropped in Gen1 events (the judge compares times by the
+        // rendering rule both sides satisfy).
+        if (args.corpus === "closure") await world.clock.set("2026-01-01T00:00:00.120Z");
+        const setup =
+          args.corpus === "closure" ? CLOSURE_SETUP : SETUP.map((path) => ["PUT", path]);
+        for (const [method, path, target] of setup) {
+          const rollback = method === "POST";
+          const answer = await fetch(new URL(`projects/${world.projectId}/${path}`, base), {
+            method,
+            headers: {
+              authorization: `Bearer ${token}`,
+              "content-type": "application/json",
+              ...(rollback ? {} : { "if-match": "*" }),
+            },
+            body: rollback ? JSON.stringify({ versionNumber: target }) : "{}",
+          });
+          if (answer.status !== 200)
+            throw new Error(`setup ${path}: ${answer.status} ${await answer.text()}`);
+        }
+        // Both corpora's setups publish ten client versions; their events are not the run's.
+        await dropSetupEvents(eventsFile, 2 * 10);
+        return main(
+          [
+            "--target",
+            "local",
+            "--base",
+            base,
+            "--project",
+            world.projectId,
+            "--events-file",
+            eventsFile,
+            "--out",
+            resolve(args.out),
+          ],
+          {
+            ...process.env,
+            FIREEMU_CONTROL_TOKEN: token,
+            ...(args.corpus === "closure"
+              ? { FIREEMU_LOCAL_PROJECT_NUMBER: LOCAL_PROJECT_NUMBER }
+              : {}),
+          },
+          // The closure corpus filters history by update time, so the virtual clock moves 1.25 s
+          // before each write and the versions get distinct times.
+          { tick: () => world.clock.advance(1250) },
+        );
+      },
+    );
+  } finally {
+    // The handlers' directory this run made, with its .env, is removed whatever the outcome.
+    if (own) rmSync(source, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
