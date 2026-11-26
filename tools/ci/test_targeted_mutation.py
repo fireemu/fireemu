@@ -100,7 +100,7 @@ class CampaignTest(unittest.TestCase):
             if args[1] == "metadata":
                 return subprocess.CompletedProcess(args, 0, json.dumps(METADATA))
             if args == ["cargo", "tmt", "--version"]:
-                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.9.0\n")
+                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.10.3\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
             self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
@@ -149,16 +149,21 @@ class CampaignTest(unittest.TestCase):
                 selected = "core" if row["Position"] == "first" else "adapter"
                 outcomes = dict.fromkeys(PACKAGES, "clean")
                 outcomes[selected] = row["Result"]
-                expected_code, _, _ = OUTCOMES[row["Result"]]
+                _, _, selected_status = OUTCOMES[row["Result"]]
+                expected_code = {"error": 1, "gaps": 2, "no-mutants-executed": 3}.get(
+                    selected_status, 0
+                )
                 code, launched = self.run_campaign(output, selection, scope, outcomes)
                 self.assertEqual(code, expected_code)
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
-                self.assertEqual(summary["tool_version"], "0.9.0")
+                self.assertEqual(summary["tool_version"], "0.10.3")
                 self.assertEqual(summary["since"], "review-base" if scope else None)
                 for result in summary["packages"]:
-                    report = OUTCOMES[outcomes[result["package"]]][1]
-                    if report is not None:
+                    _, report, status = OUTCOMES[outcomes[result["package"]]]
+                    if status == "error":
+                        self.assertNotIn("mutants_run", result)
+                    else:
                         self.assertEqual(result["mutants_run"], report["mutants_run"])
                 self.assertEqual(
                     [result["status"] for result in summary["packages"]],
