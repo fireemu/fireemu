@@ -204,6 +204,7 @@ export async function observe(ctx) {
   const clients = {};
   let lastWrite = 0;
   let priorVersion;
+  let lastOwned;
   let wrote = false;
   let keyName = null;
   let keyValue = null;
@@ -236,6 +237,7 @@ export async function observe(ctx) {
         const newer = advancedVersion(r, priorVersion);
         if (!newer) throw new Stop(caseId + ": publication has no newer version and exact ETag");
         priorVersion = newer;
+        lastOwned = { etag: r.etag, version: newer, description: body?.version?.description };
       }
       return r;
     } catch (error) {
@@ -292,13 +294,17 @@ export async function observe(ctx) {
     (await client.wire()).filter((e) => e.path.endsWith(":streamFetchInvalidations")).length;
 
   const restoreOwned = async (readback) => {
-    const description = readback.json?.version?.description;
+    const version = readback.json?.version;
     if (
+      !lastOwned ||
       readback.status !== 200 ||
       !preciseTag(readback.etag) ||
-      !description?.startsWith(`fireemu rc-closure-b ${runId} `)
+      readback.etag !== lastOwned.etag ||
+      version?.versionNumber !== lastOwned.version ||
+      version?.description !== lastOwned.description ||
+      !version.description.startsWith(`fireemu rc-closure-b ${runId} `)
     )
-      throw new Stop("client template is not owned by the follow-up run");
+      throw new Stop("client template is not the last proved owned version");
     return t.send("g-restore", urls.client, { method: "PUT", body: {}, ifMatch: readback.etag });
   };
 
