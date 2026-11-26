@@ -532,3 +532,150 @@ fn pict_rows_follow_the_recorded_rules() {
 fn published_template(store: &TemplateStore) {
     published(store, "v1", "d");
 }
+
+fn compressed(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut stream = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    stream.write_all(bytes).unwrap();
+    stream.finish().unwrap()
+}
+
+#[test]
+fn native_sdk_wire_cases_cover_aliases_encoding_fields_and_both_routes() {
+    use super::{client_project, fetch_encoded, stream_version};
+
+    let store = TemplateStore::default();
+    published(&store, "live", "native SDK request fixture");
+    for line in include_str!("native_payload_pict.tsv").lines().skip(1) {
+        let parts: Vec<_> = line.trim_end_matches('\r').split('\t').collect();
+        let [platform, route, encoding, action] = parts.as_slice() else {
+            panic!("bad native route manifest row: {line}");
+        };
+        let target = match *route {
+            "ID" => PROJECT,
+            "number" => "100000000004",
+            "foreign" => "100000000005",
+            _ => panic!("bad route"),
+        };
+        assert_eq!(
+            client_project(target, PROJECT, Some(100_000_000_004)),
+            *route != "foreign"
+        );
+        assert_eq!(client_project(target, PROJECT, None), *route == "ID");
+        let body = match (*platform, *action) {
+            ("web", "fetch") => br#"{"custom_signals":{"fireemu_tier":"premium"}}"#.as_slice(),
+            ("android", "fetch") => br#"{"appId":"1:100000000004:android:aa01","packageName":"com.example.android","customSignals":{"fireemu_tier":"premium"}}"#.as_slice(),
+            ("apple", "fetch") => br#"{app_id:'1:100000000004:ios:aa02',package_name:'com.example.ios',custom_signals:{"fireemu_tier":'premium'}}"#.as_slice(),
+            ("apple", "realtime") => b"{lastKnownVersionNumber:'21'}".as_slice(),
+            ("web" | "android", "realtime") => br#"{"lastKnownVersionNumber":"21"}"#.as_slice(),
+            ("malformed", _) => b"{",
+            _ => panic!("bad fixture form"),
+        };
+        let wire = if *encoding == "gzip" {
+            compressed(body)
+        } else {
+            body.to_vec()
+        };
+        if !client_project(target, PROJECT, Some(100_000_000_004)) {
+            continue;
+        }
+        let good = *encoding != "other" && (*platform != "apple" || *encoding == "gzip");
+        if *action == "fetch" {
+            let res = fetch_encoded(&store.current(), PROJECT, None, &wire, Some(encoding), 1024);
+            let answer: Value = serde_json::from_slice(&res.body).unwrap();
+            if good && *platform != "malformed" {
+                assert_eq!(res.status, 200, "{line}");
+                assert_eq!(
+                    answer["entries"]["fireemu_message"], "live-premium",
+                    "{line}"
+                );
+            } else {
+                assert_eq!(res.status, 400, "{line}");
+            }
+        } else {
+            let res = stream_version(&wire, Some(encoding), 1024);
+            if good && *platform != "malformed" {
+                assert_eq!(res, Ok(21), "{line}");
+            } else if *encoding == "identity" {
+                assert_eq!(res, Ok(0), "{line}");
+            } else {
+                assert!(res.is_err(), "{line}");
+            }
+        }
+    }
+}
+
+#[test]
+fn native_gzip_bounds_corruption_and_pseudo_json_nesting() {
+    use super::{fetch_encoded, stream_version, PayloadError};
+
+    let store = TemplateStore::default();
+    published(&store, "live", "bounded native SDK body");
+    let oversized = compressed(&[b' '; 1025]);
+    let mut exact_limit = vec![b' '; 1024];
+    exact_limit[..2].copy_from_slice(b"{}");
+    assert_eq!(
+        stream_version(&compressed(&exact_limit), Some("gzip"), 1024),
+        Ok(0)
+    );
+    assert_eq!(
+        stream_version(&oversized, Some("gzip"), 1024),
+        Err(PayloadError::TooLarge)
+    );
+    assert_eq!(
+        fetch_encoded(
+            &store.current(),
+            PROJECT,
+            None,
+            &oversized,
+            Some("gzip"),
+            1024
+        )
+        .status,
+        413
+    );
+    let truncated = &compressed(b"{lastKnownVersionNumber:'21'}")[..10];
+    assert_eq!(
+        stream_version(truncated, Some("gzip"), 1024),
+        Err(PayloadError::Malformed)
+    );
+    let nested = format!("{{custom_signals:{}'x'{}}}", "[".repeat(33), "]".repeat(33));
+    assert_eq!(
+        stream_version(&compressed(nested.as_bytes()), Some("gzip"), 1024),
+        Err(PayloadError::Malformed)
+    );
+    let quoted_braces = format!(
+        "{{unused:'{}',lastKnownVersionNumber:'21'}}",
+        "[".repeat(40)
+    );
+    assert_eq!(
+        stream_version(&compressed(quoted_braces.as_bytes()), Some("gzip"), 1024),
+        Ok(21)
+    );
+    assert!(!super::client_project(
+        "0100000000004",
+        PROJECT,
+        Some(100_000_000_004)
+    ));
+}
+
+#[test]
+fn only_nonempty_native_package_names_appear_in_update() {
+    let store = TemplateStore::default();
+    published(&store, "live", "native package field");
+    for (platform, package, expected) in [
+        ("web", "com.example.web", None),
+        ("android", "", None),
+        ("ios", "com.example.apple", Some("com.example.apple")),
+    ] {
+        let request = json!({
+            "app_id": format!("1:100000000004:{platform}:aa01"),
+            "package_name": package,
+        });
+        let body = serde_json::to_vec(&request).unwrap();
+        let reply = fetch(&store.current(), PROJECT, None, &body);
+        assert_eq!(reply.status, 200);
+        let answer: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(answer.get("appName").and_then(Value::as_str), expected);
+    }
+}

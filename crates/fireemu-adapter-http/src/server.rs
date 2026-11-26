@@ -528,7 +528,17 @@ async fn remote_config_response(
         .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
 }
 
-/// The Web client's fetch (RC-CLOSURE-B): no control capability, the default project only.
+fn client_encoding(headers: &hyper::HeaderMap) -> Option<&str> {
+    let encodings = headers.get_all(hyper::header::CONTENT_ENCODING);
+    let mut values = encodings.iter();
+    let encoding = values.next()?;
+    if values.next().is_some() {
+        return Some("");
+    }
+    Some(encoding.to_str().unwrap_or_default())
+}
+
+/// Client fetch with no control capability, scoped to the configured project.
 async fn client_fetch_response(
     control: &ControlState,
     stores: &RemoteConfigStores,
@@ -537,16 +547,22 @@ async fn client_fetch_response(
     incoming: Incoming,
     origin: Option<&str>,
 ) -> Response<Full<Bytes>> {
-    let reply = if project == control.default_project {
+    let reply = if remote_config_client::client_project(
+        project,
+        &control.default_project,
+        control.remote_config.project_number,
+    ) {
         match fireemu_adapter_support::body::collect_limited(incoming, MAX_BODY_BYTES).await {
-            Ok(bytes) => remote_config_client::fetch(
+            Ok(bytes) => remote_config_client::fetch_encoded(
                 &stores.client.current(),
-                project,
+                &control.default_project,
                 parts
                     .headers
                     .get(hyper::header::IF_NONE_MATCH)
                     .and_then(|value| value.to_str().ok()),
                 &bytes,
+                client_encoding(&parts.headers),
+                MAX_BODY_BYTES,
             ),
             Err(_) => remote_config_client::FetchReply {
                 status: 413,
@@ -624,7 +640,7 @@ async fn serve_request(
     .map(|response| response.map(http_body_util::Either::Left))
 }
 
-/// The Web client's realtime stream (RC-CLOSURE-B): the answer waits for a client template newer
+/// The client realtime stream: the answer waits for a client template newer
 /// than `lastKnownVersionNumber`, then one frame per newer version on one open response.
 async fn client_stream_response(
     control: &ControlState,
@@ -634,7 +650,13 @@ async fn client_stream_response(
     let (parts, incoming) = req.into_parts();
     let origin = parts.headers.get("origin").and_then(|v| v.to_str().ok());
     let project = remote_config_client::client_route(parts.uri.path()).map(|(project, _)| project);
-    if project != Some(control.default_project.as_str()) {
+    if !project.is_some_and(|project| {
+        remote_config_client::client_project(
+            project,
+            &control.default_project,
+            control.remote_config.project_number,
+        )
+    }) {
         return finish(
             404,
             &serde_json::json!({"error": {"code": 404, "status": "NOT_FOUND"}}),
@@ -653,7 +675,25 @@ async fn client_stream_response(
         )
         .map(http_body_util::Either::Left);
     };
-    let last_known = remote_config_client::last_known(&bytes);
+    let last_known = match remote_config_client::stream_version(
+        &bytes,
+        client_encoding(&parts.headers),
+        MAX_BODY_BYTES,
+    ) {
+        Ok(version) => version,
+        Err(error) => {
+            let reply = error.response();
+            return with_cors(
+                Response::builder()
+                    .status(StatusCode::from_u16(reply.status).unwrap_or(StatusCode::BAD_REQUEST)),
+                origin,
+            )
+            .header("content-type", "application/json; charset=UTF-8")
+            .body(Full::new(Bytes::from(reply.body)))
+            .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
+            .map(http_body_util::Either::Left);
+        }
+    };
     let mut observed = stores.client.current().number();
     // An already-stale client first catches up to the current version. From admission onward,
     // versions are contiguous, so the cursor preserves even publications between two polls.

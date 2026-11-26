@@ -16,6 +16,9 @@
 //!   request's `lastKnownVersionNumber`, then writes `[{\n  "latestTemplateVersionNumber": "N"\n}\n`
 //!   and, for each later version, `,\r\n{\n  "latestTemplateVersionNumber": "N"\n}\n`, on every
 //!   publication and rollback (a metadata-only and a same-content publication included).
+//! - the Android and Apple SDKs use the configured project number for realtime and Android
+//!   fetch. The Apple SDK sends gzipped JSON with unquoted members, and both native fetch
+//!   responses include the SDK package or bundle as appName.
 //!
 //! Not recorded, and documented as known differences (known-differences.json of
 //! remote-config-web): the number in the tag (production's is a hash of an input that was not
@@ -25,6 +28,7 @@
 //! on arrival (its first frame at once), and the transport encoding (production answered gzip).
 
 use std::collections::BTreeMap;
+use std::io::Read as _;
 
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -53,6 +57,95 @@ pub fn client_route(path: &str) -> Option<(&str, ClientAction)> {
         "namespaces/firebase:streamFetchInvalidations" => Some((project, ClientAction::Stream)),
         _ => None,
     }
+}
+
+/// Accept only the configured client project and its canonical decimal alias.
+pub(crate) fn client_project(requested: &str, id: &str, number: Option<u64>) -> bool {
+    requested == id || number.is_some_and(|number| requested == number.to_string())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PayloadError {
+    TooLarge,
+    Malformed,
+}
+
+impl PayloadError {
+    pub(crate) fn response(self) -> FetchReply {
+        match self {
+            Self::TooLarge => refusal(
+                413,
+                "Request payload exceeds the size limit.",
+                "RESOURCE_EXHAUSTED",
+            ),
+            Self::Malformed => refusal(400, "Invalid JSON payload received.", "INVALID_ARGUMENT"),
+        }
+    }
+}
+
+fn is_identity(encoding: Option<&str>) -> bool {
+    encoding.is_none_or(|encoding| encoding.eq_ignore_ascii_case("identity"))
+}
+
+/// Apple sends single-quoted values and unquoted members. Bound the JSON5 decoder's
+/// nesting depth, accounting for escaped quotes within the documented SDK input.
+fn native_json5(text: &str) -> Result<Value, PayloadError> {
+    const MAX_DEPTH: usize = 32;
+    let mut depth = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for byte in text.bytes() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'"' | b'\'' => quote = Some(byte),
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return Err(PayloadError::Malformed);
+                }
+            }
+            b'}' | b']' => {
+                depth = depth.checked_sub(1).ok_or(PayloadError::Malformed)?;
+            }
+            // SDK payloads contain no comments. Only slashes inside strings are accepted.
+            b'/' => return Err(PayloadError::Malformed),
+            _ => {}
+        }
+    }
+    json5::from_str(text).map_err(|_| PayloadError::Malformed)
+}
+
+fn fetch_payload(body: &[u8], encoding: Option<&str>, limit: usize) -> Result<Value, PayloadError> {
+    if body.len() > limit {
+        return Err(PayloadError::TooLarge);
+    }
+    if is_identity(encoding) {
+        return serde_json::from_slice(body).map_err(|_| PayloadError::Malformed);
+    }
+    if !encoding.is_some_and(|value| value.eq_ignore_ascii_case("gzip")) {
+        return Err(PayloadError::Malformed);
+    }
+    let mut decoded = Vec::new();
+    flate2::read::MultiGzDecoder::new(body)
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut decoded)
+        .map_err(|_| PayloadError::Malformed)?;
+    if decoded.len() > limit {
+        return Err(PayloadError::TooLarge);
+    }
+    if let Ok(json) = serde_json::from_slice(&decoded) {
+        return Ok(json);
+    }
+    native_json5(std::str::from_utf8(&decoded).map_err(|_| PayloadError::Malformed)?)
 }
 
 /// One answer of the fetch route.
@@ -232,16 +325,31 @@ pub fn fetch(
     if_none_match: Option<&str>,
     body: &[u8],
 ) -> FetchReply {
-    let Ok(Value::Object(request)) = serde_json::from_slice::<Value>(body) else {
-        return refusal(400, "Invalid JSON payload received.", "INVALID_ARGUMENT");
+    fetch_encoded(current, project, if_none_match, body, None, usize::MAX)
+}
+
+pub(crate) fn fetch_encoded(
+    current: &Version,
+    project: &str,
+    if_none_match: Option<&str>,
+    body: &[u8],
+    encoding: Option<&str>,
+    limit: usize,
+) -> FetchReply {
+    let request = match fetch_payload(body, encoding, limit) {
+        Ok(Value::Object(request)) => request,
+        Ok(_) => return PayloadError::Malformed.response(),
+        Err(error) => return error.response(),
     };
     let signals = request
         .get("custom_signals")
+        .or_else(|| request.get("customSignals"))
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
     let instance = request
         .get("app_instance_id")
+        .or_else(|| request.get("appInstanceId"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let version = current.number();
@@ -260,7 +368,22 @@ pub fn fetch(
     let body = if if_none_match == Some(tag.as_str()) {
         json!({"state": "NO_CHANGE", "templateVersion": version_text})
     } else {
-        json!({"entries": entries, "state": "UPDATE", "templateVersion": version_text})
+        let mut answer =
+            json!({"entries": entries, "state": "UPDATE", "templateVersion": version_text});
+        let platform = request
+            .get("app_id")
+            .or_else(|| request.get("appId"))
+            .and_then(Value::as_str)
+            .and_then(|id| id.split(':').nth(2));
+        if let Some(name) = request
+            .get("package_name")
+            .or_else(|| request.get("packageName"))
+            .and_then(Value::as_str)
+            .filter(|name| matches!(platform, Some("android" | "ios")) && !name.is_empty())
+        {
+            answer["appName"] = Value::String(name.to_owned());
+        }
+        answer
     };
     FetchReply {
         status: 200,
@@ -272,14 +395,24 @@ pub fn fetch(
 /// The `lastKnownVersionNumber` of a stream request (a decimal string; absent or unreadable is 0).
 #[must_use]
 pub fn last_known(body: &[u8]) -> u64 {
-    serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|request| match request.get("lastKnownVersionNumber")? {
-            Value::String(text) => text.parse().ok(),
-            Value::Number(number) => number.as_u64(),
-            _ => None,
-        })
-        .unwrap_or(0)
+    stream_version(body, None, usize::MAX).unwrap_or_default()
+}
+
+pub(crate) fn stream_version(
+    body: &[u8],
+    encoding: Option<&str>,
+    limit: usize,
+) -> Result<u64, PayloadError> {
+    let parsed = match fetch_payload(body, encoding, limit) {
+        Ok(value) => value,
+        Err(PayloadError::Malformed) if is_identity(encoding) => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    Ok(match parsed.get("lastKnownVersionNumber") {
+        Some(Value::String(text)) => text.parse().unwrap_or_default(),
+        Some(Value::Number(number)) => number.as_u64().unwrap_or_default(),
+        _ => 0,
+    })
 }
 
 /// One frame of the realtime stream, as production wrote it: the first opens the array.
