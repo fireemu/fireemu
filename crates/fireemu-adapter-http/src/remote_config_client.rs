@@ -156,8 +156,10 @@ fn atom_holds(atom: &Value, signals: &Map<String, Value>, instance: &str) -> boo
         "STRING_DOES_NOT_CONTAIN" => !targets.iter().any(|t| actual.contains(t)),
         "NUMERIC_LESS_THAN" => numeric(|a, t| a < t),
         "NUMERIC_LESS_EQUAL" => numeric(|a, t| a <= t),
-        "NUMERIC_EQUAL" => numeric(|a, t| (a - t).abs() < f64::EPSILON),
-        "NUMERIC_NOT_EQUAL" => numeric(|a, t| (a - t).abs() >= f64::EPSILON),
+        "NUMERIC_EQUAL" => numeric(|a, t| a.partial_cmp(&t).is_some_and(std::cmp::Ordering::is_eq)),
+        "NUMERIC_NOT_EQUAL" => {
+            numeric(|a, t| a.partial_cmp(&t).is_some_and(std::cmp::Ordering::is_ne))
+        }
         "NUMERIC_GREATER_THAN" => numeric(|a, t| a > t),
         "NUMERIC_GREATER_EQUAL" => numeric(|a, t| a >= t),
         // Semantic-version and regular-expression atoms were not recorded for a client.

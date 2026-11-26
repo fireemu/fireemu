@@ -415,7 +415,7 @@ fn custom_signals_compare_by_their_operator_and_type() {
 #[test]
 fn several_targets_and_nearly_equal_numbers() {
     let signals: serde_json::Map<String, Value> =
-        serde_json::from_value(json!({"x": "abc", "one": "1"})).unwrap();
+        serde_json::from_value(json!({"x": "abc", "one": "1", "zero": "0"})).unwrap();
     let atom = |operator: &str, key: &str, targets: &[&str]| {
         json!({"customSignal": {"customSignalOperator": operator, "customSignalKey": key,
             "targetCustomSignalValues": targets}})
@@ -431,18 +431,22 @@ fn several_targets_and_nearly_equal_numbers() {
         &signals,
         "id"
     ));
-    // One step of f64 apart is not equal.
-    let next = "1.0000000000000002";
-    assert!(!atom_holds(
-        &atom("NUMERIC_EQUAL", "one", &[next]),
-        &signals,
-        "id"
-    ));
-    assert!(atom_holds(
-        &atom("NUMERIC_NOT_EQUAL", "one", &[next]),
-        &signals,
-        "id"
-    ));
+    // A difference at either magnitude must survive numeric equality.
+    for (key, next) in [
+        ("one", "1.0000000000000002"),
+        ("zero", "0.0000000000000001"),
+    ] {
+        assert!(!atom_holds(
+            &atom("NUMERIC_EQUAL", key, &[next]),
+            &signals,
+            "id"
+        ));
+        assert!(atom_holds(
+            &atom("NUMERIC_NOT_EQUAL", key, &[next]),
+            &signals,
+            "id"
+        ));
+    }
 }
 
 /// Every combination of the PICT table (`remote_config_testdata/client_fetch_pict.tsv`, with the
