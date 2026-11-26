@@ -127,7 +127,7 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
         installationsAuth: Boolean(headers["x-goog-firebase-installations-auth"]),
         authorization: Boolean(headers.authorization),
       },
-      layout: layout(nativeRequestBody(wire, encoding).decoded),
+      layout: layout(wire.length ? nativeRequestBody(wire, encoding).decoded : wire),
     };
   }
 

@@ -132,3 +132,18 @@ test("the receiver masks partial stream contents as one bounded record with fram
   assert.equal(body.bodyText, raw.replace(projectNumber, "PROJECT_NUMBER"));
   assert.throws(() => capture.stream({ wire, headers: {}, chunkLengths: [1] }), /framing/);
 });
+
+test("Android deletion preserves the gzip header on an empty request without decoding it", () => {
+  const capture = nativeCapture({ ...settings, platform: "android" });
+  const record = capture.request({
+    operation: "delete",
+    service: "installations",
+    fid,
+    wire: Buffer.alloc(0),
+    path: "/v1/projects/" + projectId + "/installations/" + fid,
+    headers: { "content-encoding": "gzip", authorization: "FIS_v2 " + refresh },
+  });
+  assert.equal(record.encoding, "gzip");
+  assert.equal(record.requestBytes, 0);
+  assert.deepEqual(record.layout, { format: "empty", tokens: "", finalNewline: false });
+});
