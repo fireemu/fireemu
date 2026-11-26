@@ -50,15 +50,27 @@ export async function runNativePass({ clients, stopped, prepare, publish, restor
     return clean;
   });
 
-  try {
-    if ((await restore()) !== true) open.push("template restoration unverified");
-  } catch {
-    open.push("template restoration unverified");
+  async function verifiedCleanup(operation, name) {
+    try {
+      if ((await operation()) === true) return true;
+    } catch {
+      // A non-answer remains open until qualified read-back.
+    }
+    open.push(name);
+    return false;
   }
-  try {
-    if ((await cleanup(cleanClients)) !== true) open.push("app or key cleanup unverified");
-  } catch {
-    open.push("app or key cleanup unverified");
-  }
-  return { complete: open.length === 0 && verified.length === PLATFORMS.length, open, verified };
+
+  const templateRestored = await verifiedCleanup(restore, "template restoration unverified");
+  const appsAndKeyRestored = await verifiedCleanup(
+    () => cleanup(cleanClients),
+    "app or key cleanup unverified",
+  );
+  const sandboxAtBaseline =
+    templateRestored && appsAndKeyRestored && cleanClients.length === PLATFORMS.length;
+  return {
+    complete: open.length === 0 && verified.length === PLATFORMS.length,
+    sandboxAtBaseline,
+    open,
+    verified,
+  };
 }

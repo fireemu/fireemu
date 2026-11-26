@@ -21,6 +21,7 @@ function world({ ambiguousCreate = false, conflict = false } = {}) {
       calls.push({ phase, url, options });
       switch (phase) {
         case "native-key-baseline":
+        case "native-key-baseline-after":
           return response({});
         case "native-key-create": {
           if (ambiguousCreate) throw new Error("create answer lost");
@@ -76,6 +77,7 @@ test("the key is restricted and its value is never selected for persistence", as
   assert.equal(control.closed(), false);
   assert.equal(await control.remove(), true);
   assert.equal(control.closed(), true);
+  assert.equal(calls.at(-1).phase, "native-key-baseline-after");
 });
 
 test("a missing or contradictory cleanup answer leaves the key unresolved", async () => {

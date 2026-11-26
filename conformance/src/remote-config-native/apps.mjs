@@ -1,3 +1,4 @@
+import { createRefused } from "../remote-config-web/program.mjs";
 import { KEY_UID } from "./key.mjs";
 
 const MANAGEMENT = "https://firebase.googleapis.com/v1beta1";
@@ -141,14 +142,16 @@ export function nativeAppRegistry({
     baseline = before.active;
     progress = "create-pending";
     const body = { [bundleField]: bundle, displayName: name, apiKeyId };
-    const first = success(
-      await send(`${platform}-create`, collection, {
-        method: "POST",
-        body,
-        beforeDispatch: beforeCreate,
-      }),
-      "create",
-    );
+    const answer = await send(`${platform}-create`, collection, {
+      method: "POST",
+      body,
+      beforeDispatch: beforeCreate,
+    });
+    if (createRefused(answer)) {
+      progress = "refused";
+      throw new Error("native app creation refused");
+    }
+    const first = success(answer, "create");
     const created = await complete(first, "create");
     if (
       !appFormat.test(created.appId) ||
@@ -164,6 +167,7 @@ export function nativeAppRegistry({
   }
 
   async function remove() {
+    if (progress === "refused") return;
     if (!resource || !["created", "create-pending"].includes(progress))
       throw new Error("native app removal has no owned registration");
     const current = owned(
@@ -178,8 +182,13 @@ export function nativeAppRegistry({
       "remove",
     );
     const removed = await complete(initial, "remove");
-    if (removed.appId !== appId || removed.state !== "DELETED")
-      throw new Error("native app removal did not confirm the owned tombstone");
+    if (removed.appId !== undefined && removed.appId !== appId)
+      throw new Error("native app operation returned another identity");
+    if (removed.appId !== appId || removed.state !== "DELETED") {
+      const removedApp = owned(success(await send(`${platform}-tombstone`, resource), "tombstone"));
+      if (removedApp.state !== "DELETED")
+        throw new Error("native app removal did not confirm the owned tombstone");
+    }
     const { active } = await list("baseline-after");
     if (active.length !== baseline.length || !active.every((id, index) => id === baseline[index]))
       throw new Error("native active app baseline was not restored");
@@ -192,7 +201,8 @@ export function nativeAppRegistry({
     remove,
     assertClosed() {
       if (!baseline) throw new Error("native app baseline unobserved");
-      if (progress !== "restored") throw new Error("native app remains unsettled");
+      if (!["refused", "restored"].includes(progress))
+        throw new Error("native app remains unsettled");
       return true;
     },
   };

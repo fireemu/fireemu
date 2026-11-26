@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 
@@ -149,9 +150,13 @@ async function until(check, milliseconds) {
 /** Own one fixed test device. Private SDK configuration lives in the spool only until consumed. */
 export function nativeDevice({ driver, platform, pass, spool, port }) {
   mkdirSync(spool, { mode: 0o700 });
-  const child = spawn("python3", [driver, platform, pass, spool, String(port)], {
-    stdio: "ignore",
-  });
+  const child = spawn(
+    join(homedir(), ".local/bin/python3.12"),
+    [driver, platform, pass, spool, String(port)],
+    {
+      stdio: "ignore",
+    },
+  );
   let exit;
   child.once("exit", (code, signal) => {
     exit = { code, signal };

@@ -35,6 +35,22 @@ export function nativeKeyControl({
     throw new Error("invalid native key scope");
   const keyName = new RegExp(`^projects/${number}/locations/global/keys/[A-Za-z0-9_-]+$`);
   let state = "unseen";
+  let baselineNames;
+
+  async function activeKeys(phase) {
+    const current = answer(await transport.send(phase, urls.keysList));
+    const keys = current.keys ?? [];
+    if (
+      current.nextPageToken ||
+      !Array.isArray(keys) ||
+      keys.some((key) => !keyName.test(key?.name) || isDeleted(key))
+    )
+      throw new Error("native active key listing is incomplete");
+    const names = keys.map((key) => key.name).toSorted();
+    if (new Set(names).size !== names.length)
+      throw new Error("native active key listing repeats an identity");
+    return { keys, names };
+  }
 
   async function operation(initial, phase) {
     const id = initial.name;
@@ -64,17 +80,10 @@ export function nativeKeyControl({
 
   async function create() {
     if (state !== "unseen") throw new Error("native key creation already attempted");
-    const baseline = answer(await transport.send("native-key-baseline", urls.keysList));
-    const keys = baseline.keys ?? [];
-    if (
-      baseline.nextPageToken ||
-      !Array.isArray(keys) ||
-      keys.some(
-        (key) =>
-          !key || typeof key.name !== "string" || (key.displayName === name && !isDeleted(key)),
-      )
-    )
-      throw new Error("native key baseline incomplete or occupied");
+    const listing = await activeKeys("native-key-baseline");
+    if (listing.keys.some((key) => key.displayName === name))
+      throw new Error("native key baseline is occupied");
+    baselineNames = listing.names;
     state = "create-pending";
     const first = await transport.send("native-key-create", urls.keysCreate, {
       method: "POST",
@@ -115,6 +124,12 @@ export function nativeKeyControl({
     if (done.name !== grants.key) return false;
     const after = answer(await transport.send("native-key-after", urls.keysApi + grants.key));
     if (after.name !== grants.key || !isDeleted(after)) return false;
+    const { names } = await activeKeys("native-key-baseline-after");
+    if (
+      names.length !== baselineNames.length ||
+      names.some((item, index) => item !== baselineNames[index])
+    )
+      return false;
     state = "deleted";
     return true;
   }

@@ -53,7 +53,12 @@ function world({
 test("the changed publication waits for both actual SDK streams and cleanup follows both clients", async () => {
   const { calls, ctx } = world();
   const result = await runNativePass(ctx);
-  assert.deepEqual(result, { complete: true, open: [], verified: ["android", "ios"] });
+  assert.deepEqual(result, {
+    complete: true,
+    sandboxAtBaseline: true,
+    open: [],
+    verified: ["android", "ios"],
+  });
   assert.deepEqual(calls, [
     "prepare",
     "initial",
@@ -76,6 +81,7 @@ test("a missing stream or stop after readiness prevents the update and still res
     const { ctx, calls } = world(state);
     const result = await runNativePass(ctx);
     assert.equal(result.complete, false);
+    assert.equal(result.sandboxAtBaseline, true);
     assert.ok(!calls.includes("update"));
     assert.ok(calls.includes("restore"));
     assert.ok(calls.includes("cleanup-android+ios"));
@@ -86,6 +92,7 @@ test("an unsettled installation keeps its own app eligible for recovery and does
   const { calls, ctx } = world({ badPlatform: "ios" });
   const result = await runNativePass(ctx);
   assert.equal(result.complete, false);
+  assert.equal(result.sandboxAtBaseline, false);
   assert.equal(calls.at(-1), "cleanup-android");
   assert.match(result.open.join(" "), /ios.*cleanup/);
 });

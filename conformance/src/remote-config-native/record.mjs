@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -39,11 +39,9 @@ function json(out, name, value) {
 
 function scan(out) {
   // Device spools are never used as evidence. Raw runtime files are private and temporary.
-  const names = execFileSync("find", [out, "-maxdepth", "1", "-type", "f", "-print0"])
-    .toString()
-    .split("\0")
-    .filter(Boolean);
-  return names.every((name) => !readFileSync(name, "utf8").match(SECRET));
+  return readdirSync(out, { withFileTypes: true }).every(
+    (entry) => !entry.isFile() || !readFileSync(join(out, entry.name), "utf8").match(SECRET),
+  );
 }
 
 /** The same receiver and owned-device lifecycle used by the offline rehearsal and oracle pass. */
@@ -58,6 +56,7 @@ export async function exerciseNative({
   budget,
 }) {
   mkdirSync(out, { mode: 0o700 });
+  if (runId) json(out, "run.json", { runId, pass, pid: process.pid });
   mkdirSync(spool, { mode: 0o700 });
   const devices = {};
   const sessions = {};
@@ -87,7 +86,10 @@ export async function exerciseNative({
         async result() {
           const receipt = await devices[platform].result();
           const sdk = verifyNativeReceipt(platform, receipt);
-          if (sdk) json(out, platform + "-sdk.json", receipt);
+          if (sdk) {
+            await closeListener(platform);
+            json(out, platform + "-sdk.json", receipt);
+          }
           return { complete: sdk && verifyNativeExchange(rows[platform], versions) };
         },
         async finish() {
@@ -98,6 +100,11 @@ export async function exerciseNative({
     ]),
   );
   const stop = () => budget.stop();
+  async function closeListener(platform) {
+    const listener = listeners[platform];
+    delete listeners[platform];
+    await listener?.close();
+  }
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   let result;
@@ -154,15 +161,17 @@ export async function exerciseNative({
   } catch {
     result = {
       complete: false,
+      sandboxAtBaseline: !ran,
       open: [ran ? "native observer interrupted" : "devices failed before preparation"],
       verified: [],
     };
   } finally {
     const closures = await Promise.allSettled(
-      PLATFORMS.flatMap((platform) => [listeners[platform]?.close(), devices[platform]?.cancel()]),
+      PLATFORMS.flatMap((platform) => [closeListener(platform), devices[platform]?.cancel()]),
     );
     if (closures.some(({ status }) => status !== "fulfilled")) {
       result.complete = false;
+      result.sandboxAtBaseline = false;
       result.open.push("loopback listener or device teardown failed");
     }
     process.removeListener("SIGINT", stop);
@@ -214,7 +223,6 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
     stopped: budget.stopped,
   });
   let templateObserved = false;
-  let adminsTouched = false;
 
   function ensureOpen() {
     if (budget.stopped()) throw new Error("native pass halted");
@@ -254,7 +262,6 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
           polls: 8,
           send: transport.send.bind(transport),
         });
-        adminsTouched = true;
         armed.add(platform);
         const { appId } = await apps[platform].create();
         configs[platform] = { appId, apiKey, projectId: PROJECT, projectNumber: number };
@@ -263,7 +270,7 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
     },
     publish: template.publish,
     async restore() {
-      return templateObserved ? template.restore() : !adminsTouched;
+      return templateObserved && (await template.restore());
     },
     async cleanup(cleanPlatforms) {
       let clean = true;
@@ -330,9 +337,24 @@ export async function main(argv, env = process.env) {
   }
   const budget = nativeBudget(NATIVE_LIMIT, 4);
   const control = oracleControl({ number, out, pass, runId, budget, token });
+  const prepare = control.prepare;
+  control.prepare = async () => {
+    const target = new URL("https://oauth2.googleapis.com/tokeninfo");
+    target.searchParams.set("access_token", token());
+    const identity = await fetch(target, {
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+    const info = identity.ok ? await identity.json() : null;
+    if (typeof info?.email !== "string" || !info.email.endsWith("@reckona.co.jp"))
+      throw new Error("ADC identity is outside the reviewed sandbox account domain");
+    json(out, "auth.json", { adc: 1, domain: "reckona.co.jp" });
+    return prepare();
+  };
   const forward = nativeDispatch(nativeDestination({ kind: "oracle" }), 75_000);
   const observed = await exerciseNative({
     out,
+    runId,
     spool: resolve(rawSpool),
     driver: resolve(rawDriver),
     pass,
@@ -343,6 +365,7 @@ export async function main(argv, env = process.env) {
   });
   const report = { ...observed, ...control.report(), runId, pass };
   report.complete &&= report.leakScanClean && report.unknown.length === 0;
+  report.sandboxAtBaseline &&= report.leakScanClean && report.unknown.length === 0;
   json(out, "result.json", report);
   return report.complete ? 0 : 1;
 }
