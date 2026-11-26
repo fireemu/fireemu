@@ -75,6 +75,7 @@ export class Transport {
       gzip = true,
       ifNoneMatch,
       textBody = false,
+      textErrorStatuses = [],
       notModified = false,
       secret = false,
       beforeDispatch,
@@ -196,7 +197,7 @@ export class Transport {
       try {
         json = JSON.parse(text);
       } catch {
-        if (!(textBody && status >= 200 && status < 300))
+        if (!(textBody && ((status >= 200 && status < 300) || textErrorStatuses.includes(status))))
           return this.fail(seq, caseId, "unreadable body", status);
         json = null;
       }

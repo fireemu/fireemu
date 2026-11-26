@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { PRODUCTION_PROJECT } from "../remote-config-observe/plan.mjs";
-import { adminRoutes, observeAdmin } from "./admin.mjs";
+import { Transport } from "../remote-config-observe/transport.mjs";
+import { adminRoutes, observeAdmin, runAdmin } from "./admin.mjs";
 
 const provider = "https://firebaseremoteconfig.googleapis.com/v1/";
 const local = "http://127.0.0.1:9250/v1/";
@@ -38,8 +41,11 @@ function fake(options = {}) {
       calls.push({ id, url, ...opts });
       if (id === "a-client" || id === "g-client")
         return empty(options.clientChange && id === "g-client" ? 67 : 66);
-      if (id === "a-server")
-        return options.nonempty ? { ...empty(22), json: { parameters: { other: {} } } } : empty(22);
+      if (id === "a-server") {
+        const clean = empty(22);
+        if (options.falseEmpty) clean.json.__futureRemoteConfigField = [];
+        return options.nonempty ? { ...clean, json: { parameters: { other: {} } } } : clean;
+      }
       if (id === "p-server") {
         saved = opts.body;
         if (options.unknownPublish) {
@@ -171,4 +177,67 @@ test("stops defaults observation on a permission or quota failure, but restores 
     assert.equal(fixture.calls.filter(({ id }) => id.startsWith("r-defaults")).length, 1);
     assert.ok(fixture.calls.some(({ id }) => id === "g-after"));
   }
+});
+
+test("refuses the supposedly empty server when its shape carries an unrecognized field", async () => {
+  const fixture = fake({ falseEmpty: true });
+  const result = await run(fixture.transport);
+  assert.equal(result.complete, false);
+  assert.deepEqual(
+    fixture.calls.map(({ id }) => id),
+    ["a-client", "a-server"],
+  );
+});
+
+test("an unsuccessful admission acknowledgement issues zero production requests", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "rc-followup-entry-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const out = join(root, "pre-admission");
+  await assert.rejects(
+    runAdmin({
+      base: provider,
+      project: PRODUCTION_PROJECT,
+      production: true,
+      out,
+      runId: "abcdefghijkl",
+      token: "synthetic-token",
+      ready: async () => {
+        throw new Error("closed acknowledgement");
+      },
+    }),
+    /closed acknowledgement/,
+  );
+  assert.ok(existsSync(join(out, "run.json")));
+  assert.equal(existsSync(join(out, "journal.jsonl")), false);
+});
+
+test("only explicitly approved defaults errors may persist a non-JSON body as an answer", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "rc-followup-defaults-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const make = (status) =>
+    new Transport({
+      out: root,
+      allow: routes.allow,
+      token: () => "mock",
+      maxRequests: 3,
+      timeoutMs: 500,
+      fetchImpl: async () => new Response("<html>unavailable</html>", { status }),
+    });
+  const body = await make(404).send("approved", routes.defaults[0], {
+    textBody: true,
+    textErrorStatuses: [400, 404],
+  });
+  assert.equal(body.status, 404);
+  assert.equal(body.text, "<html>unavailable</html>");
+  await assert.rejects(
+    make(404).send("usual", routes.defaults[0], { textBody: true }),
+    /unreadable body/,
+  );
+  await assert.rejects(
+    make(503).send("provider-error", routes.defaults[0], {
+      textBody: true,
+      textErrorStatuses: [400, 404],
+    }),
+    /status 503/,
+  );
 });

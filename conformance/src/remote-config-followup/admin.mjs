@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,16 +58,12 @@ const positiveVersion = (doc) =>
   typeof doc?.version?.versionNumber === "string" &&
   /^[1-9][0-9]*$/.test(doc.version.versionNumber);
 const tag = (row) => typeof row?.etag === "string" && row.etag.length > 0 && row.etag !== "*";
-const emptyRecord = (value) =>
-  value === undefined ||
-  (value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0);
 const emptyTemplate = (doc) =>
   doc &&
   !Array.isArray(doc) &&
   typeof doc === "object" &&
-  emptyRecord(doc.parameters) &&
-  emptyRecord(doc.parameterGroups) &&
-  (doc.conditions === undefined || (Array.isArray(doc.conditions) && doc.conditions.length === 0));
+  Object.keys(doc).length === 1 &&
+  Object.hasOwn(doc, "version");
 const baseline = (row) =>
   row?.status === 200 && tag(row) && positiveVersion(row.json) && emptyTemplate(row.json);
 
@@ -155,7 +150,10 @@ export async function observeAdmin({ transport, routes, runId, beforeRestore = a
       throw new Error("server data plane not at the observed version");
     result.evaluation = await evaluateAdmin(data.json, data.etag);
     for (const [index, url] of routes.defaults.entries()) {
-      const answer = await transport.send("r-defaults-" + index, url, { textBody: true });
+      const answer = await transport.send("r-defaults-" + index, url, {
+        textBody: true,
+        textErrorStatuses: [400, 404],
+      });
       if (![200, 400, 404].includes(answer.status))
         throw new Error("server defaults read did not return an in-scope outcome");
       result.defaults.push({ status: answer.status, sha256: sha(answer.text) });
@@ -271,11 +269,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.env.GOOGLE_APPLICATION_CREDENTIALS
   )
     throw new Error("production requires the reviewed launch context");
-  const token = execFileSync("gcloud", ["auth", "application-default", "print-access-token"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 20_000,
-  }).trim();
+  const token = readFileSync(0, "utf8").trim();
+  if (!/^[A-Za-z0-9_.-]{20,8192}$/.test(token)) throw new Error("invalid reviewed ADC transfer");
   const number = process.env.FIREEMU_SANDBOX_PROJECT_NUMBER;
   if (!/^[1-9][0-9]{9,12}$/.test(number ?? ""))
     throw new Error("expected the sandbox project number");
