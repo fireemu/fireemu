@@ -122,6 +122,8 @@ export function requestPolicy({ method, href, headers, postData }, own) {
     if (url.search !== "") return { verdict: "query" };
     if (keyHeader !== key) return { verdict: "key" };
     if (method === "POST" && url.pathname === `${base}/installations`) {
+      if (own.maxInstallations !== undefined && fids.size >= own.maxInstallations)
+        return { verdict: "installation create cap" };
       const fid = json(postData)?.fid;
       if (typeof fid !== "string" || !FID.test(fid)) return { verdict: "installation id" };
       return { verdict: "create", fid };
@@ -203,7 +205,8 @@ export async function openBrowser({
   const refusals = [];
   const contexts = [];
   const handles = [];
-  const automaticPreflights = [];
+  const preflightNotices = [];
+  const preflightIds = new Set();
   const stop = (reason) => {
     if (!stopped) stopped = reason;
   };
@@ -213,7 +216,7 @@ export async function openBrowser({
     refusals,
     allowedRequests: () => allowed,
     cleanupRequests: () => reserved,
-    automaticPreflights: () => [...automaticPreflights],
+    preflightNotices: () => [...preflightNotices],
     /** A new context and page with `config`; resolves when the page's SDK is loaded. */
     async client(config, name = `context-${handles.length + 1}`) {
       const context = await browser.newContext({ serviceWorkers: "block" });
@@ -223,6 +226,7 @@ export async function openBrowser({
         key: config.apiKey,
         appId: config.appId,
         fids: new Set(),
+        ...(followup ? { maxInstallations: 1 } : {}),
         rcOrigin,
       };
       await context.route("**/*", async (route) => {
@@ -302,22 +306,34 @@ export async function openBrowser({
       if (followup) {
         const session = await context.newCDPSession(page);
         await session.send("Network.enable");
-        session.on("Network.requestWillBeSent", ({ request, type }) => {
-          if (type !== "Preflight" || request.method !== "OPTIONS") return;
+        session.on("Network.requestWillBeSent", ({ request, requestId }) => {
+          if (request.method !== "OPTIONS") return;
           const url = new URL(request.url);
-          const allowed = HOSTS.includes(url.host) || url.origin === rcOrigin;
-          if (!allowed) stop("unapproved automatic browser preflight");
-          if (automaticPreflights.length >= cap + CLEANUP_RESERVE) {
-            stop("automatic browser preflight cap");
-            return;
-          }
-          automaticPreflights.push({
-            host: allowed ? url.host : "unexpected",
-            method: request.method,
-          });
+          const client = `/v1/projects/${own.project}`;
+          const rcPath =
+            url.pathname === `${client}/namespaces/firebase:fetch` ||
+            url.pathname === `${client}/namespaces/firebase:streamFetchInvalidations`;
+          const installPath =
+            url.pathname === `${client}/installations` ||
+            [...own.fids].some(
+              (fid) =>
+                url.pathname === `${client}/installations/${fid}` ||
+                url.pathname === `${client}/installations/${fid}/authTokens:generate`,
+            );
+          const scoped =
+            (rcPath &&
+              (url.origin === rcOrigin ||
+                url.host === "firebaseremoteconfig.googleapis.com" ||
+                url.host === "firebaseremoteconfigrealtime.googleapis.com")) ||
+            (installPath && url.host === "firebaseinstallations.googleapis.com");
+          preflightIds.add(requestId);
+          preflightNotices.push({ host: scoped ? url.host : "unexpected", method: "OPTIONS" });
+          if (!scoped) stop("unapproved automatic browser preflight notice");
+          if (preflightNotices.length > cap + CLEANUP_RESERVE)
+            stop("browser preflight notice bound");
         });
-        session.on("Network.responseReceived", ({ type, response }) => {
-          if (type === "Preflight" && STOP_STATUSES.has(response.status))
+        session.on("Network.responseReceived", ({ requestId, response }) => {
+          if (preflightIds.has(requestId) && STOP_STATUSES.has(response.status))
             stop(`automatic preflight answered ${response.status}`);
         });
       }

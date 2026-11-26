@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { requestPolicy } from "../remote-config-web/driver.mjs";
+import { advancedVersion, preciseTag } from "../remote-config-web/program.mjs";
 import { verifiedReconnect, streamWindow, probePreflights } from "./web.mjs";
 
 const first = {
@@ -117,4 +119,36 @@ test("the explicit preflight uses two exact POST counterparts and masks the quer
     probePreflights({ ...options, fetchImpl: async () => new Response(null, { status: 302 }) }),
     /unexpected status/,
   );
+});
+
+test("a follow-up context reserves one Installation creation even before a response", () => {
+  const project = "fireemu-oracle-query";
+  const request = {
+    method: "POST",
+    href: `https://firebaseinstallations.googleapis.com/v1/projects/${project}/installations`,
+    headers: { "x-goog-api-key": "fixture-key" },
+    postData: JSON.stringify({ fid: "cf01234567890123456789" }),
+  };
+  const ctx = {
+    project,
+    key: "fixture-key",
+    appId: "fixture-app",
+    fids: new Set(),
+    maxInstallations: 1,
+  };
+  const create = requestPolicy(request, ctx);
+  assert.equal(create.verdict, "create");
+  ctx.fids.add(create.fid);
+  assert.notEqual(requestPolicy(request, ctx).verdict, "create");
+});
+
+test("a forward publication must acknowledge a newer decimal version and a precise ETag", () => {
+  const reply = (etag, versionNumber) => ({ etag, json: { version: { versionNumber } } });
+  assert.equal(preciseTag("*"), false);
+  assert.equal(preciseTag(undefined), false);
+  assert.equal(preciseTag("etag-4"), true);
+  assert.equal(advancedVersion(reply("etag-4", "4"), "3"), "4");
+  assert.equal(advancedVersion(reply("etag-3", "3"), "3"), null);
+  assert.equal(advancedVersion(reply("*", "4"), "3"), null);
+  assert.equal(advancedVersion(reply("etag-4", "004"), "3"), null);
 });

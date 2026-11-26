@@ -421,7 +421,7 @@ export async function main(argv, env = process.env, deps = {}) {
   const grants = { operations: new Set(), key: null };
   const urls = adminUrls(PROJECT);
   // The key's value, once read, is masked in every body before it is written (ruling 19 item 2).
-  const secrets = new Set();
+  const secrets = new Set(deps.secrets ?? []);
   const redact = (text) => {
     let out = text;
     for (const secret of secrets) if (secret) out = out.split(secret).join("API_KEY");

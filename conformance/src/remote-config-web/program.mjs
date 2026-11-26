@@ -91,6 +91,19 @@ const isObject = (value) => value !== null && typeof value === "object" && !Arra
  * an object whose only member is `version`, with a decimal versionNumber (ruling 18 item 6). Phase
  * A, G and A2 accept exactly this; `200 {}` (unpublished) or any content is not the baseline.
  */
+export const preciseTag = (tag) =>
+  typeof tag === "string" && tag.trim() !== "" && tag.trim() !== "*";
+
+export function advancedVersion(reply, previous) {
+  const current = reply.json?.version?.versionNumber;
+  return preciseTag(reply.etag) &&
+    typeof current === "string" &&
+    /^[1-9][0-9]*$/.test(current) &&
+    BigInt(current) > BigInt(previous)
+    ? current
+    : null;
+}
+
 export function baselineEmpty(doc) {
   return (
     isObject(doc) &&
@@ -190,6 +203,7 @@ export async function observe(ctx) {
   };
   const clients = {};
   let lastWrite = 0;
+  let priorVersion;
   let wrote = false;
   let keyName = null;
   let keyValue = null;
@@ -204,6 +218,8 @@ export async function observe(ctx) {
   const write = async (caseId, url, method, body, ifMatch) => {
     await pace();
     await gate();
+    if (ctx.followup && (method !== "PUT" || !preciseTag(ifMatch)))
+      throw new Stop(caseId + ": an exact If-Match is required");
     try {
       const r = await t.send(caseId, url, {
         method,
@@ -216,6 +232,11 @@ export async function observe(ctx) {
       });
       if (r.status === 429) throw new Stop(`${caseId}: 429`);
       if (r.status !== 200) throw new Stop(`${caseId}: ${r.status}`);
+      if (ctx.followup) {
+        const newer = advancedVersion(r, priorVersion);
+        if (!newer) throw new Stop(caseId + ": publication has no newer version and exact ETag");
+        priorVersion = newer;
+      }
       return r;
     } catch (error) {
       if (error instanceof Unknown)
@@ -270,6 +291,17 @@ export async function observe(ctx) {
   const streams = async (client) =>
     (await client.wire()).filter((e) => e.path.endsWith(":streamFetchInvalidations")).length;
 
+  const restoreOwned = async (readback) => {
+    const description = readback.json?.version?.description;
+    if (
+      readback.status !== 200 ||
+      !preciseTag(readback.etag) ||
+      !description?.startsWith(`fireemu rc-closure-b ${runId} `)
+    )
+      throw new Stop("client template is not owned by the follow-up run");
+    return t.send("g-restore", urls.client, { method: "PUT", body: {}, ifMatch: readback.etag });
+  };
+
   /** Deletes the pass's key and reads it back; the problem, or null when it reads deleted. */
   const deleteKey = async (name) => {
     try {
@@ -284,11 +316,26 @@ export async function observe(ctx) {
       // real deleteTime, or the read-back of the key's own name is. Any other shape proves nothing.
       const proves = (key) => isObject(key) && key.name === name && isDeleted(key);
       result.key.deletedBy = proves(done.response) ? ["operation"] : [];
+      if (ctx.followup && proves(done.response))
+        result.key.operationTombstone = {
+          name,
+          uid: done.response.uid,
+          deleteTime: done.response.deleteTime,
+          operation: deleted.json.name,
+        };
       let live = false;
       try {
         const back = await t.send("k-readback", `${urls.keysApi}${name}`, { secret: true });
         result.key.readback = back.status;
-        if (back.status === 200 && proves(back.json)) result.key.deletedBy.push("read-back");
+        if (back.status === 200 && proves(back.json)) {
+          result.key.deletedBy.push("read-back");
+          if (ctx.followup)
+            result.key.readbackTombstone = {
+              name,
+              uid: back.json.uid,
+              deleteTime: back.json.deleteTime,
+            };
+        }
         // A 200 naming the key without a real deleteTime shows it live: that contradicts the
         // operation and proves nothing (ruling 20).
         live =
@@ -328,6 +375,8 @@ export async function observe(ctx) {
     if (a.status !== 200 || !baselineEmpty(a.json))
       throw new Stop("the client template is not at the published empty baseline");
     base = { version: a.json.version.versionNumber, etag: a.etag };
+    if (ctx.followup && !preciseTag(base.etag)) throw new Stop("baseline has no exact ETag");
+    priorVersion = base.version;
     result.baseline.before = { version: base.version, empty: true };
     if (ctx.production) {
       // The three APIs, each ENABLED, named under the configured project number: the number is
@@ -394,6 +443,12 @@ export async function observe(ctx) {
       const done = await operation("k-create", createOperation);
       if (!done || done.error || !done.response?.name) throw new Stop("key create not settled");
       keyName = grantKey(done.response.name);
+      if (ctx.followup)
+        result.key.createdIdentity = {
+          name: keyName,
+          uid: done.response.uid,
+          operation: createOperation,
+        };
       result.key.created = true;
       const value = await t.send("k-value", `${urls.keysApi}${keyName}/keyString`, {
         secret: true,
@@ -580,15 +635,7 @@ export async function observe(ctx) {
         if (!(r.status === 200 && baselineEmpty(r.json)) && wrote) {
           await pace();
           if (ctx.followup) {
-            const description = r.json?.version?.description;
-            if (
-              r.status !== 200 ||
-              !r.etag ||
-              r.etag === "*" ||
-              !description?.startsWith(`fireemu rc-closure-b ${runId} `)
-            )
-              throw new Stop("client template is not owned by the follow-up run");
-            await t.send("g-restore", urls.client, { method: "PUT", body: {}, ifMatch: r.etag });
+            await restoreOwned(r);
           } else {
             await t.send("g-restore", `${urls.client}:rollback`, {
               method: "POST",
@@ -637,7 +684,7 @@ export async function observe(ctx) {
   result.adminRequests = t.count;
   result.pageRequests = browser.allowedRequests();
   result.cleanupRequests = browser.cleanupRequests?.() ?? 0;
-  if (ctx.followup) result.automaticPreflights = browser.automaticPreflights?.() ?? [];
+  if (ctx.followup) result.preflightNotices = browser.preflightNotices?.() ?? [];
   result.refusals = browser.refusals;
   result.complete =
     result.stopped === null &&
