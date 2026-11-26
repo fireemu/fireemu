@@ -480,7 +480,12 @@ export async function main(argv, env = process.env, deps = {}) {
     const resultFile = join(out, "result.json");
     writeFileSync(
       resultFile,
-      JSON.stringify({ runId, complete: false, leakCheck: "pending" }) + "\n",
+      JSON.stringify({
+        runId,
+        complete: false,
+        leakCheck: "pending",
+        open: ["result snapshot unavailable"],
+      }) + "\n",
     );
     const leaked = new Set();
     const persist = async (name, value) => {
@@ -488,15 +493,15 @@ export async function main(argv, env = process.env, deps = {}) {
       const masked = await browser.mask(redact(text));
       if (text !== masked) leaked.add(name);
       writeFileSync(join(out, name), masked);
-      return masked;
     };
     for (const [name, client] of Object.entries(result.clients)) {
       await persist(`wire-${name}.json`, client.wire ?? []);
       delete client.wire;
     }
-    // Always derive the final file and summary from the already-masked representation.
-    result = JSON.parse(await persist("result.json", result));
+    await persist("result.json", result);
     for (const name of await leakCheck(out, secrets, browser)) leaked.add(name);
+    // The scan may have learned another secret. Use its on-disk result for the final file and summary.
+    result = JSON.parse(readFileSync(resultFile, "utf8"));
     for (const name of leaked) result.open.push(`leak: ${name} held a secret (masked copy kept)`);
     result.complete = complete && leaked.size === 0;
     result.leakCheck = "done";

@@ -1418,47 +1418,104 @@ for (const point of ["gate", "credentials"]) {
   });
 }
 
-test("a secret in a returned template version cannot appear in the saved result or summary", async (t) => {
-  const { main, PROJECT: SANDBOX } = await import("./record.mjs");
-  const out = mkdtempSync(join(tmpdir(), "rc-result-mask-"));
-  t.after(() => rmSync(out, { recursive: true, force: true }));
-  const fake = productionAdmin(world({ project: SANDBOX }));
-  const messages = [];
-  t.mock.method(console, "log", (line) => messages.push(line));
-  const resultDir = join(out, "send-web-1");
-  const status = await main(
-    ["--send-production", "--out", resultDir],
-    { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
-    {
-      token: () => "t",
-      fetchImpl: async (url, init) => {
-        const response = await fake(url, init);
-        if (init.method !== "PUT" || response.status !== 200) return response;
-        const document = await response.json();
-        document.version.versionNumber = KEY;
-        return Response.json(document, { headers: response.headers });
-      },
-      openBrowser: async () => ({
-        client: async () => {
-          throw new Error("test: no page");
+for (const phase of ["known", "learned during the scan", "masking interrupted"]) {
+  test(`a secret in a returned template version stays out of the saved result and summary (${phase})`, async (t) => {
+    const { main, closureRefusal, PROJECT: SANDBOX } = await import("./record.mjs");
+    const { mkdirSync, realpathSync, writeFileSync } = await import("node:fs");
+    const out = mkdtempSync(join(tmpdir(), "rc-result-mask-"));
+    t.after(() => rmSync(out, { recursive: true, force: true }));
+    const fake = productionAdmin(world({ project: SANDBOX }));
+    const messages = [];
+    t.mock.method(console, "log", (line) => messages.push(line));
+    const resultDir = join(out, "send-web-1");
+    const secret = phase === "learned during the scan" ? "synthetic-late-token" : KEY;
+    let learned = false;
+    const completed = main(
+      ["--send-production", "--out", resultDir],
+      { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+      {
+        token: () => "t",
+        fetchImpl: async (url, init) => {
+          const response = await fake(url, init);
+          if (init.method !== "PUT" || response.status !== 200) return response;
+          const document = await response.json();
+          document.version.versionNumber = secret;
+          return Response.json(document, { headers: response.headers });
         },
-        stopped: () => null,
-        stop: () => {},
-        mask: async (value) => value,
-        installations: async () => [],
-        allowedRequests: () => 0,
-        refusals: [],
-        close: async () => {},
+        openBrowser: async () => ({
+          client: async () => {
+            throw new Error("test: no page");
+          },
+          stopped: () => null,
+          stop: () => {},
+          mask: async (value) => {
+            if (phase === "masking interrupted") throw new Error("test: masking interrupted");
+            if (phase !== "learned during the scan") return value;
+            if (learned) return value.replaceAll(secret, "TOKEN");
+            learned = value.includes('"leakCheck"') && value.includes(secret);
+            return value;
+          },
+          installations: async () => [],
+          allowedRequests: () => 0,
+          refusals: [],
+          close: async () => {},
+        }),
+        timing: TIMING,
+      },
+    );
+    if (phase === "masking interrupted")
+      await assert.rejects(completed, /test: masking interrupted/);
+    else assert.equal(await completed, 1);
+    const text = readFileSync(join(resultDir, "result.json"), "utf8");
+    assert.ok(!text.includes(secret));
+    assert.ok(!messages.join("").includes(secret));
+    const result = JSON.parse(text);
+
+    if (phase !== "masking interrupted") {
+      assert.equal(result.leakCheck, "done");
+      assert.equal(
+        result.steps.find(({ name }) => name === "t1").version,
+        phase === "known" ? "API_KEY" : "TOKEN",
+      );
+      assert.ok(result.open.some((line) => line.startsWith("leak: result.json")));
+      return;
+    }
+
+    assert.equal(result.leakCheck, "pending");
+    assert.equal(result.complete, false);
+    assert.deepEqual(result.open, ["result snapshot unavailable"]);
+    const runId = result.runId;
+    const a2 = `${resultDir}-a2-1`;
+    const a2Of = realpathSync(resultDir);
+    mkdirSync(a2);
+    writeFileSync(join(a2, "run.json"), JSON.stringify({ runId, a2Of }));
+    writeFileSync(
+      join(a2, "a2.json"),
+      JSON.stringify({
+        runId,
+        a2Of,
+        atBaseline: true,
+        clientEmpty: true,
+        keyListComplete: true,
+        errors: [],
       }),
-      timing: TIMING,
-    },
-  );
-  assert.equal(status, 1);
-  const text = readFileSync(join(resultDir, "result.json"), "utf8");
-  assert.ok(!text.includes(KEY));
-  assert.ok(!messages.join("").includes(KEY));
-  const result = JSON.parse(text);
-  assert.equal(result.leakCheck, "done");
-  assert.equal(result.steps.find(({ name }) => name === "t1").version, "API_KEY");
-  assert.ok(result.open.some((line) => line.startsWith("leak: result.json")));
-});
+    );
+    const owner = join(out, "owner.md");
+    assert.match(closureRefusal(resultDir, owner), /no acceptance or recovery record/);
+    writeFileSync(
+      `${resultDir}-acceptance.json`,
+      JSON.stringify({
+        runId,
+        kind: "recovery",
+        ledgerLine: 1,
+        open: ["result snapshot unavailable", "leak-check: not done"],
+      }),
+    );
+    writeFileSync(
+      owner,
+      `- 2026-11-26 | RC-CLOSURE-B decision | packetId=RC-CLOSURE-B-V1-3 runId=${runId} decision=recovery | owner | test
+`,
+    );
+    assert.equal(closureRefusal(resultDir, owner), null);
+  });
+}

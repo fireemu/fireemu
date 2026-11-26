@@ -101,7 +101,7 @@
     "conformance/src/remote-config-web/known-differences.json": "7d185612fd4e64283990830a341328221a5e78227f87a9da408884b4ae4e424a",
     "conformance/src/remote-config-web/local.mjs": "25a9b9ecd1ed10c0b5ec396c44a5a56a9eb4a5874f29f97e9ee6fa33d9e6f02f",
     "conformance/src/remote-config-web/program.mjs": "913aee9b17edb36f7eda9581aa9f405ae3c4128519445037bbe17f9eef50522e",
-    "conformance/src/remote-config-web/record.mjs": "864b2ab3236fb32b2f4057c40f1882290e0ce1189d8a0c45adb004bdc3baf3ce",
+    "conformance/src/remote-config-web/record.mjs": "02e60f7751eb3fe1ac9ac93c0167349b89aae8a16724cf462c7b874ec69349c6",
     "conformance/src/remote-config-web/sanitise.mjs": "322e88b3962f88f46bfb2f6eb2437f112989e698a42d848031494e7626c604fd",
     "conformance/src/rtdb-finite-families-closure.test.mjs": "0fb70d489213edca6b71670ffe20fc92138cd0cdf0a07f7e3dff93aaa2303303",
     "conformance/src/rtdb-functions/breadth-compare.test.mjs": "5fcac52df61d08ceb9297081aa98c12ef6c0bc91ecff537e52122e0cde46e8dc",
