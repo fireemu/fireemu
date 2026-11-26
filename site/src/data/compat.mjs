@@ -31,7 +31,7 @@ export const AREAS = {
 	'REMOTE-CONFIG': {
 		product: 'Firebase Remote Config',
 		title: 'Templates and delivery',
-		covers: 'Template reads, validation, publishing, version history and rollback, the server-template data plane and publish-triggered functions are verified against production for the recorded cases under the strict profile; client SDK fetch-and-activate and real-time updates are not provided yet. Fireemu currently serves client- and server-template administration (read, validate, publish, list versions, roll back) on its loopback control listener, the server-template data plane the Admin SDK reads, the recorded events of client-template publishes and rollbacks for v1 and v2 functions, and local trigger injection with caller-supplied metadata.',
+		covers: 'Template reads, validation, publishing, version history, rollback, the server-template data plane, and publish-triggered functions are verified against production for the recorded cases in the strict profile. Web SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. Android and Apple client verification is pending. The loopback control listener serves client and server template administration and the Web SDK routes. Fireemu also supports local trigger injection with caller-supplied metadata.',
 	},
 	'FS-DATA-WRITE': {
 		product: 'Cloud Firestore',
