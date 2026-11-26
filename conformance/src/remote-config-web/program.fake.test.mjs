@@ -1366,3 +1366,44 @@ test(
     );
   },
 );
+
+test("ruling 20: a stop that lands while the gate reads its snapshots is seen at dispatch", async (t) => {
+  const out = mkdtempSync(join(tmpdir(), "rc-closure-b-fake-"));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const fake = world();
+  const transport = new Transport({
+    out,
+    allow: () => true,
+    token: () => "t",
+    maxRequests: 60,
+    timeoutMs: 5000,
+    fetchImpl: fake.admin,
+  });
+  // The hook's state: running for the gate's first read, stopped from the next one on.
+  let reads = 0;
+  const browser = {
+    stopped: () => (++reads > 1 ? "test: stopped during the gate" : null),
+    stop: () => {},
+    client: async () => {
+      throw new Error("no page");
+    },
+    installations: async () => [],
+    allowedRequests: () => 0,
+    cleanupRequests: () => 0,
+    refusals: [],
+  };
+  const result = await observe({
+    transport,
+    browser,
+    urls: { client: ADMIN },
+    project: PROJECT,
+    number: NUMBER,
+    appId: `1:${NUMBER}:web:0000000000000000000000`,
+    fakeKey: KEY,
+    runId: "261126000000abc",
+    timing: TIMING,
+    production: false,
+  });
+  assert.match(result.stopped, /test: stopped during the gate/);
+  assert.ok(!casesOf(out).includes("t1-publish"), String(casesOf(out)));
+});

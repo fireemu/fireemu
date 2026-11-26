@@ -267,3 +267,97 @@ test("the closure record's two stage-B conditions cite both passes, their counts
     });
   }
 });
+
+test("near misses from mutation: the percent swap's bounds, paths, queries, sources, the sanitiser's one project, forged comparisons and records", async () => {
+  const pass1 = fixture("pass1");
+  const pass2 = fixture("pass2");
+  const changed = (edit) => {
+    const copy = structuredClone(pass2);
+    edit(copy);
+    return compare(pass1, copy, { local: true })
+      .table.filter((r) => r.verdict === "MISMATCH")
+      .map((r) => r.id);
+  };
+  // The swap holds only between two values of one version, and only for the percent parameter.
+  assert.deepEqual(
+    changed((f) => {
+      f.clients.two.wire[1].responseBody = f.clients.two.wire[1].responseBody.replace(
+        "v1-half",
+        "v2-default",
+      );
+    }),
+    ["two-2-fetch"],
+  );
+  const other = structuredClone(pass1);
+  const swapped = structuredClone(pass2);
+  for (const [fixtureCopy, value] of [
+    [other, "v1-default"],
+    [swapped, "v1-half"],
+  ])
+    fixtureCopy.clients.one.wire[1].responseBody =
+      fixtureCopy.clients.one.wire[1].responseBody.replace(
+        '"fireemu_limit": "20"',
+        `"fireemu_limit": "${value}"`,
+      );
+  assert.ok(
+    compare(other, swapped, { local: true }).table.some(
+      (r) => r.id === "one-2-fetch" && r.verdict === "MISMATCH",
+    ),
+  );
+  assert.deepEqual(
+    changed((f) => {
+      f.clients.one.wire[1].path = f.clients.one.wire[1].path.replace("PROJECT_ID", "OTHER");
+    }),
+    ["one-2-fetch"],
+  );
+  assert.deepEqual(
+    changed((f) => {
+      f.clients.one.wire[1].query = "?key=API_KEY&x=1";
+    }),
+    ["one-2-fetch"],
+  );
+  assert.deepEqual(
+    changed((f) => {
+      f.clients.one.fetches[0].values.fireemu_limit.source = "default";
+    }),
+    ["one-sdk-fetch-1"],
+  );
+  const { secretsOf } = await import("./sanitise.mjs");
+  assert.throws(
+    () =>
+      secretsOf({
+        run: { runId: "261125000000abc" },
+        result: { runId: "261125000000abc" },
+        wires: {
+          one: [{ path: "/v1/projects/a/installations", requestBody: '{"app_id":"1:1:web:ab"}' }],
+          two: [{ path: "/v1/projects/b/installations" }],
+        },
+      }),
+    /2 projects/,
+  );
+  // A forged comparison under a moved pin, and a closure record with other counts, are refused.
+  const doc = JSON.parse(readFileSync(join(ROOT, FILES.runVsRun), "utf8"));
+  doc.counts.MATCH += 1;
+  const forged = Buffer.from(JSON.stringify(doc, null, 2) + "\n");
+  assert.match(
+    verifyEvidence({
+      ...readers({ [FILES.runVsRun]: forged }),
+      pins: { ...PINS, [FILES.runVsRun]: sha256(forged) },
+    }).join(),
+    /differs from the recomputed comparison/,
+  );
+  const record = JSON.parse(
+    readFileSync(join(ROOT, "spec/compatibility/closure/REMOTE-CONFIG.json"), "utf8"),
+  );
+  record.conditions.find(
+    (c) => c.conditionId === "REMOTE-CONFIG/realtime-updates",
+  ).comparisons.runVsRun.counts.MATCH += 1;
+  assert.match(
+    verifyEvidence(
+      readers({
+        "spec/compatibility/closure/REMOTE-CONFIG.json": Buffer.from(JSON.stringify(record)),
+      }),
+    ).join(),
+    /realtime-updates runVsRun differs from the recomputed counts/,
+  );
+});
