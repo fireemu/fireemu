@@ -22,7 +22,11 @@ const kd = (id) => {
 
 const VERSION =
   /("(?:templateVersion|latestTemplateVersionNumber|lastKnownVersionNumber)":\s*")([0-9]+)(")/g;
-const TAG = /^etag-PROJECT_ID-firebase-fetch--?[0-9]+$/;
+const TAG = /^etag-PROJECT_ID-firebase-fetch-(-?(?:0|[1-9][0-9]*))$/;
+const fetchTag = (value) => {
+  const number = Number(TAG.exec(value ?? "")?.[1]);
+  return number >= -2147483648 && number <= 2147483647;
+};
 
 /** A text with every recorded version replaced by its offset from `base`. */
 export function offsetText(text, base) {
@@ -90,19 +94,26 @@ function headerDiff(a = {}, b = {}, differences, kds, at, { local }) {
     const [x, y] = [a[name], b[name]];
     if (x === y) continue;
     if (name === "etag" || name === "if-none-match") {
-      if (
-        (x === "*" || TAG.test(x ?? "")) &&
-        (y === "*" || TAG.test(y ?? "")) &&
-        (x === "*") === (y === "*")
-      )
+      if ((x === "*" || fetchTag(x)) && (y === "*" || fetchTag(y)) && (x === "*") === (y === "*"))
         kds.add(local ? kd("KD-WEB-FETCH-TAG-NUMBER") : "layout");
       else differences.push({ path: `${at}.${name}`, kind: "header" });
-    } else if (local && name === "content-encoding" && at.endsWith("response"))
+    } else if (
+      local &&
+      name === "content-encoding" &&
+      at.endsWith("response") &&
+      x === "gzip" &&
+      y === undefined
+    ) {
       kds.add(kd("KD-WEB-TRANSPORT-ENCODING"));
-    else if (local && name === "vary" && at.endsWith("response")) kds.add(kd("KD-WEB-VARY"));
-    else if (name === "content-encoding" && at.endsWith("request"))
-      differences.push({ path: `${at}.${name}`, kind: "header" });
-    else differences.push({ path: `${at}.${name}`, kind: "header" });
+    } else if (
+      local &&
+      name === "vary" &&
+      at.endsWith("response") &&
+      x === "Origin, X-Origin, Referer" &&
+      (y === undefined || y === "origin")
+    ) {
+      kds.add(kd("KD-WEB-VARY"));
+    } else differences.push({ path: `${at}.${name}`, kind: "header" });
   }
 }
 
@@ -136,41 +147,52 @@ function compareExchange(a, b, baseA, baseB, { local }) {
   }
   headerDiff(a.requestHeaders, b.requestHeaders, differences, kds, `${r}.request`, { local });
   headerDiff(a.responseHeaders, b.responseHeaders, differences, kds, `${r}.response`, { local });
-  const [qa, qb] = [parse(a.requestBody), parse(b.requestBody)];
-  if (!same(layout(Object.keys(qa ?? {}).sort()), layout(Object.keys(qb ?? {}).sort())))
-    differences.push({ path: "requestBody", kind: "layout" });
+  if (offsetText(a.requestBody, baseA) !== offsetText(b.requestBody, baseB))
+    differences.push({ path: "requestBody", kind: "body" });
   if (r === "fetch") {
-    for (const field of [
-      "app_instance_id",
-      "app_instance_id_token",
-      "app_id",
-      "sdk_version",
-      "language_code",
-    ])
-      if (qa?.[field] !== qb?.[field])
-        differences.push({ path: `requestBody.${field}`, kind: "value" });
-    if (!same(qa?.custom_signals, qb?.custom_signals))
-      differences.push({ path: "requestBody.custom_signals", kind: "value" });
     const [ta, tb] = [offsetText(a.responseBody, baseA), offsetText(b.responseBody, baseB)];
     if (ta !== tb) {
       const [pa, pb] = [parse(ta), parse(tb)];
-      if (!pa || !pb || pa.state !== pb.state || pa.templateVersion !== pb.templateVersion)
-        differences.push({ path: "responseBody", kind: "body" });
-      else entriesDiff(pa.entries, pb.entries, differences, kds, "responseBody.entries");
+      const [x, y] = [pa?.entries?.fireemu_message, pb?.entries?.fireemu_message];
+      // The recordings differ only in the evaluated percent value. Keep the rest of the
+      // recorded body, including its member order and line breaks, in the comparison.
+      if (
+        percentSwap(x, y) &&
+        tb.replace(
+          `"fireemu_message": ${JSON.stringify(y)}`,
+          `"fireemu_message": ${JSON.stringify(x)}`,
+        ) === ta
+      ) {
+        kds.add(kd("KD-WEB-PERCENT-INSTALLATION"));
+      } else differences.push({ path: "responseBody", kind: "body" });
     }
   } else if (r === "realtime") {
-    if (
-      offsetText(a.requestBody, baseA) !== offsetText(b.requestBody, baseB) &&
-      qa?.lastKnownVersionNumber &&
-      Number(qa.lastKnownVersionNumber) - baseA !== Number(qb?.lastKnownVersionNumber) - baseB
-    )
-      differences.push({ path: "requestBody.lastKnownVersionNumber", kind: "value" });
     if (offsetText(a.text, baseA) !== offsetText(b.text, baseB))
       differences.push({ path: "text", kind: "frames" });
     if ((a.chunkLengths ?? []).length !== (b.chunkLengths ?? []).length)
       differences.push({ path: "chunkLengths", kind: "frames" });
   }
   return { differences, kds };
+}
+
+/** The SDK uses the last fetch's ETag, and a conditional answer preserves its equality. */
+function checkFetchTags(entry, previous, differences) {
+  const kind = role(entry);
+  if (kind !== "fetch" && kind !== "realtime") return;
+  const sent = entry.requestHeaders?.["if-none-match"];
+  if ((previous === "*" || fetchTag(previous)) && sent !== previous)
+    differences.push({ path: "request.if-none-match", kind: "relation" });
+  if (kind === "fetch") {
+    const tag = entry.responseHeaders?.etag;
+    const state = parse(entry.responseBody)?.state;
+    if (
+      !fetchTag(tag) ||
+      (state === "NO_CHANGE" && tag !== sent) ||
+      (state === "UPDATE" && tag === sent)
+    ) {
+      differences.push({ path: "response.etag", kind: "relation" });
+    }
+  }
 }
 
 function verdictOf(differences, kds) {
@@ -221,6 +243,7 @@ export function compare(a, b, { local = false } = {}) {
   for (const name of ["one", "two"]) {
     const [ca, cb] = [a.clients[name], b.clients[name]];
     const n = Math.max(ca.wire.length, cb.wire.length);
+    let [tagA, tagB] = ["*", "*"];
     for (let i = 0; i < n; i += 1) {
       const [x, y] = [ca.wire[i], cb.wire[i]];
       if (!x || !y) {
@@ -231,7 +254,12 @@ export function compare(a, b, { local = false } = {}) {
         });
         continue;
       }
-      rows.push(row(`${name}-${i + 1}-${role(x)}`, compareExchange(x, y, baseA, baseB, { local })));
+      const compared = compareExchange(x, y, baseA, baseB, { local });
+      checkFetchTags(x, tagA, compared.differences);
+      checkFetchTags(y, tagB, compared.differences);
+      if (role(x) === "fetch") tagA = x.responseHeaders?.etag;
+      if (role(y) === "fetch") tagB = y.responseHeaders?.etag;
+      rows.push(row(`${name}-${i + 1}-${role(x)}`, compared));
     }
     for (let i = 0; i < Math.max(ca.fetches.length, cb.fetches.length); i += 1) {
       const [x, y] = [ca.fetches[i], cb.fetches[i]];

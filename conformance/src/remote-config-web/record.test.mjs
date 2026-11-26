@@ -287,6 +287,8 @@ async function passDir(t, files = {}, { ageMs = 3_600_000, pid, lockPid } = {}) 
       JSON.stringify({
         pid: lockPid ?? spawnSync(process.execPath, ["-e", ""]).pid,
         packetId: "RC-CLOSURE-B-V1-3",
+        envelopeId: "RC-CLOSURE-B-20261125-01",
+        mode: "live",
         pass: 1,
       }),
     );
@@ -823,9 +825,18 @@ test("ruling 20: the owner's decision line never carries an envelope id; a direc
   const { pass } = await passDir(t, result);
   assert.equal(a2Refusal(pass), null);
   const lock = join(pass, "..", "..", "sandbox-locks", "fireemu-oracle-query.lock");
+  const valid = {
+    pid: 999999,
+    packetId: "RC-CLOSURE-B-V1-3",
+    envelopeId: "RC-CLOSURE-B-20261125-01",
+    mode: "live",
+    pass: 1,
+  };
   for (const body of [
-    { pid: 999999, packetId: "RC-CLOSURE-B-V1-3", pass: 2 },
-    { pid: 999999, packetId: "RC-CLOSURE-B-V1-2", pass: 1 },
+    { ...valid, pass: 2 },
+    { ...valid, packetId: "RC-CLOSURE-B-V1-2" },
+    { ...valid, envelopeId: "different-envelope" },
+    { ...valid, mode: "dry" },
     { pid: 999999 },
   ]) {
     writeFileSync(lock, JSON.stringify(body));

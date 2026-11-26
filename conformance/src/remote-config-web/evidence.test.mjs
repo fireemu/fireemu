@@ -361,3 +361,37 @@ test("near misses from mutation: the percent swap's bounds, paths, queries, sour
     /realtime-updates runVsRun differs from the recomputed counts/,
   );
 });
+
+test("the judge refuses undeclared fetch and realtime wire differences", () => {
+  const pass = fixture("pass1");
+  const fetches = (run) => run.clients.one.wire.filter((wire) => role(wire) === "fetch");
+  const stream = (run) => run.clients.one.wire.find((wire) => role(wire) === "realtime");
+  const tag = "etag-PROJECT_ID-firebase-fetch-2147483647";
+  for (const [name, edit] of Object.entries({
+    "a changed NO_CHANGE tag": (f) => {
+      fetches(f)[1].responseHeaders.etag = tag;
+    },
+    "a broken cache chain": (f) => {
+      fetches(f)[2].requestHeaders["if-none-match"] = tag;
+    },
+    "an unrecorded top-level response field": (f) => {
+      fetches(f)[0].responseBody = fetches(f)[0].responseBody.replace(
+        '"state":',
+        '"extra": true,\n  "state":',
+      );
+    },
+    "an unrecorded content encoding": (f) => {
+      fetches(f)[0].responseHeaders["content-encoding"] = "br";
+    },
+    "an unrecorded vary field": (f) => {
+      fetches(f)[0].responseHeaders.vary = "*";
+    },
+    "changed realtime app identity": (f) => {
+      stream(f).requestBody = stream(f).requestBody.replace("WEB_APP_HASH", "OTHER_APP");
+    },
+  })) {
+    const forged = structuredClone(pass);
+    edit(forged);
+    assert.ok(compare(pass, forged, { local: true }).counts.MISMATCH > 0, name);
+  }
+});

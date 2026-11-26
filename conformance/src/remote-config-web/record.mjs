@@ -17,7 +17,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { newRunId } from "../remote-config-observe/record.mjs";
@@ -213,8 +213,13 @@ export function a2Refusal(dir, now = Date.now()) {
   const lock = readJson(join(dir, "..", "..", "sandbox-locks", "fireemu-oracle-query.lock"));
   if (!lock) return "the project lock is not held";
   // The lock is this packet's, for this pass (the launcher's own check; ruling 20).
-  const pass = Number(/send-web-([12])$/.exec(dir)?.[1]);
-  if (lock.packetId !== PACKET_ID || lock.pass !== pass)
+  const pass = Number(/^send-web-([12])$/.exec(basename(dir))?.[1]);
+  if (
+    lock.packetId !== PACKET_ID ||
+    lock.envelopeId !== ENVELOPE_ID ||
+    lock.mode !== "live" ||
+    lock.pass !== pass
+  )
     return "the project lock is not this packet's lock for this pass";
   if (recorderAlive(lock.pid)) return "the pass's launcher is still running";
   const checkpoint = [readJson(join(dir, "result.json")), readJson(join(dir, "interrupted.json"))];
@@ -303,6 +308,7 @@ export function closureRefusal(dir, ownerLedger) {
 }
 
 export const PACKET_ID = "RC-CLOSURE-B-V1-3";
+const ENVELOPE_ID = "RC-CLOSURE-B-20261125-01";
 
 /**
  * The owner's decision line, matched by exact fields (ruling 19 item 4):

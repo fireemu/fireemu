@@ -444,7 +444,7 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
-      "description": "As recorded in both RC-CLOSURE-B passes: one realtime stream per listening installation, answered only when the client template became newer than lastKnownVersionNumber, then one frame per newer version on the same open response for a changed, a metadata-only, a same-content and a rollback publication and one more after the listener closed and reopened (the SDK kept its stream), each followed by the SDK's re-fetch answered 200 UPDATE with a new tag, and one listener update per publication. Fireemu streams the recorded frames and matches both passes except the declared differences (the tag's number, the transport encoding, vary). How long production keeps a stream open, and what it answers when the template is already newer on arrival, were not recorded.",
+      "description": "As recorded in both RC-CLOSURE-B passes: one realtime stream per listening installation, answered only when the client template became newer than lastKnownVersionNumber, then one frame per newer version on the same open response for a changed, a metadata-only, a same-content and a rollback publication and one more after the listener closed and reopened (the SDK kept its stream), each followed by the SDK's re-fetch answered 200 UPDATE with a new tag, and one listener update per publication. Fireemu streams the recorded frames and matches both passes except the declared differences (the tag's number, the transport encoding, vary). The recordings cover a listener reopening on the existing stream. A new transport connection, back-to-back publications, the maximum hold time, and responses when the template is already newer on arrival were outside both runs.",
       "status": "VERIFIED",
       "productionEvidence": [
         {
@@ -656,7 +656,7 @@
       "localRunner": "conformance/src/remote-config-web/local.mjs",
       "closureTest": "conformance/src/remote-config-web/evidence.test.mjs",
       "knownDifferencesPath": "conformance/src/remote-config-web/known-differences.json",
-      "knownDifferencesSha256": "acd9bfa70cb2f747db8d27cd5bbd7e99aaa37317858e996ba4cf3c6cdaaf58ad",
+      "knownDifferencesSha256": "7d185612fd4e64283990830a341328221a5e78227f87a9da408884b4ae4e424a",
       "recordingPolicy": {
         "observedPasses": 2,
         "requiredPasses": 2,

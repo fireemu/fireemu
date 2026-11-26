@@ -204,11 +204,16 @@ export async function observe(ctx) {
   const write = async (caseId, url, method, body, ifMatch) => {
     await pace();
     await gate();
-    // The hook may have stopped while the gate read its snapshots: checked again at dispatch.
-    if (browser.stopped()) throw new Stop(`browser: ${browser.stopped()}`);
-    wrote = true;
     try {
-      const r = await t.send(caseId, url, { method, body, ifMatch });
+      const r = await t.send(caseId, url, {
+        method,
+        body,
+        ifMatch,
+        beforeDispatch: () => {
+          if (browser.stopped()) throw new Stop(`browser: ${browser.stopped()}`);
+          wrote = true;
+        },
+      });
       if (r.status === 429) throw new Stop(`${caseId}: 429`);
       if (r.status !== 200) throw new Stop(`${caseId}: ${r.status}`);
       return r;

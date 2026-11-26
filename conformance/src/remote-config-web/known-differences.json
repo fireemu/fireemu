@@ -13,7 +13,7 @@
   },
   {
     "id": "KD-WEB-VARY",
-    "summary": "Production's answers carry vary: Origin, X-Origin, Referer; fireemu's carry vary: origin."
+    "summary": "Production's answers carry vary: Origin, X-Origin, Referer; fireemu omits Vary without an Origin header and sends vary: origin when CORS applies."
   },
   {
     "id": "KD-WEB-INSTALLATIONS-HARNESS",
