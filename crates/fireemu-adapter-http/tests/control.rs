@@ -5015,6 +5015,25 @@ async fn the_web_client_fetch_needs_no_control_token_and_answers_update_then_no_
     let _ = server.await;
 }
 
+async fn read_stream_version(
+    stream: &mut tokio::net::TcpStream,
+    version: u64,
+    seen: &mut String,
+    buffer: &mut [u8],
+) {
+    use tokio::io::AsyncReadExt;
+    let marker = format!("\"latestTemplateVersionNumber\": \"{version}\"");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !seen.contains(&marker) {
+        let n = tokio::time::timeout_at(deadline, stream.read(buffer))
+            .await
+            .expect("realtime frame did not arrive before the deadline")
+            .expect("realtime stream read failed");
+        assert!(n > 0, "realtime stream ended before {marker}: {seen:?}");
+        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+}
+
 #[tokio::test]
 async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per_version() {
     use fireemu_adapter_http::remote_config::{RemoteConfigStores, WriteMode};
@@ -5053,13 +5072,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         .await
         .starts_with("HTTP/1.1 200 "));
     let mut seen = String::new();
-    while !seen.contains("\"latestTemplateVersionNumber\": \"2\"") {
-        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
-            .await
-            .unwrap()
-            .unwrap();
-        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
-    }
+    read_stream_version(&mut stream, 2, &mut seen, &mut buffer).await;
     assert!(seen.starts_with("HTTP/1.1 200 "), "{seen}");
     assert_eq!(
         header(&seen, "content-type"),
@@ -5073,13 +5086,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
     assert!(exchange(addr, publish_request(addr, "v2"))
         .await
         .starts_with("HTTP/1.1 200 "));
-    while !seen.contains("\"latestTemplateVersionNumber\": \"3\"") {
-        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
-            .await
-            .unwrap()
-            .unwrap();
-        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
-    }
+    read_stream_version(&mut stream, 3, &mut seen, &mut buffer).await;
     assert!(
         seen.contains(",\r\n{\n  \"latestTemplateVersionNumber\": \"3\"\n}\n"),
         "{seen:?}"
@@ -5103,14 +5110,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
             )
             .unwrap();
     }
-    while !seen.contains("\"latestTemplateVersionNumber\": \"5\"") {
-        let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(n > 0, "{seen:?}");
-        seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
-    }
+    read_stream_version(&mut stream, 5, &mut seen, &mut buffer).await;
     let fourth = seen
         .find("\"latestTemplateVersionNumber\": \"4\"")
         .expect(&seen);
@@ -5127,14 +5127,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         .await
         .unwrap();
     let mut late_seen = String::new();
-    while !late_seen.contains("\"latestTemplateVersionNumber\": \"5\"") {
-        let n = tokio::time::timeout(std::time::Duration::from_secs(5), other.read(&mut buffer))
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(n > 0, "{late_seen:?}");
-        late_seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
-    }
+    read_stream_version(&mut other, 5, &mut late_seen, &mut buffer).await;
     server.abort();
     let _ = server.await;
 }
