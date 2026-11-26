@@ -2,7 +2,7 @@
   "source": {
     "slot": "strict",
     "runSha256": "7031ddb3764674cfa7da93c9ca50efb118b7e95e00350194b09232b059cca98e",
-    "receiptSha256": "e0bc79d7ffe920623ca52b883fcd04727996282249af7cbdbbc49c0a350ed981"
+    "receiptSha256": "2b730d3f464ef890e3f203cafbe5e7d2384f3e6664a7e2da4b50f1f50e357642"
   },
   "android": {
     "platform": "android",

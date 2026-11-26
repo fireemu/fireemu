@@ -2,7 +2,7 @@
   "source": {
     "slot": "emulator",
     "runSha256": "cb2698ca10731a339bfea63544003a86c32259ee3367c91f8992fc6ebe9c430f",
-    "receiptSha256": "39a6248435035c43f81cd48e66e37e0ecd398433edbae923c7118a5707ecf23f"
+    "receiptSha256": "b68efbd4499c2f18811be11280d9439be52ddae1f25c22ebdb6e97191c00323e"
   },
   "android": {
     "platform": "android",

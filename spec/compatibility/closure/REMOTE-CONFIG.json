@@ -768,12 +768,12 @@
       {
         "alias": "strict",
         "fixturePath": "conformance/remote-config-native/closure-c-local-strict.json",
-        "fixtureSha256": "8859a42f48b773310b090e8a29dbe30ee08f7f7331b18926faf4d7cf8eba111d"
+        "fixtureSha256": "f608f11105517fab9b03b5e1767f8aef4bbb4449d1663ec0198f6fa7b7e07eff"
       },
       {
         "alias": "emulator",
         "fixturePath": "conformance/remote-config-native/closure-c-local-emulator.json",
-        "fixtureSha256": "2b1e1cb724857ad3249eaa2ff0d2930b3bfdefc60c99def1b251d11a3052d41d"
+        "fixtureSha256": "a04f94615b1f55282484d1debc62bed68128145aeee07f6056205246e2d8422d"
       }
     ],
     "comparisonPath": "conformance/remote-config-native/closure-c-comparisons.json",
