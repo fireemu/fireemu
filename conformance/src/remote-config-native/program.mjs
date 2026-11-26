@@ -15,17 +15,19 @@ export async function runNativePass({ clients, stopped, prepare, publish, restor
     if (stopped()) throw new Error("native session halted");
     await publish("initial");
 
-    phase = "client start";
-    const starts = await all((platform) => {
+    // The Apple SDK can take longer to reach its first stream after both apps were installed.
+    // Keep Android's listener deadline for the period during which the first stream is live.
+    for (const platform of ["ios", "android"]) {
+      const client = clients[platform];
+      phase = platform + " client start";
+      if (stopped()) throw new Error("native session halted");
       started.add(platform);
-      return clients[platform].start(configs[platform]);
-    });
-    if (starts.some((item) => item.status !== "fulfilled"))
-      throw new Error("native SDK start failed");
-    phase = "realtime readiness";
-    const ready = await all((platform) => clients[platform].waiting());
-    if (!ready.every((item) => item.status === "fulfilled" && item.value === true) || stopped())
-      throw new Error("a native stream is not ready");
+      await client.start(configs[platform]);
+      phase = platform + " realtime readiness";
+      if (!(await client.waiting())) throw new Error("a native stream is not ready");
+    }
+    if (stopped() || !PLATFORMS.every((platform) => clients[platform].streamActive()))
+      throw new Error("a native stream ended before publication");
 
     phase = "updated publication";
     await publish("update");

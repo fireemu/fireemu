@@ -178,3 +178,20 @@ test("the reserved SDK request is bound to installation credentials and its real
   });
   assert.equal(android.reserve({ ...deletion, authorization: "FIS_v2 someone-else" }), null);
 });
+
+test("a stale SDK job cannot recreate an installation after its admitted FID is deleted", () => {
+  const { android, budget } = apps();
+  const created = create(android);
+  const next = request(collection, {
+    appId: androidAppId,
+    fid: "cSecond000000000000000",
+    authVersion: "FIS_v2",
+  });
+  assert.equal(next.wire.length > 0, true);
+  assert.equal(android.reserve(next), null);
+  android.settle(created, registeredResponse);
+  okay(android, remove(android));
+  assert.equal(android.reserve(next), null);
+  assert.equal(budget.used(), 2);
+  assert.ok(android.canClose());
+});

@@ -217,7 +217,7 @@ export function nativeDevice({ driver, platform, pass, spool, port }) {
           : exit
             ? null
             : undefined,
-      270_000,
+      400_000,
     );
     return value;
   }

@@ -138,6 +138,7 @@ export function nativeRelay({ session, dispatch, record, capture }) {
           request.signal,
           (responseBytes, complete, termination, chunks, chunkLengths) => {
             session.settle(ticket, { status: response.status });
+            if (responseBytes === 0 || termination === "upstream-error") session.noteStatus(null);
             let projection;
             try {
               if (capture && responseBytes > MAX_NATIVE_REQUEST_BYTES)

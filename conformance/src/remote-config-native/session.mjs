@@ -55,7 +55,7 @@ export function nativeSession({ platform, projectId, projectNumber, key, appId, 
     let fid = route.fid;
     if (operation === "create") {
       fid = body.fid;
-      if (body.appId !== appId || typeof fid !== "string" || !FID.test(fid) || states.has(fid))
+      if (body.appId !== appId || typeof fid !== "string" || !FID.test(fid) || states.size !== 0)
         return null;
     } else if (route.service !== "installations") {
       const iosFetch = platform === "ios" && operation === "fetch";

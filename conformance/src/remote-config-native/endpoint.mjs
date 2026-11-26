@@ -73,7 +73,8 @@ export function nativeDispatch(destination, timeoutMs) {
           });
         },
       );
-      request.setTimeout(timeoutMs, () =>
+      const deadline = ticket.operation === "realtime" ? Math.max(timeoutMs, 210_000) : timeoutMs;
+      request.setTimeout(deadline, () =>
         request.destroy(new Error("native request deadline exceeded")),
       );
       request.once("error", reject);

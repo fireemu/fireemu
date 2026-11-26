@@ -28,7 +28,7 @@ export const ADMIN_LIMIT = 100;
 const PLATFORMS = Object.keys(NATIVE_BUNDLES);
 const SECRET =
   /AIza[A-Za-z0-9_-]{35}|ya29\.[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g;
-const phaseReadinessMs = 165_000;
+const phaseReadinessMs = 225_000;
 
 function json(out, name, value) {
   writeFileSync(join(out, name), JSON.stringify(value, null, 2) + "\n", {
@@ -74,15 +74,16 @@ export async function exerciseNative({
         async waiting() {
           const deadline = Date.now() + phaseReadinessMs;
           while (Date.now() < deadline && !budget.stopped()) {
-            if (
-              rows[platform].some(
-                ({ phase, operation }) => phase === "request" && operation === "realtime",
-              )
-            )
-              return true;
+            if (this.streamActive()) return true;
             await pause(200);
           }
           return false;
+        },
+        streamActive() {
+          return (
+            rows[platform].findLast(({ operation }) => operation === "realtime")?.phase ===
+            "request"
+          );
         },
         async result() {
           const receipt = await devices[platform].result();

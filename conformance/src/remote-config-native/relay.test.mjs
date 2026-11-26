@@ -185,3 +185,15 @@ test("stream chunks remain streamed and keep their exact order and bytes", async
   assert.equal(stream.headers["transfer-encoding"], undefined);
   assert.equal(rows.at(-1).responseBytes, first.length + second.length);
 });
+
+test("an empty realtime termination stops new normal sends and still permits deletion", async () => {
+  const { relay, rows } = setup(({ operation }) =>
+    operation === "create" ? register : { status: 200, headers: {}, body: [] },
+  );
+  await relay(createRequest);
+  const stream = await relay(streamRequest);
+  for await (const chunk of stream.body) assert.fail("unexpected stream chunk " + chunk.length);
+  assert.equal(rows.at(-1).termination, "upstream-end");
+  assert.equal((await relay(fetchRequest)).status, 400);
+  assert.equal((await relay(removeRequest)).status, 200);
+});

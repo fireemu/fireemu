@@ -5,6 +5,7 @@ import { runNativePass } from "./program.mjs";
 function world({
   badPlatform = null,
   notReady = false,
+  stale = false,
   stop = false,
   preparationFails = false,
 } = {}) {
@@ -17,6 +18,9 @@ function world({
     async waiting() {
       calls.push(`${platform}-stream`);
       return !(notReady && platform === "ios");
+    },
+    streamActive() {
+      return !(stale && platform === "ios");
     },
     async result() {
       calls.push(`${platform}-result`);
@@ -62,10 +66,10 @@ test("the changed publication waits for both actual SDK streams and cleanup foll
   assert.deepEqual(calls, [
     "prepare",
     "initial",
-    "android-start",
     "ios-start",
-    "android-stream",
     "ios-stream",
+    "android-start",
+    "android-stream",
     "update",
     "android-result",
     "ios-result",
@@ -77,7 +81,7 @@ test("the changed publication waits for both actual SDK streams and cleanup foll
 });
 
 test("a missing stream or stop after readiness prevents the update and still restores the sandbox", async () => {
-  for (const state of [{ notReady: true }, { stop: true }]) {
+  for (const state of [{ notReady: true }, { stale: true }, { stop: true }]) {
     const { ctx, calls } = world(state);
     const result = await runNativePass(ctx);
     assert.equal(result.complete, false);
