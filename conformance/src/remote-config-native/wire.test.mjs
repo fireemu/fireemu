@@ -84,18 +84,25 @@ test("Installations actions stay in the app's project and named requests need an
   const token = `${create}/${fid}/authTokens:generate`;
   const remove = `${create}/${fid}`;
   for (const platform of ["android", "ios"]) {
+    const createPath = platform === "ios" ? create + "/" : create;
+    const deletePath = platform === "ios" ? remove + "/" : remove;
     for (const [method, path, operation] of [
-      ["POST", create, "create"],
+      ["POST", createPath, "create"],
       ["POST", token, "token"],
-      ["DELETE", remove, "delete"],
+      ["DELETE", deletePath, "delete"],
     ]) {
       assert.deepEqual(parse(platform, method, `/installations${path}`), {
         service: "installations",
         operation,
         path,
+        ...(operation === "create" ? {} : { fid }),
       });
       assert.equal(parse(platform, method, `/installations${path}?key=${owner.key}`), null);
     }
+    const wrongCreatePath = platform === "ios" ? create : create + "/";
+    assert.equal(parse(platform, "POST", "/installations" + wrongCreatePath), null);
+    const wrongDeletePath = platform === "ios" ? remove : remove + "/";
+    assert.equal(parse(platform, "DELETE", "/installations" + wrongDeletePath), null);
   }
   assert.equal(
     parse("ios", "POST", `/installations${token.replace(fid, "cRc0000000000000000001")}`),
@@ -142,9 +149,9 @@ test("the generated native SDK route matrix accepts only the specified combinati
     const suffixes = {
       fetch: fetchSuffix,
       realtime: streamSuffix,
-      create: "/installations",
+      create: ios ? "/installations/" : "/installations",
       token: `/installations/${named}/authTokens:generate`,
-      delete: `/installations/${named}`,
+      delete: `/installations/${named}${ios ? "/" : ""}`,
     };
     const mandatoryHeader = !ios || operation !== "fetch";
     const apiKeys = {
