@@ -16,9 +16,15 @@ export function classifyPermission({ status, json }) {
   if (details.some(({ reason }) => reason === "USER_PROJECT_DENIED")) return "quota-project-denied";
   if (details.some(({ reason }) => reason === "ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
     return "oauth-scope-denied";
-  const named = "cloudconfig.configs.get";
-  return details.some(({ metadata }) => metadata?.permission === named) ||
-    (typeof error.message === "string" && error.message.includes(named))
+  const named = details.some(
+    ({ reason, metadata }) =>
+      reason === "IAM_PERMISSION_DENIED" && metadata?.permission === "cloudconfig.configs.get",
+  );
+  const conflicting = details.some(({ reason }) => reason && reason !== "IAM_PERMISSION_DENIED");
+  const explicit =
+    typeof error.message === "string" &&
+    /^Permission ['"]cloudconfig\.configs\.get['"] (?:is )?denied\b/.test(error.message);
+  return !conflicting && (named || explicit)
     ? "remote-config-permission-denied"
     : "generic-permission-denied";
 }

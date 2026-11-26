@@ -84,7 +84,10 @@ test("every generated combination distinguishes authorization outcomes", (t) => 
     const detail = {
       quota: { reason: "USER_PROJECT_DENIED" },
       scope: { reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" },
-      cloudconfig: { metadata: { permission: "cloudconfig.configs.get" } },
+      cloudconfig: {
+        reason: "IAM_PERMISSION_DENIED",
+        metadata: { permission: "cloudconfig.configs.get" },
+      },
       distinct: {},
     }[reason];
     const namedReason = {
@@ -107,4 +110,31 @@ test("every generated combination distinguishes authorization outcomes", (t) => 
             : "unexpected";
     assert.equal(observed, expected, row);
   }
+});
+
+test("a generic mention or distinct policy reason does not prove a named permission denial", () => {
+  const shape = (message, details = []) => ({
+    status: 403,
+    json: { error: { status: "PERMISSION_DENIED", message, details } },
+  });
+  assert.equal(
+    classifyPermission(
+      shape("Service checks cloudconfig.configs.get, denied by organization policy"),
+    ),
+    "generic-permission-denied",
+  );
+  assert.equal(
+    classifyPermission(
+      shape("Permission 'cloudconfig.configs.get' denied on resource.", [
+        { reason: "ORG_POLICY_VIOLATION", metadata: { permission: "cloudconfig.configs.get" } },
+      ]),
+    ),
+    "generic-permission-denied",
+  );
+  assert.equal(
+    classifyPermission(
+      shape("Permission 'cloudconfig.configs.get' denied on resource (or it may not exist)."),
+    ),
+    "remote-config-permission-denied",
+  );
 });
