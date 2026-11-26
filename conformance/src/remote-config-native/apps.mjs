@@ -87,7 +87,19 @@ export function nativeAppRegistry({
     );
   }
 
+  function terminal(result) {
+    if (
+      result.error ||
+      !result.response ||
+      typeof result.response !== "object" ||
+      Array.isArray(result.response)
+    )
+      throw new Error("native app operation unsuccessful");
+    return result.response;
+  }
+
   async function complete(initial, step) {
+    if (initial.done === true) return terminal(initial);
     if (typeof initial.name !== "string" || !OPERATION.test(initial.name))
       throw new Error("native app operation locator invalid");
     let result = initial;
@@ -95,16 +107,7 @@ export function nativeAppRegistry({
     operation = `${MANAGEMENT}/${id}`;
     try {
       for (let attempt = 0; attempt <= polls; attempt++) {
-        if (result.done === true) {
-          if (
-            result.error ||
-            !result.response ||
-            typeof result.response !== "object" ||
-            Array.isArray(result.response)
-          )
-            throw new Error("native app operation unsuccessful");
-          return result.response;
-        }
+        if (result.done === true) return terminal(result);
         if (attempt === polls) break;
         await pause();
         result = success(await send(`${platform}-${step}-poll-${attempt + 1}`, operation), "poll");
@@ -192,7 +195,8 @@ export function nativeAppRegistry({
     const removed = await complete(initial, "remove");
     if (removed.appId !== undefined && removed.appId !== appId)
       throw new Error("native app operation returned another identity");
-    if (removed.appId !== appId || removed.state !== "DELETED") {
+    if (removed.appId === appId && removed.state === "DELETED") owned(removed);
+    else {
       const removedApp = owned(success(await send(`${platform}-tombstone`, resource), "tombstone"));
       if (removedApp.state !== "DELETED")
         throw new Error("native app removal did not confirm the owned tombstone");

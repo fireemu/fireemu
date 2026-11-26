@@ -152,3 +152,19 @@ test("pre-write inspection rejects occupied, malformed or paginated native app l
     );
   }
 });
+
+test("an immediate Firebase remove with no operation name confirms the exact app tombstone", async () => {
+  const { service, calls } = registry([
+    [collection, response({ apps: baseline })],
+    [collection, response({ name: "operations/sample/create", done: true, response: app })],
+    [resource, response(app)],
+    [resource, response(app)],
+    [resource + ":remove", response({ done: true, response: { ...app, state: "DELETED" } })],
+    [collection, response({ apps: baseline })],
+  ]);
+  await service.inspect();
+  await service.create(apiKeyId);
+  await service.remove();
+  assert.equal(calls.at(-1)[1], collection);
+  assert.equal(service.assertClosed(), true);
+});
