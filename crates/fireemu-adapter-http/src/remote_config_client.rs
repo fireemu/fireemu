@@ -124,6 +124,31 @@ fn native_json5(text: &str) -> Result<Value, PayloadError> {
     json5::from_str(text).map_err(|_| PayloadError::Malformed)
 }
 
+fn plaintext_web_payload(body: &[u8]) -> Result<Value, PayloadError> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| PayloadError::Malformed)?;
+    let observed_web_form = [
+        ("sdk_version", "app_id", "app_instance_id"),
+        ("sdkVersion", "appId", "appInstanceId"),
+    ]
+    .into_iter()
+    .any(|(sdk, app, installation)| {
+        let web_app = value[app].as_str().is_some_and(|id| {
+            let parts: Vec<_> = id.splitn(5, ':').collect();
+            matches!(parts.as_slice(), ["1", number, "web", suffix]
+                if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+                    && !suffix.is_empty())
+        });
+        web_app
+            && value[sdk].as_str().is_some_and(|s| !s.is_empty())
+            && value[installation].as_str().is_some_and(|s| !s.is_empty())
+    });
+    if observed_web_form {
+        Ok(value)
+    } else {
+        Err(PayloadError::Malformed)
+    }
+}
+
 fn fetch_payload(body: &[u8], encoding: Option<&str>, limit: usize) -> Result<Value, PayloadError> {
     if body.len() > limit {
         return Err(PayloadError::TooLarge);
@@ -133,6 +158,10 @@ fn fetch_payload(body: &[u8], encoding: Option<&str>, limit: usize) -> Result<Va
     }
     if !encoding.is_some_and(|value| value.eq_ignore_ascii_case("gzip")) {
         return Err(PayloadError::Malformed);
+    }
+    // The Web SDK sends plaintext JSON with a gzip header in both production captures.
+    if !body.starts_with(&[0x1f, 0x8b]) {
+        return plaintext_web_payload(body);
     }
     let mut decoded = Vec::new();
     flate2::read::MultiGzDecoder::new(body)

@@ -679,3 +679,61 @@ fn only_nonempty_native_package_names_appear_in_update() {
         assert_eq!(answer.get("appName").and_then(Value::as_str), expected);
     }
 }
+
+#[test]
+fn plaintext_web_sdk_gzip_header_keeps_the_old_wire_behavior() {
+    use super::{fetch_payload, stream_version, PayloadError};
+
+    let fetch_body = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abcdef","app_instance_id":"owned-fid"}"#;
+    assert!(fetch_payload(fetch_body, Some("gzip"), 1024).is_ok());
+    let stream_body = br#"{"lastKnownVersionNumber":"9","sdkVersion":"12.18.0","appId":"1:123456789012:web:abcdef","appInstanceId":"owned-fid"}"#;
+    assert_eq!(stream_version(stream_body, Some("gzip"), 1024), Ok(9));
+    let native = br#"{"lastKnownVersionNumber":"9","sdkVersion":"22.1.0","appId":"1:123456789012:android:abcdef","appInstanceId":"owned-fid"}"#;
+    assert!(matches!(
+        stream_version(native, Some("gzip"), 1024),
+        Err(PayloadError::Malformed)
+    ));
+    let near = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abcdef"}"#;
+    assert!(matches!(
+        fetch_payload(near, Some("gzip"), 1024),
+        Err(PayloadError::Malformed)
+    ));
+}
+
+#[test]
+fn web_transport_decoding_matches_generated_wire_cases() {
+    use super::fetch_payload;
+
+    let Ok(table) = std::env::var("FIREEMU_RC_ENCODING_TABLE") else {
+        return;
+    };
+    let rows = std::fs::read_to_string(table).unwrap();
+    for row in rows.lines().skip(1) {
+        let fields: Vec<_> = row.split('\t').collect();
+        let [sdk, route, wire] = fields.as_slice() else {
+            panic!("expected three columns: {row}");
+        };
+        let provider = if *sdk == "apple" { "ios" } else { sdk };
+        let app = format!("1:123456789012:{provider}:abc123");
+        let value = if *sdk == "web" && *route == "fetch" {
+            json!({"sdk_version": "12.18.0", "app_id": app, "app_instance_id": "test-fid"})
+        } else {
+            json!({"lastKnownVersionNumber": "9", "sdkVersion": "12.18.0", "appId": app, "appInstanceId": "test-fid"})
+        };
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let (request, encoding) = match *wire {
+            "identity" => (bytes, Some("identity")),
+            "compressed" => (compressed(&bytes), Some("gzip")),
+            "flagged-plaintext" => (bytes, Some("gzip")),
+            "other" => (bytes, Some("deflate")),
+            other => panic!("unknown encoding {other}"),
+        };
+        let expected = matches!(*wire, "identity" | "compressed")
+            || (*wire == "flagged-plaintext" && *sdk == "web");
+        assert_eq!(
+            fetch_payload(&request, encoding, 1024).is_ok(),
+            expected,
+            "{row}"
+        );
+    }
+}
