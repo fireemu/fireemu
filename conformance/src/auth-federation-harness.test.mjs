@@ -404,7 +404,12 @@ test("the draft corpus resolves to requests the guard lets through", async () =>
       );
     }
   }
-  assert.ok(!JSON.stringify(resolved).includes("RUN"), "every placeholder is resolved");
+  // Signed tokens are random base64url, which now and then spells the placeholder: they are taken out before the search.
+  const withoutTokens = JSON.stringify(resolved).replace(
+    /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+    "<jwt>",
+  );
+  assert.ok(!withoutTokens.includes("RUN"), "every placeholder is resolved");
 });
 
 test("recordings replace the run's identifiers in object keys as well as in values", async () => {
