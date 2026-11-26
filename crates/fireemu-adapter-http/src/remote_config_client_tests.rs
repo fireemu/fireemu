@@ -272,12 +272,12 @@ fn web_empty_fetch_matches_recorded_state_across_template_and_tag_cases() {
                 .unwrap();
         }
         let request = match *client {
-            "Web" => request("premium", "7", "x"),
+            "Web" => br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abc","app_instance_id":"x"}"#.to_vec(),
             "Android" => serde_json::to_vec(&json!({
                 "appId": "1:123456789012:android:abc", "packageName": "dev.example.test"
             }))
             .unwrap(),
-            "Unknown" => b"{}".to_vec(),
+            "Unknown" => br#"{"app_id":"::web"}"#.to_vec(),
             _ => panic!("invalid client: {row}"),
         };
         let current = store.current();
@@ -756,10 +756,10 @@ fn only_nonempty_native_package_names_appear_in_update() {
 
 #[test]
 fn plaintext_web_sdk_gzip_header_keeps_the_old_wire_behavior() {
-    use super::{fetch_payload, stream_version, PayloadError};
+    use super::{decode_payload, stream_version, PayloadError};
 
     let fetch_body = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abcdef","app_instance_id":"owned-fid"}"#;
-    assert!(fetch_payload(fetch_body, Some("gzip"), 1024).is_ok());
+    assert!(decode_payload(ClientAction::Fetch, fetch_body, Some("gzip"), 1024).is_ok());
     let stream_body = br#"{"lastKnownVersionNumber":"9","sdkVersion":"12.18.0","appId":"1:123456789012:web:abcdef","appInstanceId":"owned-fid"}"#;
     assert_eq!(stream_version(stream_body, Some("gzip"), 1024), Ok(9));
     let native = br#"{"lastKnownVersionNumber":"9","sdkVersion":"22.1.0","appId":"1:123456789012:android:abcdef","appInstanceId":"owned-fid"}"#;
@@ -769,14 +769,67 @@ fn plaintext_web_sdk_gzip_header_keeps_the_old_wire_behavior() {
     ));
     let near = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abcdef"}"#;
     assert!(matches!(
-        fetch_payload(near, Some("gzip"), 1024),
+        decode_payload(ClientAction::Fetch, near, Some("gzip"), 1024),
         Err(PayloadError::Malformed)
     ));
 }
 
 #[test]
+fn gzip_labeled_plaintext_requires_the_web_fields_for_its_route() {
+    use super::{fetch_encoded, stream_version, PayloadError};
+
+    let fetch_form = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abc","app_instance_id":"test-fid"}"#;
+    let stream_form =
+        br#"{"sdkVersion":"12.18.0","appId":"1:123456789012:web:abc","appInstanceId":"test-fid"}"#;
+    let mixed_fetch = br#"{"sdk_version":"12.18.0","app_id":"1:123456789012:web:abc","app_instance_id":"test-fid","appId":"1:123456789012:ios:abc"}"#;
+    let mixed_stream = br#"{"sdkVersion":"12.18.0","appId":"1:123456789012:web:abc","appInstanceId":"test-fid","app_id":"1:123456789012:android:abc"}"#;
+    let store = TemplateStore::default();
+    for incorrect in [
+        stream_form.as_slice(),
+        mixed_fetch.as_slice(),
+        mixed_stream.as_slice(),
+    ] {
+        assert_eq!(
+            fetch_encoded(
+                &store.current(),
+                PROJECT,
+                None,
+                incorrect,
+                Some("gzip"),
+                1024
+            )
+            .status,
+            400
+        );
+    }
+    for incorrect in [
+        fetch_form.as_slice(),
+        mixed_fetch.as_slice(),
+        mixed_stream.as_slice(),
+    ] {
+        assert_eq!(
+            stream_version(incorrect, Some("gzip"), 1024),
+            Err(PayloadError::Malformed)
+        );
+    }
+    assert_eq!(
+        fetch_encoded(
+            &store.current(),
+            PROJECT,
+            None,
+            fetch_form,
+            Some("gzip"),
+            1024
+        )
+        .status,
+        200
+    );
+    assert_eq!(stream_version(stream_form, Some("gzip"), 1024), Ok(0));
+}
+
+#[test]
 fn web_transport_decoding_matches_generated_wire_cases() {
-    use super::fetch_payload;
+    use super::decode_payload;
 
     let rows = include_str!("remote_config_testdata/web-encoding.tsv");
     for row in rows.lines().skip(1) {
@@ -791,6 +844,11 @@ fn web_transport_decoding_matches_generated_wire_cases() {
         } else {
             json!({"lastKnownVersionNumber": "9", "sdkVersion": "12.18.0", "appId": app, "appInstanceId": "test-fid"})
         };
+        let action = match *route {
+            "fetch" => ClientAction::Fetch,
+            "stream" => ClientAction::Stream,
+            other => panic!("unknown route {other}"),
+        };
         let bytes = serde_json::to_vec(&value).unwrap();
         let (request, encoding) = match *wire {
             "identity" => (bytes, Some("identity")),
@@ -802,7 +860,7 @@ fn web_transport_decoding_matches_generated_wire_cases() {
         let expected = matches!(*wire, "identity" | "compressed")
             || (*wire == "flagged-plaintext" && *sdk == "web");
         assert_eq!(
-            fetch_payload(&request, encoding, 1024).is_ok(),
+            decode_payload(action, &request, encoding, 1024).is_ok(),
             expected,
             "{row}"
         );

@@ -125,32 +125,39 @@ fn native_json5(text: &str) -> Result<Value, PayloadError> {
     json5::from_str(text).map_err(|_| PayloadError::Malformed)
 }
 
-fn plaintext_web_payload(body: &[u8]) -> Result<Value, PayloadError> {
+fn is_web_app_id(id: &str) -> bool {
+    let mut parts = id.split(':');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some("1"), Some(project), Some("web"), Some(suffix), None)
+            if !project.is_empty() && project.bytes().all(|byte| byte.is_ascii_digit())
+                && !suffix.is_empty()
+    )
+}
+
+fn plaintext_web_payload(action: ClientAction, body: &[u8]) -> Result<Value, PayloadError> {
     let value: Value = serde_json::from_slice(body).map_err(|_| PayloadError::Malformed)?;
-    let observed_web_form = [
-        ("sdk_version", "app_id", "app_instance_id"),
-        ("sdkVersion", "appId", "appInstanceId"),
-    ]
-    .into_iter()
-    .any(|(sdk, app, installation)| {
-        let web_app = value[app].as_str().is_some_and(|id| {
-            let parts: Vec<_> = id.splitn(5, ':').collect();
-            matches!(parts.as_slice(), ["1", number, "web", suffix]
-                if !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
-                    && !suffix.is_empty())
-        });
-        web_app
-            && value[sdk].as_str().is_some_and(|s| !s.is_empty())
-            && value[installation].as_str().is_some_and(|s| !s.is_empty())
-    });
-    if observed_web_form {
+    let (sdk, app, installation, other_app) = match action {
+        ClientAction::Fetch => ("sdk_version", "app_id", "app_instance_id", "appId"),
+        ClientAction::Stream => ("sdkVersion", "appId", "appInstanceId", "app_id"),
+    };
+    if value[app].as_str().is_some_and(is_web_app_id)
+        && value.get(other_app).is_none()
+        && value[sdk].as_str().is_some_and(|s| !s.is_empty())
+        && value[installation].as_str().is_some_and(|s| !s.is_empty())
+    {
         Ok(value)
     } else {
         Err(PayloadError::Malformed)
     }
 }
 
-fn fetch_payload(body: &[u8], encoding: Option<&str>, limit: usize) -> Result<Value, PayloadError> {
+fn decode_payload(
+    action: ClientAction,
+    body: &[u8],
+    encoding: Option<&str>,
+    limit: usize,
+) -> Result<Value, PayloadError> {
     if body.len() > limit {
         return Err(PayloadError::TooLarge);
     }
@@ -162,7 +169,7 @@ fn fetch_payload(body: &[u8], encoding: Option<&str>, limit: usize) -> Result<Va
     }
     // The Web SDK sends plaintext JSON with a gzip header in both production captures.
     if !body.starts_with(&[0x1f, 0x8b]) {
-        return plaintext_web_payload(body);
+        return plaintext_web_payload(action, body);
     }
     let mut decoded = Vec::new();
     flate2::read::MultiGzDecoder::new(body)
@@ -366,7 +373,7 @@ pub(crate) fn fetch_encoded(
     encoding: Option<&str>,
     limit: usize,
 ) -> FetchReply {
-    let request = match fetch_payload(body, encoding, limit) {
+    let request = match decode_payload(ClientAction::Fetch, body, encoding, limit) {
         Ok(Value::Object(request)) => request,
         Ok(_) => return PayloadError::Malformed.response(),
         Err(error) => return error.response(),
@@ -396,14 +403,13 @@ pub(crate) fn fetch_encoded(
     let entries = entries(document, &signals, instance);
     let tag = etag(project, version, &entries);
     let version_text = version.to_string();
-    let platform = request
+    let app_id = request
         .get("app_id")
         .or_else(|| request.get("appId"))
-        .and_then(Value::as_str)
-        .and_then(|id| id.split(':').nth(2));
+        .and_then(Value::as_str);
     let body = if if_none_match == Some(tag.as_str()) {
         json!({"state": "NO_CHANGE", "templateVersion": version_text})
-    } else if platform == Some("web")
+    } else if app_id.is_some_and(is_web_app_id)
         && document["conditions"].as_array().is_some_and(Vec::is_empty)
         && document["parameters"]
             .as_object()
@@ -417,6 +423,7 @@ pub(crate) fn fetch_encoded(
     } else {
         let mut answer =
             json!({"entries": entries, "state": "UPDATE", "templateVersion": version_text});
+        let platform = app_id.and_then(|id| id.split(':').nth(2));
         if let Some(name) = request
             .get("package_name")
             .or_else(|| request.get("packageName"))
@@ -445,7 +452,7 @@ pub(crate) fn stream_version(
     encoding: Option<&str>,
     limit: usize,
 ) -> Result<u64, PayloadError> {
-    let parsed = match fetch_payload(body, encoding, limit) {
+    let parsed = match decode_payload(ClientAction::Stream, body, encoding, limit) {
         Ok(value) => value,
         Err(PayloadError::Malformed) if is_identity(encoding) => return Ok(0),
         Err(error) => return Err(error),
