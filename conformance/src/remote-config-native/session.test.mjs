@@ -28,13 +28,17 @@ const request = (target, body, overrides = {}) => ({
   method: "POST",
   target,
   apiKey: key,
+  installationAuth: "synthetic-token",
+  authorization: "FIS_v2 synthetic-refresh",
   wire: Buffer.from(JSON.stringify(body)),
   ...overrides,
 });
 const create = (session, appId = androidAppId, suffix = "") =>
   session.reserve(request(collection + suffix, { fid, appId, authVersion: "FIS_v2" }));
 const fetch = (session, appId = androidAppId) =>
-  session.reserve(request(fetchPath, { appInstanceId: fid, appId }));
+  session.reserve(
+    request(fetchPath, { appInstanceId: fid, appId, appInstanceIdToken: "synthetic-token" }),
+  );
 const remove = (session) =>
   session.reserve(
     request(collection + "/" + fid, null, {
@@ -60,7 +64,11 @@ test("confirmation binds the FID to one app and only the owner can use its reser
   assert.throws(() => android.settle(ticket, registeredResponse), /reservation/);
   assert.equal(fetch(android, iosAppId), null);
   const otherPath = fetchPath.replace(projectNumber, projectId) + "?key=" + key;
-  const compressed = gzipSync(Buffer.from(`{app_instance_id:'${fid}', app_id:'${iosAppId}'}`));
+  const compressed = gzipSync(
+    Buffer.from(
+      `{app_instance_id:'${fid}', app_id:'${iosAppId}', app_instance_id_token:'synthetic-token'}`,
+    ),
+  );
   assert.equal(
     ios.reserve(request(otherPath, null, { apiKey: "", wire: compressed, encoding: "gzip" })),
     null,
@@ -114,11 +122,59 @@ test("the iOS request's original gzip bytes remain the bytes of the reservation"
   const { ios } = apps();
   ios.settle(create(ios, iosAppId, "/"), registeredResponse);
   const wire = gzipSync(
-    Buffer.from(`{appInstanceId:'${fid}', appId:'${iosAppId}', lastKnownVersionNumber:'1'}`),
+    Buffer.from(
+      `{appInstanceId:'${fid}', appId:'${iosAppId}', lastKnownVersionNumber:'1', project:'${projectNumber}', namespace:'firebase'}`,
+    ),
   );
   const ticket = ios.reserve(request(streamPath + "?key=" + key, null, { wire, encoding: "gzip" }));
   assert.strictEqual(ticket.wire, wire);
   assert.equal(ticket.operation, "realtime");
   assert.ok(!ios.canClose());
   okay(ios, ticket);
+});
+
+test("the reserved SDK request is bound to installation credentials and its realtime body scope", () => {
+  const { android } = apps();
+  android.settle(create(android), registeredResponse);
+  const req = request(fetchPath, {
+    appInstanceId: fid,
+    appId: androidAppId,
+    appInstanceIdToken: "synthetic-token",
+  });
+  assert.equal(android.reserve({ ...req, installationAuth: "other-installation" }), null);
+  assert.equal(
+    android.reserve({
+      ...req,
+      wire: Buffer.from(
+        JSON.stringify({
+          appInstanceId: fid,
+          appId: androidAppId,
+          appInstanceIdToken: "other-installation",
+        }),
+      ),
+    }),
+    null,
+  );
+  const realtime = {
+    appInstanceId: fid,
+    appId: androidAppId,
+    project: projectNumber,
+    namespace: "firebase",
+    lastKnownVersionNumber: "1",
+  };
+  assert.equal(android.reserve(request(streamPath, { ...realtime, project: projectId })), null);
+  assert.equal(
+    android.reserve(request(streamPath, { ...realtime, namespace: "firebase-server" })),
+    null,
+  );
+  assert.equal(
+    android.reserve(request(streamPath, { ...realtime, lastKnownVersionNumber: "-1" })),
+    null,
+  );
+  assert.ok(android.reserve(request(streamPath, realtime)));
+  const deletion = request(`${collection}/${fid}`, null, {
+    method: "DELETE",
+    wire: Buffer.alloc(0),
+  });
+  assert.equal(android.reserve({ ...deletion, authorization: "FIS_v2 someone-else" }), null);
 });
