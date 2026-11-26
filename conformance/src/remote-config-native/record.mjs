@@ -54,6 +54,7 @@ export async function exerciseNative({
   control,
   dispatch,
   budget,
+  runId,
 }) {
   mkdirSync(out, { mode: 0o700 });
   if (runId) json(out, "run.json", { runId, pass, pid: process.pid });
