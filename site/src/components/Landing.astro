@@ -2,7 +2,7 @@
 // The landing page, shared by every locale (src/pages/index.astro and src/pages/[locale]/index.astro).
 // It renders inside Starlight's page frame, so the header, search, theme and language selectors,
 // code blocks and footer are the same components the docs pages use. The words come from
-// src/i18n/<locale>.json and every link stays in the page's locale.
+// src/i18n/<locale>.json and internal links stay in the page's locale.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { Code } from '@astrojs/starlight/components';
 import { loadRepositoryData, verifiedAreaCount } from '../data/compat.mjs';
@@ -53,29 +53,30 @@ const features = [
 	link: t(`landing.feature.${key}.link`),
 }));
 
-const service = (key: string, path: string, withLimit = true) => ({
+const service = (key: string, href: string, withLimit = true) => ({
 	name: t(`landing.service.${key}.name`),
-	href: to(path),
+	href,
 	covers: t(`landing.service.${key}.covers`),
 	limit: withLimit ? t(`landing.service.${key}.limit`) : undefined,
 });
 
 const services: Array<ReturnType<typeof service> & { links?: { label: string; href: string }[] }> = [
-	service('firestore', 'products/firestore/'),
-	service('auth', 'products/auth/'),
-	service('storage', 'products/storage/'),
+	service('firestore', to('products/firestore/')),
+	service('auth', to('products/auth/')),
+	service('storage', to('products/storage/')),
 	{
-		...service('functions', 'products/functions/', false),
+		...service('functions', to('products/functions/'), false),
 		links: [
 			{ label: t('landing.service.functions.node'), href: to('products/functions/') },
 			{ label: t('landing.service.functions.python'), href: to('products/functions-python/') },
 		],
 	},
-	service('pubsub', 'products/pubsub-eventarc/'),
-	service('eventarc', 'products/pubsub-eventarc/'),
-	service('rtdb', 'products/realtime-database/'),
-	service('hosting', 'products/hosting/'),
-	service('appcheck', 'products/app-check/'),
+	service('pubsub', to('products/pubsub-eventarc/')),
+	service('eventarc', to('products/pubsub-eventarc/')),
+	service('rtdb', to('products/realtime-database/')),
+	service('hosting', to('products/hosting/')),
+	service('remoteconfig', 'https://github.com/fireemu/fireemu/blob/main/docs/remote-config.md'),
+	service('appcheck', to('products/app-check/')),
 ];
 
 const workflow = [
