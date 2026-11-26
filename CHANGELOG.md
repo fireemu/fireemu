@@ -8,6 +8,10 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+### Added
+
+- Remote Config supports the recorded Android and Apple SDK fetch-and-activate and real-time flows across both profiles. It accepts the project's numeric SDK route and the native request encodings, and includes the app's package or bundle identifier in native UPDATE responses. Two Firebase recordings cover the same initial fetch, caching, conditional refetch and value activation.
+
 ## [0.67.0] - 2026-11-26
 
 ### Added

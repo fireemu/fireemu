@@ -32,8 +32,8 @@ test("the committed closure evidence of HEAD is valid", () => {
   assert.deepEqual(verifyEvidence(gitReaders()), []);
 });
 
-test("the parent stays in progress: six stage-A conditions VERIFIED, and stage B's two (remote-config-web)", () => {
-  assert.equal(record.parentStatus, "IN_PROGRESS");
+test("the parent closes with eight verified conditions and the native SDK evidence", () => {
+  assert.equal(record.parentStatus, "COMPAT_VERIFIED");
   const status = Object.fromEntries(record.conditions.map((c) => [c.conditionId, c.status]));
   for (const id of STAGE_A) assert.equal(status[id], "VERIFIED", id);
   // Stage B's conditions are verified by their own evidence (remote-config-web/evidence.mjs).

@@ -201,13 +201,15 @@ export function verifyEvidence({ list, read, pins = PINS }) {
     }
     for (const key of ["runVsRun", "strictVsPass1", "strictVsPass2"]) {
       const [, left, right, local] = COMPARISONS.find(([k]) => k === key);
-      const expected = conditionCounts(comparison(fixture(left), fixture(right), local).table)[
-        condition
-      ];
-      if (!isDeepStrictEqual(record.comparisons?.[key], expected))
+      const expectedCounts = conditionCounts(
+        comparison(fixture(left), fixture(right), local).table,
+      )[condition];
+      if (!isDeepStrictEqual(record.comparisons?.[key], expectedCounts))
         problems.push(`${CLOSURE}: ${id} ${key} differs from the recomputed counts`);
     }
-    const evidence = (record.productionEvidence ?? []).map((e) => [e.fixturePath, e.fixtureSha256]);
+    const evidence = (record.productionEvidence ?? [])
+      .filter(({ fixturePath }) => fixturePath.startsWith(DIR + "/"))
+      .map(({ fixturePath, fixtureSha256 }) => [fixturePath, fixtureSha256]);
     if (
       !isDeepStrictEqual(evidence, [
         [FILES.pass1, pins[FILES.pass1]],

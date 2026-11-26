@@ -485,6 +485,15 @@ test("every comparison a verified closure names is run or excluded with a reason
   for (const run of RUNS) assert.ok(used.has(run.id), run.id);
 });
 
+test("Remote Config discloses the native SDK comparison requiring owned device runtimes", () => {
+  const plan = planComparisons(committedClosures(), readJson);
+  const native = plan.excluded.filter((entry) => entry.kind === "remote-config-native-sdk-v1");
+  assert.equal(native.length, 1);
+  assert.deepEqual(native[0].parents, ["REMOTE-CONFIG"]);
+  assert.equal(native[0].path, "conformance/remote-config-native/closure-c-comparisons.json");
+  assert.equal(native[0].issue, "remote-config-native-sdk-comparison-needs-release-replay.md");
+});
+
 test("a verified closure with a comparison of an unknown kind stops the release", () => {
   const closures = committedClosures();
   const fake = {
@@ -802,6 +811,7 @@ test("the excluded kinds are exactly the ones the release discloses", () => {
     "functions-events-comparison",
     "functions-python-pass-comparison-v1",
     "pubsub-production-comparison-v1",
+    "remote-config-native-sdk-v1",
     "scheduled-functions-calendar-comparison-v1",
     "scheduled-functions-comparison-v1",
     "storage-object-comparison-v1",

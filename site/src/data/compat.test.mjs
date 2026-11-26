@@ -149,7 +149,9 @@ test('Remote Config is registered as a production compatibility area', async () 
 	assert.equal(row.conditions.find((condition) => condition.id === 'client-fetch-and-activate')?.status, 'VERIFIED');
 	assert.equal(row.conditions.find((condition) => condition.id === 'realtime-updates')?.status, 'VERIFIED');
 	assert.match(row.covers, /Web SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles/);
-	assert.match(row.covers, /Android and Apple client verification is pending/);
+	assert.match(row.covers, /Android and Apple SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles/);
+	assert.equal(record.parentStatus, "COMPAT_VERIFIED");
+	assert.ok(row.knownDifferences.some((reason) => reason.includes("scoped Installations fixture")));
 	const trigger = record.conditions.find((condition) => condition.conditionId === 'REMOTE-CONFIG/publish-trigger');
 	assert.ok(trigger?.localEvidence?.includes('crates/fireemu/tests/functions_remote_config.rs'));
 });

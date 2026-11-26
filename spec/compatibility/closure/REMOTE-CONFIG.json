@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "parent": "REMOTE-CONFIG",
-  "parentStatus": "IN_PROGRESS",
+  "parentStatus": "COMPAT_VERIFIED",
   "inventoryStatus": "PROPOSED",
-  "oracleTrack": "not-recorded",
+  "oracleTrack": "sandbox-recordings",
   "sources": [
     "https://firebase.google.com/docs/reference/remote-config/rest",
     "https://firebase.google.com/docs/reference/remote-config/rest/v1/projects/updateRemoteConfig",
@@ -32,6 +32,11 @@
     {
       "id": "RC-LOCAL-PUBLISH-EVENTS",
       "decision": "Client-template publishes and rollbacks through the local administration deliver the recorded v1 and v2 event shapes through ordinary Functions delivery, with one event id per version shared by both generations and an optional configured updateUser in the recorded shapes. Server-namespace publishes deliver nothing, as production delivered none within five minutes on 2026-11-24 while client events arrived; duplicate delivery and ordering were observed once-and-in-order only within bounded windows of about five minutes (five chained publishes on 2026-11-24, seven client publications and rollbacks in each RC-CLOSURE-A pass on 2026-11-25).",
+      "status": "ANSWERED"
+    },
+    {
+      "id": "RC-NATIVE-CLIENTS",
+      "decision": "Two production recordings and both local profiles establish the recorded Android 22.1.0 and Apple 12.18.0 fetch-and-activate and real-time flow. Both SDKs used the raw request shapes and scoped Firebase Installation fixture during local replay.",
       "status": "ANSWERED"
     }
   ],
@@ -308,7 +313,7 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/client-fetch-and-activate",
-      "description": "As recorded in both RC-CLOSURE-B passes (Web SDK firebase 12.18.0, two installations, two signal sets): the SDK's Installations create and delete requests, its first fetch with If-None-Match * answered 200 UPDATE with the evaluated entries (custom-signal exact match and numeric comparison, seeded percent, the first matching condition in template order, the in-app default left out) and a fetch ETag, its second fetch with that tag answered 200 NO_CHANGE with the same tag, and the values and sources the SDK activated. Fireemu serves the fetch on its control listener (FIREBASE_REMOTE_CONFIG_URL_BASE), matching both passes except the declared differences: the tag's number, the percent outcome for a given installation id, the transport encoding, vary, and the Installations answers, which the comparison harness supplies (fireemu has no Installations service).",
+      "description": "As recorded in both RC-CLOSURE-B passes (Web SDK firebase 12.18.0, two installations, two signal sets): the SDK's Installations create and delete requests, its first fetch with If-None-Match * answered 200 UPDATE with the evaluated entries (custom-signal exact match and numeric comparison, seeded percent, the first matching condition in template order, the in-app default left out) and a fetch ETag, its second fetch with that tag answered 200 NO_CHANGE with the same tag, and the values and sources the SDK activated. Fireemu serves the fetch on its control listener (FIREBASE_REMOTE_CONFIG_URL_BASE), matching both passes except the declared differences: the tag's number, the percent outcome for a given installation id, the transport encoding, vary, and the Installations answers, which the comparison harness supplies (fireemu has no Installations service). Two native passes compare Android and Apple initial fetch, activation, cached use and custom-signal evaluation against both Fireemu profiles.",
       "status": "VERIFIED",
       "productionEvidence": [
         {
@@ -320,6 +325,16 @@
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
           "fixtureSha256": "1f711a7db915b59c2b86a1508a275584959e49e01d17f67eccf552a6c14f844e"
+        },
+        {
+          "alias": "native-pass-1",
+          "fixturePath": "conformance/remote-config-native/closure-c-pass-1.json",
+          "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
+        },
+        {
+          "alias": "native-pass-2",
+          "fixturePath": "conformance/remote-config-native/closure-c-pass-2.json",
+          "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
         }
       ],
       "localEvidence": [
@@ -328,7 +343,10 @@
         "crates/fireemu-adapter-http/src/server.rs",
         "crates/fireemu-adapter-http/tests/control.rs",
         "conformance/src/remote-config-web/local.mjs",
-        "conformance/src/remote-config-web/evidence.test.mjs"
+        "conformance/src/remote-config-web/evidence.test.mjs",
+        "conformance/src/remote-config-native/local.mjs",
+        "conformance/src/remote-config-native/evidence.test.mjs",
+        "conformance/remote-config-native/closure-c-comparisons.json"
       ],
       "evidenceType": "production-parity",
       "observedPasses": 2,
@@ -444,7 +462,7 @@
     },
     {
       "conditionId": "REMOTE-CONFIG/realtime-updates",
-      "description": "As recorded in both RC-CLOSURE-B passes: one realtime stream per listening installation, answered only when the client template became newer than lastKnownVersionNumber, then one frame per newer version on the same open response for a changed, a metadata-only, a same-content and a rollback publication and one more after the listener closed and reopened (the SDK kept its stream), each followed by the SDK's re-fetch answered 200 UPDATE with a new tag, and one listener update per publication. Fireemu streams the recorded frames and matches both passes except the declared differences (the tag's number, the transport encoding, vary). The recordings cover a listener reopening on the existing stream. A new transport connection, back-to-back publications, the maximum hold time, and responses when the template is already newer on arrival were outside both runs.",
+      "description": "As recorded in both RC-CLOSURE-B passes: one realtime stream per listening installation, answered only when the client template became newer than lastKnownVersionNumber, then one frame per newer version on the same open response for a changed, a metadata-only, a same-content and a rollback publication and one more after the listener closed and reopened (the SDK kept its stream), each followed by the SDK's re-fetch answered 200 UPDATE with a new tag, and one listener update per publication. Fireemu streams the recorded frames and matches both passes except the declared differences (the tag's number, the transport encoding, vary). The recordings cover a listener reopening on the existing stream. A new transport connection, back-to-back publications, the maximum hold time, and responses when the template is already newer on arrival were outside both runs. Two native passes compare one real-time notification, the conditional automatic fetch, and explicit activation of the new value on Android and Apple against both profiles.",
       "status": "VERIFIED",
       "productionEvidence": [
         {
@@ -456,6 +474,16 @@
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
           "fixtureSha256": "1f711a7db915b59c2b86a1508a275584959e49e01d17f67eccf552a6c14f844e"
+        },
+        {
+          "alias": "native-pass-1",
+          "fixturePath": "conformance/remote-config-native/closure-c-pass-1.json",
+          "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
+        },
+        {
+          "alias": "native-pass-2",
+          "fixturePath": "conformance/remote-config-native/closure-c-pass-2.json",
+          "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
         }
       ],
       "localEvidence": [
@@ -464,7 +492,10 @@
         "crates/fireemu-adapter-http/src/server.rs",
         "crates/fireemu-adapter-http/tests/control.rs",
         "conformance/src/remote-config-web/local.mjs",
-        "conformance/src/remote-config-web/evidence.test.mjs"
+        "conformance/src/remote-config-web/evidence.test.mjs",
+        "conformance/src/remote-config-native/local.mjs",
+        "conformance/src/remote-config-native/evidence.test.mjs",
+        "conformance/remote-config-native/closure-c-comparisons.json"
       ],
       "evidenceType": "production-parity",
       "observedPasses": 2,
@@ -714,5 +745,73 @@
         }
       ]
     }
+  },
+  "nativeEvidence": {
+    "recordingPolicy": {
+      "observedPasses": 2,
+      "requiredPasses": 2,
+      "waiver": null
+    },
+    "recordings": [
+      {
+        "alias": "native-pass-1",
+        "fixturePath": "conformance/remote-config-native/closure-c-pass-1.json",
+        "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
+      },
+      {
+        "alias": "native-pass-2",
+        "fixturePath": "conformance/remote-config-native/closure-c-pass-2.json",
+        "fixtureSha256": "8caf2ed2ba342cf8d74bd434b81b558c7e214d8871f239cc45f15e3fdbe8a133"
+      }
+    ],
+    "localRuns": [
+      {
+        "alias": "strict",
+        "fixturePath": "conformance/remote-config-native/closure-c-local-strict.json",
+        "fixtureSha256": "addd49ce7503ed195f69f8da0f554706a3a69542579b650a06d392ba0bd17458"
+      },
+      {
+        "alias": "emulator",
+        "fixturePath": "conformance/remote-config-native/closure-c-local-emulator.json",
+        "fixtureSha256": "addd49ce7503ed195f69f8da0f554706a3a69542579b650a06d392ba0bd17458"
+      }
+    ],
+    "comparisonPath": "conformance/remote-config-native/closure-c-comparisons.json",
+    "comparisonSha256": "880b56467ae909a2d74ff6d089417117be25690201aaf72bb020d80c8591cf40",
+    "knownDifferences": [
+      "KD-NATIVE-INSTALLATIONS-FIXTURE",
+      "KD-NATIVE-RESPONSE-ENCODING",
+      "KD-NATIVE-VARY"
+    ]
+  },
+  "approvedKnownDifferences": [
+    {
+      "id": "KD-NATIVE-INSTALLATIONS-FIXTURE",
+      "reason": "Fireemu uses the scoped Installations fixture for these SDK runs. The SDK's own create and delete requests are captured and compared."
+    },
+    {
+      "id": "KD-NATIVE-RESPONSE-ENCODING",
+      "reason": "The observed Google data-plane responses use gzip. Fireemu sends the same decoded response over loopback with identity encoding."
+    },
+    {
+      "id": "KD-NATIVE-VARY",
+      "reason": "Google lists Origin, X-Origin and Referer in the response Vary header. The loopback listener uses Fireemu's CORS header policy."
+    }
+  ],
+  "integratedRegression": {
+    "comparisons": [
+      {
+        "path": "conformance/remote-config-native/closure-c-comparisons.json",
+        "sha256": "880b56467ae909a2d74ff6d089417117be25690201aaf72bb020d80c8591cf40",
+        "rows": 10,
+        "summary": {
+          "MATCH": 2,
+          "KNOWN_DIFFERENCE": 8
+        }
+      }
+    ],
+    "productionRequests": 0,
+    "result": "COMPARED_ON_RECORDED_NATIVE_SDK_FLOWS",
+    "releaseBindingNote": "The two production and two local native SDK projections are recomputed in conformance/src/remote-config-native/evidence.test.mjs. The actual pinned test apps and both device runtimes are needed to repeat those SDK comparisons against a packaged binary. Earlier administrative and Web comparisons remain bound in closureEvidence and are verified by their existing conformance tests."
   }
 }

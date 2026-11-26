@@ -1,0 +1,567 @@
+{
+  "android": {
+    "platform": "android",
+    "sdk": {
+      "initial": "before",
+      "cached": "before",
+      "updateKeys": [
+        "native_value"
+      ],
+      "activated": "after",
+      "installationDeleted": true
+    },
+    "exchanges": [
+      {
+        "role": "installation-create",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/installations",
+          "encoding": "gzip",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-android-cert": "APP_CERTIFICATE",
+            "x-android-package": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": false,
+            "authorization": false
+          },
+          "ifNoneMatch": null,
+          "body": {
+            "fid": "FID_1",
+            "appId": "APP_ID",
+            "authVersion": "FIS_v2",
+            "sdkVersion": "a:18.0.0"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{d:d,d:d,d:d,d:d}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": null,
+          "body": {
+            "name": "projects/PROJECT_NUMBER/installations/FID_1",
+            "fid": "FID_1",
+            "refreshToken": "TOKEN_1",
+            "authToken": {
+              "token": "TOKEN_2",
+              "expiresIn": "604800s"
+            }
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:wd,wd:wd,wd:wd,wd:w{wd:wd,wd:wdw}w}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "initial-fetch",
+        "request": {
+          "path": "/v1/projects/PROJECT_NUMBER/namespaces/firebase:fetch",
+          "encoding": "identity",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-android-cert": "APP_CERTIFICATE",
+            "x-android-package": "NATIVE_BUNDLE",
+            "x-firebase-rc-fetch-type": "BASE/1"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": null,
+          "body": {
+            "appVersion": "1.0",
+            "customSignals": {
+              "tier": "gold"
+            },
+            "timeZone": "Asia/Tokyo",
+            "appInstanceIdToken": "TOKEN_2",
+            "languageCode": "en-US",
+            "appBuild": "1",
+            "appInstanceId": "FID_1",
+            "countryCode": "US",
+            "analyticsUserProperties": {},
+            "appId": "APP_ID",
+            "platformVersion": "36",
+            "sdkVersion": "22.1.0",
+            "packageName": "NATIVE_BUNDLE"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{d:d,d:{d:d},d:d,d:d,d:d,d:d,d:d,d:d,d:{},d:d,d:d,d:d,d:d}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": "ETAG_1",
+          "body": {
+            "entries": {
+              "native_tier": "gold",
+              "native_value": "before"
+            },
+            "appName": "NATIVE_BUNDLE",
+            "state": "UPDATE",
+            "templateVersion": "INITIAL_VERSION"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:w{wd:wd,wd:wdw},wd:wd,wd:wd,wd:wdw}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "realtime",
+        "request": {
+          "path": "/v1/projects/PROJECT_NUMBER/namespaces/firebase:streamFetchInvalidations",
+          "encoding": "identity",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-android-cert": "APP_CERTIFICATE",
+            "x-android-package": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": null,
+          "body": {
+            "appInstanceId": "FID_1",
+            "appId": "APP_ID",
+            "namespace": "firebase",
+            "project": "PROJECT_NUMBER",
+            "sdkVersion": "22.1.0",
+            "lastKnownVersionNumber": "INITIAL_VERSION"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{d:d,d:d,d:d,d:d,d:d,d:d}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "termination": "client-disconnect",
+          "body": {
+            "latestTemplateVersionNumber": "UPDATED_VERSION"
+          }
+        }
+      },
+      {
+        "role": "automatic-fetch",
+        "request": {
+          "path": "/v1/projects/PROJECT_NUMBER/namespaces/firebase:fetch",
+          "encoding": "identity",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-android-cert": "APP_CERTIFICATE",
+            "x-android-package": "NATIVE_BUNDLE",
+            "x-firebase-rc-fetch-type": "REALTIME/1"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": "ETAG_1",
+          "body": {
+            "appVersion": "1.0",
+            "customSignals": {
+              "tier": "gold"
+            },
+            "timeZone": "Asia/Tokyo",
+            "appInstanceIdToken": "TOKEN_2",
+            "languageCode": "en-US",
+            "appBuild": "1",
+            "appInstanceId": "FID_1",
+            "countryCode": "US",
+            "analyticsUserProperties": {},
+            "appId": "APP_ID",
+            "platformVersion": "36",
+            "sdkVersion": "22.1.0",
+            "packageName": "NATIVE_BUNDLE"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{d:d,d:{d:d},d:d,d:d,d:d,d:d,d:d,d:d,d:{},d:d,d:d,d:d,d:d}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": "ETAG_2",
+          "body": {
+            "entries": {
+              "native_tier": "gold",
+              "native_value": "after"
+            },
+            "appName": "NATIVE_BUNDLE",
+            "state": "UPDATE",
+            "templateVersion": "UPDATED_VERSION"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:w{wd:wd,wd:wdw},wd:wd,wd:wd,wd:wdw}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "installation-delete",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/installations/FID_1",
+          "encoding": "gzip",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-android-cert": "APP_CERTIFICATE",
+            "x-android-package": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": false,
+            "authorization": true
+          },
+          "ifNoneMatch": null,
+          "body": {},
+          "layout": {
+            "format": "empty",
+            "tokens": "",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": null,
+          "body": {},
+          "layout": {
+            "format": "json",
+            "tokens": "{}w",
+            "finalNewline": true
+          }
+        }
+      }
+    ]
+  },
+  "ios": {
+    "platform": "ios",
+    "sdk": {
+      "initial": "before",
+      "cached": "before",
+      "updateKeys": [
+        "native_value"
+      ],
+      "activated": "after",
+      "installationDeleted": true
+    },
+    "exchanges": [
+      {
+        "role": "installation-create",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/installations/",
+          "encoding": "identity",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "content-type": "application/json",
+            "x-ios-bundle-identifier": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": false,
+            "authorization": false
+          },
+          "ifNoneMatch": null,
+          "body": {
+            "appId": "APP_ID",
+            "fid": "FID_1",
+            "authVersion": "FIS_v2",
+            "sdkVersion": "i:12.18.0"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{d:d,d:d,d:d,d:d}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": null,
+          "body": {
+            "name": "projects/PROJECT_NUMBER/installations/FID_1",
+            "fid": "FID_1",
+            "refreshToken": "TOKEN_1",
+            "authToken": {
+              "token": "TOKEN_2",
+              "expiresIn": "604800s"
+            }
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:wd,wd:wd,wd:wd,wd:w{wd:wd,wd:wdw}w}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "initial-fetch",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch?key=API_KEY",
+          "encoding": "gzip",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-firebase-rc-fetch-type": "BASE/1",
+            "x-ios-bundle-identifier": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": false,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": null,
+          "body": {
+            "app_instance_id": "FID_1",
+            "app_instance_id_token": "TOKEN_2",
+            "app_id": "APP_ID",
+            "country_code": "jp",
+            "language_code": "ja_JP",
+            "platform_version": "26.5",
+            "time_zone": "Asia/Tokyo",
+            "package_name": "NATIVE_BUNDLE",
+            "app_version": "1.0",
+            "app_build": "1",
+            "sdk_version": "12.18.0",
+            "custom_signals": {
+              "tier": "gold"
+            }
+          },
+          "layout": {
+            "format": "json5",
+            "tokens": "{v:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:{d:d}}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": "ETAG_1",
+          "body": {
+            "entries": {
+              "native_tier": "gold",
+              "native_value": "before"
+            },
+            "appName": "NATIVE_BUNDLE",
+            "state": "UPDATE",
+            "templateVersion": "INITIAL_VERSION"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:w{wd:wd,wd:wdw},wd:wd,wd:wd,wd:wdw}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "realtime",
+        "request": {
+          "path": "/v1/projects/PROJECT_NUMBER/namespaces/firebase:streamFetchInvalidations?key=API_KEY",
+          "encoding": "gzip",
+          "headers": {
+            "accept": "application/json",
+            "accept-encoding": "gzip, deflate",
+            "content-type": "application/json",
+            "x-ios-bundle-identifier": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": "ETAG_1",
+          "body": {
+            "project": "PROJECT_NUMBER",
+            "namespace": "firebase",
+            "lastKnownVersionNumber": "INITIAL_VERSION",
+            "appId": "APP_ID",
+            "sdkVersion": "12.18.0",
+            "appInstanceId": "FID_1"
+          },
+          "layout": {
+            "format": "json5",
+            "tokens": "{v:s,wv:s,wv:s,wv:s,wv:s,wv:s}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "termination": "client-disconnect",
+          "body": {
+            "latestTemplateVersionNumber": "UPDATED_VERSION"
+          }
+        }
+      },
+      {
+        "role": "automatic-fetch",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/namespaces/firebase:fetch?key=API_KEY",
+          "encoding": "gzip",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip",
+            "content-type": "application/json",
+            "x-firebase-rc-fetch-type": "REALTIME/1",
+            "x-ios-bundle-identifier": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": false,
+            "installationsAuth": true,
+            "authorization": false
+          },
+          "ifNoneMatch": "ETAG_1",
+          "body": {
+            "app_instance_id": "FID_1",
+            "app_instance_id_token": "TOKEN_2",
+            "app_id": "APP_ID",
+            "country_code": "jp",
+            "language_code": "ja_JP",
+            "platform_version": "26.5",
+            "time_zone": "Asia/Tokyo",
+            "package_name": "NATIVE_BUNDLE",
+            "app_version": "1.0",
+            "app_build": "1",
+            "sdk_version": "12.18.0",
+            "custom_signals": {
+              "tier": "gold"
+            }
+          },
+          "layout": {
+            "format": "json5",
+            "tokens": "{v:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:s,wv:{d:d}}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": "ETAG_2",
+          "body": {
+            "entries": {
+              "native_tier": "gold",
+              "native_value": "after"
+            },
+            "appName": "NATIVE_BUNDLE",
+            "state": "UPDATE",
+            "templateVersion": "UPDATED_VERSION"
+          },
+          "layout": {
+            "format": "json",
+            "tokens": "{wd:w{wd:wd,wd:wdw},wd:wd,wd:wd,wd:wdw}w",
+            "finalNewline": true
+          }
+        }
+      },
+      {
+        "role": "installation-delete",
+        "request": {
+          "path": "/v1/projects/PROJECT_ID/installations/FID_1/",
+          "encoding": "identity",
+          "headers": {
+            "accept": "*/*",
+            "accept-encoding": "gzip, deflate",
+            "content-type": "application/json",
+            "x-ios-bundle-identifier": "NATIVE_BUNDLE"
+          },
+          "credentials": {
+            "apiKey": true,
+            "installationsAuth": false,
+            "authorization": true
+          },
+          "ifNoneMatch": null,
+          "body": {},
+          "layout": {
+            "format": "json",
+            "tokens": "{}",
+            "finalNewline": false
+          }
+        },
+        "response": {
+          "status": 200,
+          "encoding": "gzip",
+          "headers": {
+            "content-type": "application/json; charset=UTF-8",
+            "vary": "Origin, X-Origin, Referer"
+          },
+          "etag": null,
+          "body": {},
+          "layout": {
+            "format": "json",
+            "tokens": "{}w",
+            "finalNewline": true
+          }
+        }
+      }
+    ]
+  }
+}

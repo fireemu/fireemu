@@ -211,7 +211,7 @@ test("the closure record's two stage-B conditions cite both passes, their counts
   const record = JSON.parse(
     readFileSync(join(ROOT, "spec/compatibility/closure/REMOTE-CONFIG.json"), "utf8"),
   );
-  assert.equal(record.parentStatus, "IN_PROGRESS");
+  assert.equal(record.parentStatus, "COMPAT_VERIFIED");
   const stageB = record.closureEvidence.stageB;
   assert.equal(stageB.knownDifferencesSha256, PINS[KNOWN]);
   for (const entry of [...stageB.recordings, ...stageB.localRuns])

@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "kind": "remote-config-native-sdk-v1",
+  "comparisons": {
+    "pass1VsPass2": {
+      "android": {
+        "known": [],
+        "differences": []
+      },
+      "ios": {
+        "known": [],
+        "differences": []
+      }
+    },
+    "strictVsPass1": {
+      "android": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      },
+      "ios": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      }
+    },
+    "strictVsPass2": {
+      "android": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      },
+      "ios": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      }
+    },
+    "emulatorVsPass1": {
+      "android": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      },
+      "ios": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      }
+    },
+    "emulatorVsPass2": {
+      "android": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      },
+      "ios": {
+        "known": [
+          "KD-NATIVE-INSTALLATIONS-FIXTURE",
+          "KD-NATIVE-RESPONSE-ENCODING",
+          "KD-NATIVE-VARY"
+        ],
+        "differences": []
+      }
+    }
+  },
+  "knownDifferences": {
+    "KD-NATIVE-INSTALLATIONS-FIXTURE": "Fireemu uses the scoped Installations fixture for these SDK runs. The SDK's own create and delete requests are captured and compared.",
+    "KD-NATIVE-RESPONSE-ENCODING": "The observed Google data-plane responses use gzip. Fireemu sends the same decoded response over loopback with identity encoding.",
+    "KD-NATIVE-VARY": "Google lists Origin, X-Origin and Referer in the response Vary header. The loopback listener uses Fireemu's CORS header policy."
+  }
+}

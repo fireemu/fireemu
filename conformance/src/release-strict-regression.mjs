@@ -619,6 +619,12 @@ export const EXCLUDED_PARTS = [
  */
 export const EXCLUDED_KINDS = [
   {
+    kind: "remote-config-native-sdk-v1",
+    reason:
+      "the Android and Apple SDK comparison requires the reviewed native test app builds and both device runtimes; the conformance selftest verifies the published projections, and the native clients ran against both profiles of the closure build",
+    issue: "remote-config-native-sdk-comparison-needs-release-replay.md",
+  },
+  {
     kind: "pubsub-production-comparison-v1",
     reason:
       "the per-case adjudication pairs LOCAL strict replays on the release binary named by the closure with private production recordings (two original passes plus targeted observation sets) through replay harnesses kept outside this tree; the recordings and the harnesses must be published and given a check and an export-comparison mode before the release job can rerun them; the closure is registered before its parent review",
