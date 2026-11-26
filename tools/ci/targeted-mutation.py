@@ -8,12 +8,12 @@ from pathlib import Path
 import subprocess
 import sys
 
-VERSION = "0.10.3"
+VERSION = "0.11.0"
 
 
 def run_package(package, output, scope, env):
     command = [
-        "cargo", "tmt", "--locked", "--json", "--no-effects",
+        "cargo", "tmt", "--no-config", "--locked", "--json", "--no-effects",
         "--work-dir", str(output / "work"), "--package", package, *scope,
     ]
     report_path = output / f"{package}.json"
