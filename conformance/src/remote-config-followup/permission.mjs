@@ -7,8 +7,14 @@ import { PRODUCTION_PROJECT } from "../remote-config-observe/plan.mjs";
 import { Transport } from "../remote-config-observe/transport.mjs";
 import { adminRoutes } from "./admin.mjs";
 
-export function classifyPermission({ status, json }) {
-  if (status === 200) return "allowed";
+export function classifyPermission(row, control = null) {
+  const { status, json } = row;
+  if (status === 200) {
+    if (!confirmed(row)) return "unexpected";
+    return control && !isDeepStrictEqual(capture(row), capture(control))
+      ? "different-template"
+      : "allowed";
+  }
   const error = json?.error;
   if (status === 401 && error?.status === "UNAUTHENTICATED") return "unauthenticated";
   if (status !== 403 || error?.status !== "PERMISSION_DENIED") return "unexpected";
@@ -32,6 +38,8 @@ export function classifyPermission({ status, json }) {
 const names = ["client", "server"];
 const confirmed = (row) =>
   row?.status === 200 &&
+  row.json &&
+  !Object.hasOwn(row.json, "error") &&
   typeof row.etag === "string" &&
   row.etag !== "" &&
   row.etag !== "*" &&
@@ -48,7 +56,7 @@ export async function observePermission(send) {
     controls[name] = capture(before);
   }
   for (const name of names) {
-    probes[name] = classifyPermission(await send("p-" + name, "alternate", name));
+    probes[name] = classifyPermission(await send("p-" + name, "alternate", name), controls[name]);
     if (probes[name] === "unexpected")
       throw new Error("alternate read did not return a typed verdict");
   }

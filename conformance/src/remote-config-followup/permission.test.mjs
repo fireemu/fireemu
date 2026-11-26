@@ -42,7 +42,7 @@ test("permission denial is distinct from customer project denial and unauthentic
     classifyPermission({ status: 401, json: { error: { status: "UNAUTHENTICATED" } } }),
     "unauthenticated",
   );
-  assert.equal(classifyPermission({ status: 200, json: {} }), "allowed");
+  assert.equal(classifyPermission({ status: 200, json: {} }), "unexpected");
 });
 
 test("both namespaces receive control, alternate role, and readback in order", async () => {
@@ -98,11 +98,17 @@ test("every generated combination distinguishes authorization outcomes", (t) => 
     }[reason];
     const observed = classifyPermission({
       status: Number(code),
-      json: { error: { status, details: [detail] } },
+      etag: "positive-etag",
+      json:
+        code === "200" && status === "none"
+          ? { version: { versionNumber: "7" } }
+          : { error: { status, details: [detail] } },
     });
     const expected =
       code === "200"
-        ? "allowed"
+        ? status === "none"
+          ? "allowed"
+          : "unexpected"
         : code === "401" && status === "UNAUTHENTICATED"
           ? "unauthenticated"
           : code === "403" && status === "PERMISSION_DENIED"
@@ -137,4 +143,19 @@ test("a generic mention or distinct policy reason does not prove a named permiss
     ),
     "remote-config-permission-denied",
   );
+});
+
+test("HTTP 200 error envelopes and a divergent template are not identical owner reads", () => {
+  const control = { status: 200, etag: "owner-tag", json: { version: { versionNumber: "9" } } };
+  const error = {
+    status: 200,
+    etag: "owner-tag",
+    json: { error: { status: "PERMISSION_DENIED" } },
+  };
+  assert.equal(classifyPermission(error, control), "unexpected");
+  assert.equal(
+    classifyPermission({ ...control, etag: "other-tag" }, control),
+    "different-template",
+  );
+  assert.equal(classifyPermission(control, control), "allowed");
 });
