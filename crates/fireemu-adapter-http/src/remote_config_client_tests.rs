@@ -243,6 +243,80 @@ fn before_any_publication_the_answer_is_no_template() {
 }
 
 #[test]
+fn web_empty_fetch_matches_recorded_state_across_template_and_tag_cases() {
+    let table = include_str!("remote_config_testdata/web-empty-fetch.tsv");
+    for row in table.lines().skip(1) {
+        let cells: Vec<_> = row.split('\t').collect();
+        let [template_kind, client, tag_kind] = cells.as_slice() else {
+            panic!("invalid PICT row: {row}");
+        };
+        let store = TemplateStore::default();
+        let document = match *template_kind {
+            "Initial" | "Empty" => json!({}),
+            "Nonempty" => json!({"parameters": {"p": {"defaultValue": {"value": "a"}}}}),
+            "InApp" => json!({"parameters": {"p": {"defaultValue": {"useInAppDefault": true}}}}),
+            "Grouped" => json!({"parameterGroups": {"group": {"parameters": {
+                "p": {"defaultValue": {"useInAppDefault": true}}
+            }}}}),
+            "Conditions" => json!({"conditions": [{"name": "c", "expression": "true"}]}),
+            _ => panic!("invalid template: {row}"),
+        };
+        if *template_kind != "Initial" {
+            store
+                .write(
+                    WriteMode::Publish,
+                    Some("*"),
+                    document,
+                    LogicalInstant::from_unix_seconds(1_764_000_000),
+                )
+                .unwrap();
+        }
+        let request = match *client {
+            "Web" => request("premium", "7", "x"),
+            "Android" => serde_json::to_vec(&json!({
+                "appId": "1:123456789012:android:abc", "packageName": "dev.example.test"
+            }))
+            .unwrap(),
+            "Unknown" => b"{}".to_vec(),
+            _ => panic!("invalid client: {row}"),
+        };
+        let current = store.current();
+        let original = fetch(&current, PROJECT, Some("*"), &request);
+        let tag = original.etag.as_deref().unwrap();
+        let sent = match *tag_kind {
+            "Fresh" => "*",
+            "Equal" => tag,
+            "Stale" => "etag-demo-web-firebase-fetch-999",
+            _ => panic!("invalid tag choice: {row}"),
+        };
+        let reply = fetch(&current, PROJECT, Some(sent), &request);
+        assert_eq!(reply.status, 200, "{row}");
+        assert_eq!(reply.etag.as_deref(), Some(tag), "{row}");
+        let body: Value = serde_json::from_slice(&reply.body).unwrap();
+        match (*template_kind, *client, *tag_kind) {
+            ("Initial", _, _) => assert_eq!(body, json!({"state": "NO_TEMPLATE"}), "{row}"),
+            (_, _, "Equal") => assert_eq!(
+                body,
+                json!({"state": "NO_CHANGE", "templateVersion": "1"}),
+                "{row}"
+            ),
+            ("Empty", "Web", _) => assert_eq!(
+                reply.body, b"{\n  \"state\": \"EMPTY_CONFIG\",\n  \"templateVersion\": \"1\"\n}\n",
+                "{row}"
+            ),
+            (_, _, _) => {
+                assert_eq!(body["state"], "UPDATE", "{row}");
+                assert_eq!(body["templateVersion"], "1", "{row}");
+                assert!(body["entries"].is_object(), "{row}");
+                if *client == "Android" {
+                    assert_eq!(body["appName"], "dev.example.test", "{row}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn frames_are_the_recorded_bytes() {
     // Pass 1 n=4: the first chunk is 43 bytes, every later one 45.
     assert_eq!(
@@ -704,10 +778,7 @@ fn plaintext_web_sdk_gzip_header_keeps_the_old_wire_behavior() {
 fn web_transport_decoding_matches_generated_wire_cases() {
     use super::fetch_payload;
 
-    let Ok(table) = std::env::var("FIREEMU_RC_ENCODING_TABLE") else {
-        return;
-    };
-    let rows = std::fs::read_to_string(table).unwrap();
+    let rows = include_str!("remote_config_testdata/web-encoding.tsv");
     for row in rows.lines().skip(1) {
         let fields: Vec<_> = row.split('\t').collect();
         let [sdk, route, wire] = fields.as_slice() else {

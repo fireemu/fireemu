@@ -7,6 +7,7 @@
 //!   whose chosen value is the in-app default left out), `state` `UPDATE` and `templateVersion`,
 //!   written as indented JSON with a final newline, and an `ETag`
 //!   `etag-<project>-firebase-fetch-<signed 32-bit number>`;
+//! - the Web SDK receives `EMPTY_CONFIG` and the published version for an empty template;
 //! - a fetch whose `If-None-Match` is the current tag answers 200 `{"state": "NO_CHANGE",
 //!   "templateVersion": ...}` with the same tag (the SDK sends `*` when it has none);
 //! - a conditional value is chosen by the first condition, in the template's condition order,
@@ -391,19 +392,31 @@ pub(crate) fn fetch_encoded(
             etag: Some(etag(project, version, &empty)),
         };
     }
-    let entries = entries(current.template().document(), &signals, instance);
+    let document = current.template().document();
+    let entries = entries(document, &signals, instance);
     let tag = etag(project, version, &entries);
     let version_text = version.to_string();
+    let platform = request
+        .get("app_id")
+        .or_else(|| request.get("appId"))
+        .and_then(Value::as_str)
+        .and_then(|id| id.split(':').nth(2));
     let body = if if_none_match == Some(tag.as_str()) {
         json!({"state": "NO_CHANGE", "templateVersion": version_text})
+    } else if platform == Some("web")
+        && document["conditions"].as_array().is_some_and(Vec::is_empty)
+        && document["parameters"]
+            .as_object()
+            .is_some_and(Map::is_empty)
+        && document["parameterGroups"]
+            .as_object()
+            .is_some_and(Map::is_empty)
+    {
+        // Both follow-up recordings fetched a published template with no author-owned content.
+        json!({"state": "EMPTY_CONFIG", "templateVersion": version_text})
     } else {
         let mut answer =
             json!({"entries": entries, "state": "UPDATE", "templateVersion": version_text});
-        let platform = request
-            .get("app_id")
-            .or_else(|| request.get("appId"))
-            .and_then(Value::as_str)
-            .and_then(|id| id.split(':').nth(2));
         if let Some(name) = request
             .get("package_name")
             .or_else(|| request.get("packageName"))

@@ -1,0 +1,14 @@
+SDK	Route	Wire
+web	fetch	flagged-plaintext
+web	stream	flagged-plaintext
+apple	fetch	compressed
+android	stream	flagged-plaintext
+web	fetch	other
+android	stream	other
+web	stream	compressed
+apple	stream	flagged-plaintext
+android	fetch	compressed
+apple	stream	identity
+apple	stream	other
+web	fetch	identity
+android	fetch	identity

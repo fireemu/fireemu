@@ -5015,6 +5015,102 @@ async fn the_web_client_fetch_needs_no_control_token_and_answers_update_then_no_
     let _ = server.await;
 }
 
+#[tokio::test]
+async fn web_remote_config_preflights_match_the_recorded_scoped_response() {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut control = state(Arc::new(AtomicUsize::new(0)));
+    control.remote_config.project_number = Some(123_456_789_012);
+    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
+        listener,
+        Arc::new(remote_config_wire_auth()),
+        Arc::new(control),
+    ));
+    let table = include_str!("../src/remote_config_testdata/web-preflight.tsv");
+    for row in table.lines().skip(1) {
+        let cells: Vec<_> = row.split('\t').collect();
+        let [route, project, origin, request] = cells.as_slice() else {
+            panic!("invalid PICT row: {row}");
+        };
+        let project_name = match *project {
+            "ID" => "demo-app",
+            "Number" => "123456789012",
+            "Other" => "other-app",
+            _ => panic!("invalid project: {row}"),
+        };
+        let path = match *route {
+            "Fetch" => format!("/v1/projects/{project_name}/namespaces/firebase:fetch?key=WEB"),
+            "Stream" => {
+                format!("/v1/projects/{project_name}/namespaces/firebase:streamFetchInvalidations")
+            }
+            "Admin" => format!("/v1/projects/{project_name}/remoteConfig"),
+            "Auth" => "/identitytoolkit.googleapis.com/v1/accounts:signUp".into(),
+            _ => panic!("invalid route: {row}"),
+        };
+        let origin_fields = match *origin {
+            "Local" => "Origin: http://localhost:5173\r\n",
+            "Foreign" => "Origin: https://example.invalid\r\n",
+            "Missing" => "",
+            _ => panic!("invalid origin: {row}"),
+        };
+        let requested = if *route == "Stream" {
+            "content-encoding,content-type,x-goog-api-key,x-goog-firebase-installations-auth"
+        } else {
+            "content-encoding,content-type,if-none-match"
+        };
+        let request_fields = match *request {
+            "PostHeaders" => format!("Access-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: {requested}\r\n"),
+            "GetHeaders" => format!("Access-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: {requested}\r\n"),
+            "PostBare" => "Access-Control-Request-Method: POST\r\n".into(),
+            _ => panic!("invalid request shape: {row}"),
+        };
+        let response = exchange(
+            addr,
+            format!("OPTIONS {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n{origin_fields}{request_fields}\r\n"),
+        )
+        .await;
+        let production = matches!(*route, "Fetch" | "Stream")
+            && *project != "Other"
+            && *origin == "Local"
+            && *request == "PostHeaders";
+        if *origin == "Foreign" {
+            assert!(response.starts_with("HTTP/1.1 403 "), "{row}: {response}");
+            assert_eq!(
+                header(&response, "access-control-allow-origin"),
+                None,
+                "{row}"
+            );
+        } else if production {
+            assert!(response.starts_with("HTTP/1.1 200 "), "{row}: {response}");
+            for (name, value) in [
+                ("access-control-allow-origin", Some("http://localhost:5173")),
+                ("access-control-allow-headers", Some(requested)),
+                (
+                    "access-control-allow-methods",
+                    Some("DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT"),
+                ),
+                ("access-control-max-age", Some("3600")),
+                ("vary", Some("origin, referer, x-origin")),
+                ("access-control-allow-credentials", None),
+            ] {
+                assert_eq!(header(&response, name), value, "{row}: {name}");
+            }
+            assert_eq!(response.split_once("\r\n\r\n").unwrap().1, "", "{row}");
+        } else {
+            assert!(response.starts_with("HTTP/1.1 204 "), "{row}: {response}");
+            assert_eq!(
+                header(&response, "access-control-allow-credentials"),
+                Some("true"),
+                "{row}"
+            );
+        }
+    }
+    server.abort();
+    let _ = server.await;
+}
+
 async fn read_stream_version(
     stream: &mut tokio::net::TcpStream,
     version: u64,

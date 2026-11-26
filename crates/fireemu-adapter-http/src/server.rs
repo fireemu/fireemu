@@ -104,14 +104,23 @@ async fn respond(
             .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
     }
     if method == "OPTIONS" {
-        // Browser preflight (the Auth SDK sends JSON with an Authorization header).
         let requested = parts
             .headers
             .get("access-control-request-headers")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("authorization, content-type, x-firebase-appcheck");
+            .and_then(|v| v.to_str().ok());
+        if let (Some(control), Some(_), Some(origin), Some(requested)) =
+            (&control, &remote_config, origin, requested)
+        {
+            if let Some(response) = remote_config_preflight(control, &parts, origin, requested) {
+                return Ok(response);
+            }
+        }
+        // Browser preflight (the Auth SDK sends JSON with an Authorization header).
         return Ok(with_cors(Response::builder().status(204), origin)
-            .header("access-control-allow-headers", requested)
+            .header(
+                "access-control-allow-headers",
+                requested.unwrap_or("authorization, content-type, x-firebase-appcheck"),
+            )
             .header("access-control-max-age", "3600")
             .body(Full::new(Bytes::new()))
             .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
@@ -875,6 +884,36 @@ fn ordered_refresh_json(bytes: &[u8]) -> Option<serde_json::Value> {
     let value = deserializer.deserialize_map(RefreshVisitor).ok()?;
     deserializer.end().ok()?;
     Some(value)
+}
+
+/// The recorded browser preflight for the two Remote Config SDK POST routes.
+fn remote_config_preflight(
+    control: &ControlState,
+    parts: &hyper::http::request::Parts,
+    origin: &str,
+    requested: &str,
+) -> Option<Response<Full<Bytes>>> {
+    let (project, _) = remote_config_client::client_route(parts.uri.path())?;
+    if !remote_config_client::client_project(
+        project,
+        &control.default_project,
+        control.remote_config.project_number,
+    ) || parts.headers.get("access-control-request-method")? != "POST"
+    {
+        return None;
+    }
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("access-control-allow-origin", origin)
+        .header(
+            "access-control-allow-methods",
+            "DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT",
+        )
+        .header("access-control-allow-headers", requested)
+        .header("access-control-max-age", "3600")
+        .header("vary", "origin, referer, x-origin")
+        .body(Full::new(Bytes::new()))
+        .ok()
 }
 
 /// Permissive CORS for a loopback test runtime (browser SDKs call these endpoints directly;
