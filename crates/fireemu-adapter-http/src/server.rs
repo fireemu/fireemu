@@ -528,7 +528,6 @@ async fn remote_config_response(
         .unwrap_or_else(|_| Response::new(Full::new(Bytes::new())))
 }
 
-/// Renders one JSON response, optionally forbidding every cache.
 /// The Web client's fetch (RC-CLOSURE-B): no control capability, the default project only.
 async fn client_fetch_response(
     control: &ControlState,
@@ -655,43 +654,33 @@ async fn client_stream_response(
         .map(http_body_util::Either::Left);
     };
     let last_known = remote_config_client::last_known(&bytes);
-    let newer = |stores: &RemoteConfigStores| {
-        let current = stores.client.current();
-        (current.change() != crate::remote_config::Change::Initial && current.number() > last_known)
-            .then(|| current.number())
-    };
+    let mut observed = stores.client.current().number();
+    // An already-stale client first catches up to the current version. From admission onward,
+    // versions are contiguous, so the cursor preserves even publications between two polls.
+    let mut sent = last_known.max(observed.saturating_sub(1));
     let held = tokio::time::Instant::now() + STREAM_HOLD;
-    let mut first = newer(&stores);
-    while first.is_none() && tokio::time::Instant::now() < held {
+    while observed <= sent && tokio::time::Instant::now() < held {
         tokio::time::sleep(STREAM_POLL).await;
-        first = newer(&stores);
+        observed = stores.client.current().number();
     }
     let (frames, receiver) = tokio::sync::mpsc::channel::<Bytes>(16);
     tokio::spawn(async move {
-        let mut sent = last_known;
         let mut opened = false;
-        if let Some(version) = first {
-            if frames
-                .send(Bytes::from(remote_config_client::frame(true, version)))
-                .await
-                .is_err()
-            {
-                return;
-            }
-            (sent, opened) = (version, true);
-        }
         let end = tokio::time::Instant::now() + STREAM_LIFETIME;
         while tokio::time::Instant::now() < end && !frames.is_closed() {
-            tokio::time::sleep(STREAM_POLL).await;
-            let current = stores.client.current();
-            if current.change() != crate::remote_config::Change::Initial && current.number() > sent
-            {
-                let frame = remote_config_client::frame(!opened, current.number());
-                if frames.send(Bytes::from(frame)).await.is_err() {
+            while sent < observed {
+                let version = sent + 1;
+                let frame = Bytes::from(remote_config_client::frame(!opened, version));
+                if !matches!(
+                    tokio::time::timeout_at(end, frames.send(frame)).await,
+                    Ok(Ok(()))
+                ) {
                     return;
                 }
-                (sent, opened) = (current.number(), true);
+                (sent, opened) = (version, true);
             }
+            tokio::time::sleep(STREAM_POLL).await;
+            observed = stores.client.current().number();
         }
     });
     with_cors(Response::builder().status(StatusCode::OK), origin)
@@ -702,6 +691,7 @@ async fn client_stream_response(
         .unwrap_or_else(|_| Response::new(http_body_util::Either::Left(Full::new(Bytes::new()))))
 }
 
+/// Renders one JSON response, optionally forbidding every cache.
 fn finish(
     status: u16,
     body: &serde_json::Value,

@@ -80,21 +80,14 @@ fn refusal(status: u16, message: &str, code: &str) -> FetchReply {
     }
 }
 
-/// Java's `String.hashCode`, the kind of number production's tags carry (signed, 32 bits).
-fn java_hash(text: &str) -> i32 {
-    text.encode_utf16().fold(0_i32, |hash, unit| {
-        hash.wrapping_mul(31).wrapping_add(i32::from(unit))
-    })
-}
-
-/// The tag of an answer: the same entries at the same version give the same tag, and a new
-/// version gives a new one even when the entries are equal (RC-CLOSURE-B r2 and r3).
+/// A deterministic signed 32-bit tag for the evaluated entries and published version.
 fn etag(project: &str, version: u64, entries: &BTreeMap<String, String>) -> String {
-    let entries = serde_json::to_string(entries).unwrap_or_default();
-    format!(
-        "etag-{project}-firebase-fetch-{}",
-        java_hash(&format!("{entries}{version}\n"))
-    )
+    let mut hash = Sha256::new();
+    hash.update(version.to_be_bytes());
+    hash.update(serde_json::to_vec(entries).unwrap_or_default());
+    let hash = hash.finalize();
+    let number = i32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]]);
+    format!("etag-{project}-firebase-fetch-{number}")
 }
 
 /// The installation's position in a percent condition's range, in micro-percent: the Admin SDK's

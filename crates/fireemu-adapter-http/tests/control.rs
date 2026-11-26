@@ -5017,16 +5017,21 @@ async fn the_web_client_fetch_needs_no_control_token_and_answers_update_then_no_
 
 #[tokio::test]
 async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per_version() {
+    use fireemu_adapter_http::remote_config::{RemoteConfigStores, WriteMode};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(fireemu_adapter_http::server::serve_with_control(
-        listener,
-        Arc::new(remote_config_wire_auth()),
-        Arc::new(state(Arc::new(AtomicUsize::new(0)))),
-    ));
+    let stores = Arc::new(RemoteConfigStores::default());
+    let server = tokio::spawn(
+        fireemu_adapter_http::server::serve_with_control_and_remote_config(
+            listener,
+            Arc::new(remote_config_wire_auth()),
+            Arc::new(state(Arc::new(AtomicUsize::new(0)))),
+            stores.clone(),
+        ),
+    );
     assert!(exchange(addr, publish_request(addr, "v1"))
         .await
         .starts_with("HTTP/1.1 200 "));
@@ -5086,20 +5091,33 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
     )
     .await
     .is_err());
-    assert!(exchange(addr, publish_request(addr, "v4"))
-        .await
-        .starts_with("HTTP/1.1 200 "));
-    while !seen.contains("\"latestTemplateVersionNumber\": \"4\"") {
+    // Both writes complete before the single-threaded test returns to the stream poller.
+    for _ in 0..2 {
+        stores
+            .client
+            .write(
+                WriteMode::Publish,
+                Some("*"),
+                json!({}),
+                LogicalInstant::from_unix_seconds(1_788_004_860),
+            )
+            .unwrap();
+    }
+    while !seen.contains("\"latestTemplateVersionNumber\": \"5\"") {
         let n = tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer))
             .await
             .unwrap()
             .unwrap();
+        assert!(n > 0, "{seen:?}");
         seen.push_str(&String::from_utf8_lossy(&buffer[..n]));
     }
-    assert!(
-        seen.contains(",\r\n{\n  \"latestTemplateVersionNumber\": \"4\"\n}\n"),
-        "{seen:?}"
-    );
+    let fourth = seen
+        .find("\"latestTemplateVersionNumber\": \"4\"")
+        .expect(&seen);
+    let fifth = seen
+        .find("\"latestTemplateVersionNumber\": \"5\"")
+        .expect(&seen);
+    assert!(fourth < fifth, "{seen:?}");
     assert_eq!(seen.matches('[').count(), 1, "{seen:?}");
     // An older lastKnownVersionNumber gets its first frame at once.
     let late = r#"{"lastKnownVersionNumber":"0"}"#;
@@ -5109,7 +5127,7 @@ async fn the_realtime_stream_waits_for_a_newer_version_then_writes_one_frame_per
         .await
         .unwrap();
     let mut late_seen = String::new();
-    while !late_seen.contains("\"latestTemplateVersionNumber\": \"4\"") {
+    while !late_seen.contains("\"latestTemplateVersionNumber\": \"5\"") {
         let n = tokio::time::timeout(std::time::Duration::from_secs(5), other.read(&mut buffer))
             .await
             .unwrap()

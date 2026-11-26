@@ -5,8 +5,8 @@ use proptest::prelude::*;
 use serde_json::{json, Value};
 
 use super::{
-    atom_holds, client_route, condition_holds, etag, fetch, frame, java_hash, last_known,
-    micro_percentile, ClientAction,
+    atom_holds, client_route, condition_holds, etag, fetch, frame, last_known, micro_percentile,
+    ClientAction,
 };
 use crate::remote_config::{TemplateStore, WriteMode};
 use fireemu_core_types::time::LogicalInstant;
@@ -262,16 +262,58 @@ fn frames_are_the_recorded_bytes() {
 }
 
 #[test]
-fn the_hash_is_java_string_hash_code() {
-    // Java: "".hashCode() == 0, "a".hashCode() == 97, "ab" == 3105, and the recorded relation
-    // of production's tags: one more in the last digit before a final character adds 31.
-    assert_eq!(java_hash(""), 0);
-    assert_eq!(java_hash("a"), 97);
-    assert_eq!(java_hash("ab"), 3105);
-    assert_eq!(java_hash("x49\n").wrapping_sub(java_hash("x48\n")), 31);
-    assert_eq!(java_hash("x50\n").wrapping_sub(java_hash("x49\n")), 682);
+fn different_evaluated_values_do_not_reuse_the_old_java_hash_collision() {
+    let store = TemplateStore::default();
+    let mut document = template("v1", "d");
+    document["parameters"]
+        .as_object_mut()
+        .unwrap()
+        .remove("fireemu_enabled");
+    document["parameters"]["fireemu_message"] = json!({
+        "defaultValue": {"value": "Aa"},
+        "conditionalValues": {"fireemu_premium": {"value": "BB"}}
+    });
+    store
+        .write(
+            WriteMode::Publish,
+            Some("*"),
+            document,
+            LogicalInstant::from_unix_seconds(1_764_000_000),
+        )
+        .unwrap();
+
+    let instance = outside_half();
+    let current = store.current();
+    let first = fetch(
+        &current,
+        PROJECT,
+        Some("*"),
+        &request("basic", "7", &instance),
+    );
+    let second = fetch(
+        &current,
+        PROJECT,
+        first.etag.as_deref(),
+        &request("premium", "7", &instance),
+    );
+
+    assert_ne!(second.etag, first.etag);
+    let body: Value = serde_json::from_slice(&second.body).unwrap();
+    assert_eq!(body["state"], "UPDATE");
+    assert_eq!(body["entries"]["fireemu_message"], "BB");
+}
+
+#[test]
+fn the_fetch_tag_uses_a_deterministic_signed_number() {
     let empty = std::collections::BTreeMap::new();
-    assert!(etag("p", 3, &empty).starts_with("etag-p-firebase-fetch-"));
+    let tag = etag("p", 3, &empty);
+    assert!(tag
+        .strip_prefix("etag-p-firebase-fetch-")
+        .unwrap()
+        .parse::<i32>()
+        .is_ok());
+    assert_eq!(tag, etag("p", 3, &empty));
+    assert_ne!(tag, etag("p", 4, &empty));
 }
 
 proptest! {
