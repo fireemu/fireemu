@@ -41,7 +41,7 @@ function createdInstallation(bytes, encoding) {
   return JSON.parse(decoded.toString("utf8"));
 }
 
-async function* streaming(response, capture, finish) {
+async function* streaming(response, capture, signal, finish) {
   let bytes = 0;
   let complete = false;
   const chunks = [];
@@ -59,7 +59,12 @@ async function* streaming(response, capture, finish) {
     }
     complete = true;
   } finally {
-    finish(bytes, complete, chunks, chunkLengths);
+    const termination = complete
+      ? "upstream-end"
+      : signal?.aborted
+        ? "client-disconnect"
+        : "upstream-error";
+    finish(bytes, complete, termination, chunks, chunkLengths);
   }
 }
 
@@ -127,27 +132,33 @@ export function nativeRelay({ session, dispatch, record, capture }) {
       return {
         status: response.status,
         headers,
-        body: streaming(response, capture, (responseBytes, complete, chunks, chunkLengths) => {
-          session.settle(ticket, { status: response.status });
-          let projection;
-          try {
-            if (capture && responseBytes > MAX_NATIVE_REQUEST_BYTES)
-              throw new Error("native stream exceeds capture limit");
-            projection = capture?.stream({ wire: Buffer.concat(chunks), headers, chunkLengths });
-          } catch {
-            session.noteStatus(null);
-            record({ ...stamp, phase: "capture-error", status: response.status, responseBytes });
-            return;
-          }
-          record({
-            ...stamp,
-            phase: "stream",
-            status: response.status,
-            responseBytes,
-            complete,
-            ...projection,
-          });
-        }),
+        body: streaming(
+          response,
+          capture,
+          request.signal,
+          (responseBytes, complete, termination, chunks, chunkLengths) => {
+            session.settle(ticket, { status: response.status });
+            let projection;
+            try {
+              if (capture && responseBytes > MAX_NATIVE_REQUEST_BYTES)
+                throw new Error("native stream exceeds capture limit");
+              projection = capture?.stream({ wire: Buffer.concat(chunks), headers, chunkLengths });
+            } catch {
+              session.noteStatus(null);
+              record({ ...stamp, phase: "capture-error", status: response.status, responseBytes });
+              return;
+            }
+            record({
+              ...stamp,
+              phase: "stream",
+              status: response.status,
+              responseBytes,
+              complete,
+              termination,
+              ...projection,
+            });
+          },
+        ),
       };
     }
     session.settle(ticket, { status: response.status, json });

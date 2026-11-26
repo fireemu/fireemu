@@ -79,13 +79,19 @@ export function verifyNativeReceipt(platform, result) {
 
 function invalidates(body, version) {
   try {
-    const frames = String(body)
-      .match(/\{[^{}]+\}/g)
-      ?.map((frame) => JSON.parse(frame));
+    const input = String(body).trim();
+    if (!input.startsWith("[")) return false;
+    const frames = JSON.parse(input.endsWith("]") ? input : input + "]");
+    if (!Array.isArray(frames) || frames.length !== 1) return false;
+    const [frame] = frames;
     return (
-      frames?.length === 1 &&
-      !frames[0].featureDisabled &&
-      String(frames[0].latestTemplateVersionNumber) === version
+      frame &&
+      typeof frame === "object" &&
+      Object.keys(frame).every((key) =>
+        ["latestTemplateVersionNumber", "featureDisabled"].includes(key),
+      ) &&
+      !frame.featureDisabled &&
+      String(frame.latestTemplateVersionNumber) === version
     );
   } catch {
     return false;
@@ -116,6 +122,7 @@ export function verifyNativeExchange(rows, versions) {
     after?.status === 200 &&
     [200, 204].includes(deleted?.status) &&
     realtime.body?.lastKnownVersionNumber === versions.initial &&
+    stream.termination === "client-disconnect" &&
     invalidates(stream.bodyText, versions.update) &&
     /^ETAG_\d+$/.test(before.etag) &&
     automatic.ifNoneMatch === before.etag &&

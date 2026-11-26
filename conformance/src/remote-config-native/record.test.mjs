@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { exerciseNative } from "./record.mjs";
+import { API_TARGETS } from "../remote-config-web/program.mjs";
+import { exerciseNative, oracleControl } from "./record.mjs";
 import { nativeBudget } from "./session.mjs";
 
 test("the run receipt survives a failure before any listener, SDK or oracle control starts", async () => {
@@ -34,5 +35,52 @@ test("the run receipt survives a failure before any listener, SDK or oracle cont
     assert.equal(result.leakScanClean, true);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an Apple registration collision or unreadable baseline receives only GETs", async () => {
+  for (const apple of [
+    {
+      apps: [
+        { appId: "1:100000000004:ios:abcdef", bundleId: "com.fireemu.oracle.rcios20261121.c1" },
+      ],
+    },
+    { apps: null },
+    { error: { status: "UNAVAILABLE" } },
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "native-prewrite-"));
+    const sent = [];
+    try {
+      const number = "100000000004";
+      const control = oracleControl({
+        number,
+        out: dir,
+        pass: "c1",
+        runId: "0123abcd0123abcd",
+        budget: nativeBudget(30, 4),
+        token: () => "synthetic",
+        async fetchImpl(url, options) {
+          sent.push(options.method);
+          const path = url.pathname;
+          const data = path.endsWith("/remoteConfig")
+            ? { version: { versionNumber: "1" } }
+            : path.endsWith("services:batchGet")
+              ? {
+                  services: API_TARGETS.map((service) => ({
+                    name: "projects/" + number + "/services/" + service,
+                    state: "ENABLED",
+                  })),
+                }
+              : path.endsWith("/iosApps")
+                ? apple
+                : {};
+          return new Response(JSON.stringify(data), { headers: { etag: "fixture" } });
+        },
+      });
+      await assert.rejects(control.prepare());
+      assert.deepEqual(sent, ["GET", "GET", "GET", "GET"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });

@@ -12,6 +12,43 @@ const encodedForms = (value) => [
   Buffer.from(value).toString("base64url"),
 ];
 
+const REQUEST_HEADERS = [
+  "accept",
+  "accept-encoding",
+  "content-type",
+  "x-android-cert",
+  "x-android-package",
+  "x-firebase-rc-fetch-type",
+  "x-goog-api-client",
+  "x-ios-bundle-identifier",
+];
+const RESPONSE_HEADERS = ["content-type", "cache-control", "vary"];
+
+function layout(bytes) {
+  const text = UTF8.decode(bytes);
+  if (!text.length) return { format: "empty", tokens: "", finalNewline: false };
+  let format = "json";
+  try {
+    JSON.parse(text);
+  } catch {
+    format = "json5";
+  }
+  const parts = text.match(
+    /"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\]|\\[\s\S])*'|[{}[\],:]|\s+|[^{}[\],:'"\s]+|./gu,
+  );
+  if (parts.length > 8192) throw new Error("native payload layout exceeds limit");
+  const tokens = parts
+    .map((part) => {
+      if (part[0] === '"') return "d";
+      if (part[0] === "'") return "s";
+      if (/^[{}[\],:]$/.test(part)) return part;
+      if (/^\s/.test(part)) return "w";
+      return "v";
+    })
+    .join("");
+  return { format, tokens, finalNewline: text.endsWith("\n") };
+}
+
 function contentEncoding(headers) {
   const encoding = headers["content-encoding"];
   if (encoding === undefined || encoding === "identity") return "identity";
@@ -61,6 +98,14 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
     return value;
   }
 
+  function headerProjection(headers, names) {
+    return Object.fromEntries(
+      names.flatMap((name) =>
+        typeof headers[name] === "string" ? [[name, mask(headers[name])]] : [],
+      ),
+    );
+  }
+
   function request({ operation, service, fid, wire, path, headers }) {
     addFID(fid);
     const encoding = contentEncoding(headers);
@@ -76,6 +121,13 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
           ? (conditional ?? null)
           : (etags.get(conditional) ?? "UNSEEN"),
       body: masked(body),
+      headers: headerProjection(headers, REQUEST_HEADERS),
+      credentials: {
+        apiKey: Boolean(headers["x-goog-api-key"]),
+        installationsAuth: Boolean(headers["x-goog-firebase-installations-auth"]),
+        authorization: Boolean(headers.authorization),
+      },
+      layout: layout(nativeRequestBody(wire, encoding).decoded),
     };
   }
 
@@ -85,8 +137,11 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
     const isSuccess = status >= 200 && status < 300;
     let body = null;
     let etag = null;
+    let payloadLayout = null;
     if (isSuccess && wire.length) {
-      body = JSON.parse(UTF8.decode(nativeRequestBody(wire, encoding).decoded));
+      const { decoded } = nativeRequestBody(wire, encoding);
+      body = JSON.parse(UTF8.decode(decoded));
+      payloadLayout = layout(decoded);
       if (operation === "create") {
         addFID(body.fid);
         addToken(body.refreshToken);
@@ -101,7 +156,15 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
       if (!etags.has(tag)) etags.set(tag, `ETAG_${etags.size + 1}`);
       etag = etags.get(tag);
     }
-    return { status, responseBytes: wire.length, encoding, etag, body };
+    return {
+      status,
+      responseBytes: wire.length,
+      encoding,
+      etag,
+      body,
+      layout: payloadLayout,
+      headers: isSuccess ? headerProjection(headers, RESPONSE_HEADERS) : {},
+    };
   }
 
   function stream({ wire, headers, chunkLengths }) {
@@ -123,6 +186,7 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
       encoding,
       responseBytes: wire.length,
       chunkLengths,
+      headers: headerProjection(headers, RESPONSE_HEADERS),
       bodyText: mask(UTF8.decode(decoded)),
     };
   }

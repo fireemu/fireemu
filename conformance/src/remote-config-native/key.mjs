@@ -9,7 +9,8 @@ function answer(response) {
     response.status !== 200 ||
     !response.json ||
     typeof response.json !== "object" ||
-    Array.isArray(response.json)
+    Array.isArray(response.json) ||
+    "error" in response.json
   )
     throw new Error("native key did not return a complete response");
   return response.json;
@@ -39,9 +40,9 @@ export function nativeKeyControl({
 
   async function activeKeys(phase) {
     const current = answer(await transport.send(phase, urls.keysList));
-    const keys = current.keys ?? [];
+    const keys = Object.hasOwn(current, "keys") ? current.keys : [];
     if (
-      current.nextPageToken ||
+      Object.hasOwn(current, "nextPageToken") ||
       !Array.isArray(keys) ||
       keys.some((key) => !keyName.test(key?.name) || isDeleted(key))
     )
@@ -68,7 +69,9 @@ export function nativeKeyControl({
         if (attempt === polls) break;
         await pause();
         current = answer(
-          await transport.send(`native-key-${phase}-poll-${attempt + 1}`, urls.keysApi + id),
+          await transport.send(`native-key-${phase}-poll-${attempt + 1}`, urls.keysApi + id, {
+            secret: true,
+          }),
         );
         if (current.name !== id) throw new Error("native key operation changed identity");
       }
@@ -101,8 +104,31 @@ export function nativeKeyControl({
     const key = await operation(answer(first), "create");
     if (!keyName.test(key.name) || (key.displayName !== undefined && key.displayName !== name))
       throw new Error("native key create returned an unowned resource");
+    if (baselineNames.includes(key.name))
+      throw new Error("native key create returned a preexisting resource");
     grants.key = key.name;
+    const verified = answer(
+      await transport.send("native-key-owned", urls.keysApi + grants.key, { secret: true }),
+    );
+    if (
+      verified.name !== grants.key ||
+      verified.displayName !== name ||
+      !KEY_UID.test(verified.uid) ||
+      (key.uid !== undefined && verified.uid !== key.uid) ||
+      isDeleted(verified)
+    )
+      throw new Error("native managed key ownership read-back failed");
     state = "created";
+    const targets = verified.restrictions?.apiTargets;
+    if (
+      !Array.isArray(targets) ||
+      targets.length !== API_TARGETS.length ||
+      !API_TARGETS.every((service) =>
+        targets.some((target) => target?.service === service && !target.methods?.length),
+      ) ||
+      Object.keys(verified.restrictions).some((entry) => entry !== "apiTargets")
+    )
+      throw new Error("native managed key API restrictions changed");
     const value = answer(
       await transport.send("native-key-value", `${urls.keysApi}${grants.key}/keyString`, {
         secret: true,
@@ -110,19 +136,23 @@ export function nativeKeyControl({
     );
     if (!KEY_VALUE.test(value.keyString) || (value.name !== undefined && value.name !== grants.key))
       throw new Error("native key value is unreadable");
-    if (!KEY_UID.test(key.uid)) throw new Error("native key UID is unreadable");
-    return { value: value.keyString, uid: key.uid };
+    return { value: value.keyString, uid: verified.uid };
   }
 
   async function remove() {
     if (!grants.key || state !== "created") return state === "refused" || state === "unseen";
     state = "delete-pending";
     const first = answer(
-      await transport.send("native-key-delete", urls.keysApi + grants.key, { method: "DELETE" }),
+      await transport.send("native-key-delete", urls.keysApi + grants.key, {
+        method: "DELETE",
+        secret: true,
+      }),
     );
     const done = await operation(first, "delete");
     if (done.name !== grants.key) return false;
-    const after = answer(await transport.send("native-key-after", urls.keysApi + grants.key));
+    const after = answer(
+      await transport.send("native-key-after", urls.keysApi + grants.key, { secret: true }),
+    );
     if (after.name !== grants.key || !isDeleted(after)) return false;
     const { names } = await activeKeys("native-key-baseline-after");
     if (

@@ -36,6 +36,7 @@ function exchange() {
       operation: "realtime",
       phase: "stream",
       status: 200,
+      termination: "client-disconnect",
       bodyText: '[{\n  "latestTemplateVersionNumber": "10"\n}\n',
     },
     request(5, "delete"),
@@ -48,7 +49,10 @@ test("native evidence requires conditional refetch, correct invalidation, and ow
   assert.equal(verifyNativeExchange(exchange(), versions), true);
   for (const [index, patch] of [
     [5, { ifNoneMatch: "UNSEEN" }],
-    [7, { bodyText: '{"latestTemplateVersionNumber":11}' }],
+    [7, { bodyText: '[{"latestTemplateVersionNumber":11}' }],
+    [7, { bodyText: '[{"latestTemplateVersionNumber":10' }],
+    [7, { bodyText: '[{"latestTemplateVersionNumber":10} replaced' }],
+    [7, { termination: "upstream-error" }],
     [9, { status: 404 }],
     [3, { body: { entries: { native_value: "before", native_tier: "base" } } }],
   ]) {

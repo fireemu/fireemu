@@ -31,7 +31,7 @@ test("the evidence retains FIS relationships, SDK byte lengths and conditional E
     operation: "fetch",
     fid,
     status: 200,
-    headers: { etag },
+    headers: { etag, "content-type": "application/json; charset=UTF-8", "x-private": token },
     wire: Buffer.from(
       JSON.stringify({
         entries: { native_value: "before" },
@@ -49,9 +49,28 @@ test("the evidence retains FIS relationships, SDK byte lengths and conditional E
     fid,
     wire,
     path: `/v1/projects/${projectId}/namespaces/firebase:fetch?key=${key}`,
-    headers: { "if-none-match": etag, "content-encoding": "gzip" },
+    headers: {
+      "if-none-match": etag,
+      "content-encoding": "gzip",
+      "x-firebase-rc-fetch-type": "REALTIME/1",
+      "x-goog-api-key": key,
+      "x-goog-firebase-installations-auth": token,
+      authorization: refresh,
+      "x-private": token,
+    },
   });
   assert.equal(request.ifNoneMatch, first.etag);
+  assert.equal(request.layout.format, "json5");
+  assert.match(request.layout.tokens, /s/);
+  assert.equal(first.layout.format, "json");
+  assert.deepEqual(first.headers, { "content-type": "application/json; charset=UTF-8" });
+  assert.deepEqual(request.credentials, {
+    apiKey: true,
+    installationsAuth: true,
+    authorization: true,
+  });
+  assert.equal(request.headers["x-firebase-rc-fetch-type"], "REALTIME/1");
+  assert.equal(request.headers["x-private"], undefined);
   assert.equal(request.requestBytes, wire.length);
   assert.equal(request.body.app_instance_id_token, installResponse.body.authToken.token);
   assert.deepEqual(request.body.custom_signals, { tier: "gold" });
@@ -67,7 +86,15 @@ test("provider refusals and malformed success bodies cannot turn into unmasked e
   const capture = nativeCapture(settings);
   assert.deepEqual(
     capture.response({ status: 403, operation: "fetch", headers: {}, wire: Buffer.from(key) }),
-    { status: 403, responseBytes: key.length, encoding: "identity", etag: null, body: null },
+    {
+      status: 403,
+      responseBytes: key.length,
+      encoding: "identity",
+      etag: null,
+      body: null,
+      headers: {},
+      layout: null,
+    },
   );
   assert.throws(
     () =>

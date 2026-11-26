@@ -181,7 +181,7 @@ export async function exerciseNative({
   return { ...result, versions, nativeRequests: budget.used(), leakScanClean: scan(out) };
 }
 
-function oracleControl({ number, out, pass, runId, budget, token }) {
+export function oracleControl({ number, out, pass, runId, budget, token, fetchImpl }) {
   const grants = { operations: new Set(), key: null };
   const apps = {};
   const armed = new Set();
@@ -191,6 +191,7 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
   const transport = new Transport({
     out,
     token,
+    fetchImpl,
     maxRequests: ADMIN_LIMIT,
     timeoutMs: 25_000,
     userProject: PROJECT,
@@ -248,7 +249,6 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
         throw new Error("native Firebase services baseline not recognized");
       const configs = {};
       ensureOpen();
-      const { value: apiKey, uid } = await key.create();
       for (const platform of PLATFORMS) {
         ensureOpen();
         apps[platform] = nativeAppRegistry({
@@ -257,14 +257,19 @@ function oracleControl({ number, out, pass, runId, budget, token }) {
           platform,
           bundle: NATIVE_BUNDLES[platform] + "." + pass,
           name: "rc-closure-native-" + platform + "-" + pass,
-          apiKeyId: uid,
           beforeCreate: ensureOpen,
           pause: pausePoll,
           polls: 8,
           send: transport.send.bind(transport),
         });
+        await apps[platform].inspect();
+      }
+      ensureOpen();
+      const { value: apiKey, uid } = await key.create();
+      for (const platform of PLATFORMS) {
+        ensureOpen();
         armed.add(platform);
-        const { appId } = await apps[platform].create();
+        const { appId } = await apps[platform].create(uid);
         configs[platform] = { appId, apiKey, projectId: PROJECT, projectNumber: number };
       }
       return configs;
@@ -324,6 +329,7 @@ export async function main(argv, env = process.env) {
   const number = env.FIREEMU_SANDBOX_PROJECT_NUMBER;
   if (!/^[1-9][0-9]{5,17}$/.test(number ?? "")) throw new Error("invalid sandbox project number");
   const out = resolve(rawOut);
+  const spool = resolve(rawSpool);
   const runId = randomBytes(8).toString("hex");
   let adc;
   function token() {
@@ -340,6 +346,14 @@ export async function main(argv, env = process.env) {
   const control = oracleControl({ number, out, pass, runId, budget, token });
   const prepare = control.prepare;
   control.prepare = async () => {
+    const admission = JSON.parse(readFileSync(join(spool, "admitted.json"), "utf8"));
+    if (
+      admission.runId !== runId ||
+      admission.pass !== pass ||
+      admission.pid !== process.pid ||
+      admission.project !== PROJECT
+    )
+      throw new Error("native sandbox start was not admitted by its launcher");
     const target = new URL("https://oauth2.googleapis.com/tokeninfo");
     target.searchParams.set("access_token", token());
     const identity = await fetch(target, {
@@ -356,7 +370,7 @@ export async function main(argv, env = process.env) {
   const observed = await exerciseNative({
     out,
     runId,
-    spool: resolve(rawSpool),
+    spool,
     driver: resolve(rawDriver),
     pass,
     ports: { android: Number(androidPort), ios: Number(iosPort) },

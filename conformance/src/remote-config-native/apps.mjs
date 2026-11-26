@@ -13,18 +13,19 @@ function success(response, label) {
     response.status !== 200 ||
     !response.json ||
     typeof response.json !== "object" ||
-    Array.isArray(response.json)
+    Array.isArray(response.json) ||
+    "error" in response.json
   )
     throw new Error(`${label}: no complete management response`);
   return response.json;
 }
 
-function sortedActive(body) {
-  const apps = body.apps ?? [];
+function sortedActive(body, appFormat) {
+  const apps = Object.hasOwn(body, "apps") ? body.apps : [];
   if (
-    body.nextPageToken ||
+    Object.hasOwn(body, "nextPageToken") ||
     !Array.isArray(apps) ||
-    !apps.every((entry) => typeof entry?.appId === "string" && entry.appId.length > 0)
+    !apps.every((entry) => typeof entry?.appId === "string" && appFormat.test(entry.appId))
   )
     throw new Error("native app list incomplete");
   const active = apps.map((app) => app.appId).toSorted();
@@ -40,7 +41,6 @@ export function nativeAppRegistry({
   platform,
   bundle,
   name,
-  apiKeyId,
   send,
   pause,
   polls,
@@ -53,7 +53,6 @@ export function nativeAppRegistry({
     !/^[0-9]{6,18}$/.test(number) ||
     !/^[a-z0-9]+(?:\.[a-z0-9]+)+$/.test(bundle) ||
     !/^[a-z][a-z0-9-]{1,48}$/.test(name) ||
-    !KEY_UID.test(apiKeyId) ||
     !Number.isSafeInteger(polls) ||
     polls < 1
   )
@@ -65,6 +64,7 @@ export function nativeAppRegistry({
   let baseline;
   let resource;
   let appId;
+  let keyUid;
   let operation;
   let progress = "unobserved";
 
@@ -120,7 +120,7 @@ export function nativeAppRegistry({
     const { appId: received, displayName, etag } = body;
     if (
       received !== appId ||
-      body.apiKeyId !== apiKeyId ||
+      body.apiKeyId !== keyUid ||
       displayName !== name ||
       body[bundleField] !== bundle ||
       typeof etag !== "string" ||
@@ -131,15 +131,22 @@ export function nativeAppRegistry({
   }
 
   async function list(step) {
-    return sortedActive(success(await send(`${platform}-${step}`, collection), "list"));
+    return sortedActive(success(await send(`${platform}-${step}`, collection), "list"), appFormat);
   }
 
-  async function create() {
-    if (progress !== "unobserved") throw new Error("native app creation already attempted");
+  async function inspect() {
+    if (progress !== "unobserved") throw new Error("native app baseline already read");
     const before = await list("baseline");
     if (before.apps.some((entry) => entry[bundleField] === bundle || entry.displayName === name))
       throw new Error("native app registration would collide");
     baseline = before.active;
+    progress = "baseline";
+  }
+
+  async function create(apiKeyId) {
+    if (progress !== "baseline") throw new Error("native app create needs its verified baseline");
+    if (!KEY_UID.test(apiKeyId)) throw new Error("native app key UID is unreadable");
+    keyUid = apiKeyId;
     progress = "create-pending";
     const body = { [bundleField]: bundle, displayName: name, apiKeyId };
     const answer = await send(`${platform}-create`, collection, {
@@ -155,6 +162,7 @@ export function nativeAppRegistry({
     const created = await complete(first, "create");
     if (
       !appFormat.test(created.appId) ||
+      baseline.includes(created.appId) ||
       created.displayName !== name ||
       created[bundleField] !== bundle
     )
@@ -197,6 +205,7 @@ export function nativeAppRegistry({
 
   return {
     allow,
+    inspect,
     create,
     remove,
     assertClosed() {

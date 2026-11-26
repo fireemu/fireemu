@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { API_TARGETS } from "../remote-config-web/program.mjs";
 import { nativeKeyControl } from "./key.mjs";
 
 const name = "fixture-stage-c";
@@ -13,7 +14,12 @@ const deleteTime = "2026-11-26T02:21:20Z";
 const urls = { keysList: keys, keysCreate: keys, keysApi: root };
 const response = (json) => ({ status: 200, json });
 
-function world({ ambiguousCreate = false, conflict = false } = {}) {
+function world({
+  ambiguousCreate = false,
+  conflict = false,
+  reusedKey = false,
+  wrongTargets = false,
+} = {}) {
   const grants = { key: null, operations: new Set() };
   const calls = [];
   const transport = {
@@ -21,6 +27,9 @@ function world({ ambiguousCreate = false, conflict = false } = {}) {
       calls.push({ phase, url, options });
       switch (phase) {
         case "native-key-baseline":
+          return response(
+            reusedKey ? { keys: [{ name: resources, displayName: "preexisting" }] } : {},
+          );
         case "native-key-baseline-after":
           return response({});
         case "native-key-create": {
@@ -34,11 +43,28 @@ function world({ ambiguousCreate = false, conflict = false } = {}) {
             done: true,
             response: { name: resources, displayName: name, uid },
           });
+        case "native-key-owned":
+          return response({
+            name: resources,
+            uid,
+            displayName: name,
+            restrictions: {
+              apiTargets: (wrongTargets
+                ? [...API_TARGETS, "other.googleapis.com"]
+                : API_TARGETS
+              ).map((service) => ({ service })),
+            },
+          });
         case "native-key-value":
           assert.equal(grants.key, resources);
           return response({ name: resources, keyString: key });
         case "native-key-delete":
           assert.equal(grants.key, resources);
+          return response({
+            name: "operations/key-delete",
+          });
+        case "native-key-delete-poll-1":
+          assert.ok(grants.operations.has("operations/key-delete"));
           return response({
             name: "operations/key-delete",
             done: true,
@@ -73,9 +99,19 @@ test("the key is restricted and its value is never selected for persistence", as
       "firebaseremoteconfigrealtime.googleapis.com",
     ],
   );
-  assert.ok(calls.find((call) => call.phase === "native-key-value").options.secret);
+  for (const phase of [
+    "native-key-create",
+    "native-key-create-poll-1",
+    "native-key-owned",
+    "native-key-value",
+  ]) {
+    assert.equal(calls.find((call) => call.phase === phase).options.secret, true, phase);
+  }
   assert.equal(control.closed(), false);
   assert.equal(await control.remove(), true);
+  for (const phase of ["native-key-delete", "native-key-delete-poll-1", "native-key-after"]) {
+    assert.equal(calls.find((call) => call.phase === phase).options.secret, true, phase);
+  }
   assert.equal(control.closed(), true);
   assert.equal(calls.at(-1).phase, "native-key-baseline-after");
 });
@@ -91,4 +127,18 @@ test("a missing or contradictory cleanup answer leaves the key unresolved", asyn
   await conflict.control.create();
   assert.equal(await conflict.control.remove(), false);
   assert.equal(conflict.control.closed(), false);
+});
+
+test("an operation that names a preexisting key cannot authorize reading or deleting it", async () => {
+  const { control, calls } = world({ reusedKey: true });
+  await assert.rejects(control.create(), /preexisting/);
+  assert.equal(await control.remove(), false);
+  assert.ok(!calls.some((call) => ["native-key-value", "native-key-delete"].includes(call.phase)));
+});
+
+test("an owned key with broader API restrictions can be removed but never reaches an SDK", async () => {
+  const { control, calls } = world({ wrongTargets: true });
+  await assert.rejects(control.create(), /restrictions/);
+  assert.ok(!calls.some((call) => call.phase === "native-key-value"));
+  assert.equal(await control.remove(), true);
 });

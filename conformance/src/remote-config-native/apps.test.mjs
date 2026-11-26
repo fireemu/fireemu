@@ -37,7 +37,6 @@ function registry(sends) {
     platform,
     bundle,
     name,
-    apiKeyId,
     pause: () => {},
     polls: 2,
     async send(caseId, rawURL, options = {}) {
@@ -76,7 +75,9 @@ test("the lifecycle binds reads, polls and removal to the exact created app", as
   assert.equal(allow(resource), false);
   assert.equal(allow(operation), false);
   assert.throws(() => service.assertClosed(), /baseline/);
-  const created = await service.create();
+  await assert.rejects(service.create(apiKeyId), /baseline/);
+  await service.inspect();
+  const created = await service.create(apiKeyId);
   assert.equal(created.appId, id);
   assert.equal(allow(resource), true);
   assert.equal(allow(resource.replace(id, existing)), false);
@@ -95,7 +96,8 @@ test("an unknown create cannot be closed merely because the app is absent", asyn
     [collection, response({ apps: baseline })],
     [collection, new Error("transport ended before the create result")],
   ]);
-  await assert.rejects(service.create(), /transport/);
+  await service.inspect();
+  await assert.rejects(service.create(apiKeyId), /transport/);
   assert.throws(() => service.assertClosed(), /app remains/);
   assert.equal(service.allow(new URL(resource + ":remove"), "POST"), false);
 });
@@ -116,7 +118,8 @@ test("a terminal removal followed by a contradictory active list remains unsettl
     ],
     [collection, response({ apps: [...baseline, app] })],
   ]);
-  await service.create();
+  await service.inspect();
+  await service.create(apiKeyId);
   await assert.rejects(service.remove(), /restored/);
   assert.throws(() => service.assertClosed(), /app remains/);
 });
@@ -127,6 +130,25 @@ test("a registration associated with another key cannot arm an SDK", async () =>
     [collection, response({ name: "operations/sample/create", done: true, response: app })],
     [resource, response({ ...app, apiKeyId: "unowned" })],
   ]);
-  await assert.rejects(service.create(), /ownership/);
+  await service.inspect();
+  await assert.rejects(service.create(apiKeyId), /ownership/);
   assert.throws(() => service.assertClosed(), /app remains/);
+});
+
+test("pre-write inspection rejects occupied, malformed or paginated native app lists", async () => {
+  for (const listing of [
+    { apps: [app] },
+    { apps: null },
+    { error: {} },
+    { nextPageToken: "unused", apps: [] },
+    { apps: [{ appId: "foreign-project", packageName: "unused" }] },
+  ]) {
+    const { service, calls } = registry([[collection, response(listing)]]);
+    await assert.rejects(service.inspect());
+    await assert.rejects(service.create(apiKeyId), /baseline/);
+    assert.deepEqual(
+      calls.map(([method]) => method),
+      ["GET"],
+    );
+  }
 });
