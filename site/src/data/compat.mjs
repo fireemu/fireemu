@@ -31,7 +31,7 @@ export const AREAS = {
 	'REMOTE-CONFIG': {
 		product: 'Firebase Remote Config',
 		title: 'Templates and delivery',
-		covers: 'Template reads, validation, publishing, version history, rollback, the server-template data plane, and publish-triggered functions are verified against production for the recorded cases in the strict profile. Web SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. Android and Apple SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. Since v0.68.0, Web SDK fetches of a published empty template return EMPTY_CONFIG, and explicit SDK POST preflights use the recorded HTTP 200 and CORS headers. The loopback control listener serves client and server template administration and the SDK routes. Fireemu also supports local trigger injection with caller-supplied metadata.',
+		covers: 'Template reads, validation, publishing, version history, rollback, the server-template data plane, and publish-triggered functions are verified against production for the recorded cases in the strict profile. Web SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. Android and Apple SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. Since v0.68.0, Web SDK fetches of a published empty template without a matching ETag return EMPTY_CONFIG, and explicit SDK POST preflights use the recorded HTTP 200 and CORS headers. The loopback control listener serves client and server template administration and the SDK routes. Fireemu also supports local trigger injection with caller-supplied metadata.',
 	},
 	'FS-DATA-WRITE': {
 		product: 'Cloud Firestore',

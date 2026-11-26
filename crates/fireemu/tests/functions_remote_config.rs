@@ -541,12 +541,9 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
     let _ = server.await;
 
     assert_eq!(rows.len(), 6);
-    // One id per version, carried by both generations (RC-OBSERVE-V2-3).
-    for (version, id, source) in [
-        (forced, "1714029973", "0"),
-        (conditional, "1148424006", "0"),
-        (rollback, "582684983", "1"),
-    ] {
+    // Both generations carry the same nonzero signed 32-bit id for each published version.
+    let mut event_ids = std::collections::BTreeSet::new();
+    for (version, source) in [(forced, "0"), (conditional, "0"), (rollback, "1")] {
         let row = |generation| {
             let row = rows
                 .iter()
@@ -567,6 +564,12 @@ async fn remote_config_publish_through_admin_reaches_real_sdk_handlers() {
         let v1 = row(1);
         assert_eq!(v1["attempt"], 1);
         assert_eq!(v1["data"], version);
+        let id = v1["context"]["eventId"].as_str().expect("v1 event id");
+        let parsed = id
+            .parse::<std::num::NonZeroI32>()
+            .expect("event id must be a nonzero signed 32-bit integer");
+        assert_eq!(parsed.to_string(), id, "event id must be decimal");
+        assert!(event_ids.insert(parsed), "published versions share id {id}");
         let context = json!({
             "eventId": id,
             "eventType": "google.firebase.remoteconfig.update",

@@ -16,7 +16,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ### Fixed
 
-- Remote Config Web SDK requests with a `Content-Encoding: gzip` header and the recorded uncompressed JSON body work again. Fetching a published empty template returns `EMPTY_CONFIG` and its version. The SDK fetch and real-time POST preflights return production's 200 status and CORS headers for allowed local origins.
+- Remote Config Web SDK requests with a `Content-Encoding: gzip` header and the recorded uncompressed JSON body work again. A Web fetch of a published empty template without a matching ETag returns `EMPTY_CONFIG` and its version. The SDK fetch and real-time POST preflights return production's 200 status and CORS headers for allowed local origins.
 
 ## [0.67.0] - 2026-11-26
 

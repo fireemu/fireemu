@@ -345,7 +345,7 @@
     "spec/compatibility/closure/evidence/integration-v0.8.0/FUNCTIONS-HTTP-comparison.json": "4d0c4ddd739099adaaaa99b12a3537b20013533042f912a589c01c182e6e443b",
     "spec/compatibility/closure/evidence/integration-v0.8.0/release-artifact.json": "439d1f55b447d2621661077fc8c130df1fba8f38d996b0a952adef0d4d8bcd1c",
     "spec/compatibility/closure/evidence/integration-v0.9.0/release-artifact.json": "5de64ae72ddab9c30a3544f3957d95dbb1d3708c390f0319e09ddf97f29e6e3f",
-    "spec/compatibility/contract.json": "c3b3016cb9040e95d16a340b9981b32a278358a8306e48fb7cc31e1fbfcae30b",
+    "spec/compatibility/contract.json": "6426a8c6f7c080733fab09685bc6d482bd735b01017622c84362405cfd18b739",
     "spec/compatibility/fs-listen-sdk-browser-local-shadow.json": "41b2adb3265f6120291f48ea72532fb6927c4fda93f3893ace16a207d7122797",
     "spec/compatibility/fs-listen-sdk-local-shadow.json": "aea62689faa5e52ca96e1b3af9c6bc971cd72101ee588b371dd04f2121a56c95",
     "spec/compatibility/gaps.json": "d20fe030f9e2bdff1a587421ffae216c73b30fb7ff7468e7383be5bccbd3df9d",
