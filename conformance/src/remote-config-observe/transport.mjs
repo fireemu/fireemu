@@ -85,6 +85,8 @@ export class Transport {
     if (!this.allow(target, method, { signed }))
       throw new Error(`${caseId}: request not permitted`);
     if (this.count >= this.maxRequests) throw new Error(`${caseId}: request cap reached`);
+    // Reserve the slot before the first await (RC-CLOSURE-A ruling 7 item 3).
+    const seq = ++this.count;
     // `gzip: false` asks for identity, `credentials: false` sends no Authorization (the recorded
     // unauthenticated read), `textBody: true` keeps a 2xx body that is not JSON (a defaults file),
     // `notModified: true` takes a 304 as an answer (the conditional read).
@@ -111,11 +113,9 @@ export class Transport {
     // request itself keeps the original value.
     const masked = (value) =>
       typeof value === "string" && this.redact ? this.redact(value) : value;
-    // Authentication may have yielded to another send or to a stop signal. Check both at
-    // dispatch, before reserving the sequence number and without yielding before the fetch.
-    if (this.count >= this.maxRequests) throw new Error(`${caseId}: request cap reached`);
+    // Authentication may have yielded to a stop signal. Check again without yielding before
+    // the fetch. A refused dispatch still consumes its reserved slot.
     beforeDispatch?.();
-    const seq = ++this.count;
     this.journal({
       seq,
       case: caseId,

@@ -370,6 +370,7 @@ test("the judge refuses undeclared fetch and realtime wire differences", () => {
   for (const [name, edit] of Object.entries({
     "a changed NO_CHANGE tag": (f) => {
       fetches(f)[1].responseHeaders.etag = tag;
+      fetches(f)[2].requestHeaders["if-none-match"] = tag;
     },
     "a broken cache chain": (f) => {
       fetches(f)[2].requestHeaders["if-none-match"] = tag;

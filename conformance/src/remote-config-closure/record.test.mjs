@@ -412,12 +412,18 @@ test("the request cap is taken before the first await: two concurrent sends at o
   const out = mkdtempSync(join(tmpdir(), "rc-closure-cap-"));
   t.after(() => rmSync(out, { recursive: true, force: true }));
   let fetched = 0;
+  let tokenReads = 0;
+  let unblock;
+  const pendingToken = new Promise((resolve) => {
+    unblock = resolve;
+  });
   const transport = new Transport({
     out,
     allow: () => true,
     // The token is asynchronous, as the ADC token read is a yield point.
     token: async () => {
-      await new Promise((r) => setTimeout(r, 5));
+      tokenReads += 1;
+      if (tokenReads === 3) await pendingToken;
       return "t";
     },
     maxRequests: 3,
@@ -429,10 +435,13 @@ test("the request cap is taken before the first await: two concurrent sends at o
   });
   await transport.send("one", "https://example.test/a");
   await transport.send("two", "https://example.test/a");
-  const both = await Promise.allSettled([
+  const pending = Promise.allSettled([
     transport.send("three", "https://example.test/a"),
     transport.send("four", "https://example.test/a"),
   ]);
+  await Promise.resolve();
+  unblock();
+  const both = await pending;
   assert.deepEqual(
     both.map((o) => o.status),
     ["fulfilled", "rejected"],
@@ -440,6 +449,7 @@ test("the request cap is taken before the first await: two concurrent sends at o
   assert.match(both[1].reason.message, /four: request cap reached/);
   assert.equal(transport.count, 3);
   assert.equal(fetched, 3);
+  assert.equal(tokenReads, 3);
 });
 
 test("summarise matches a Gen1 event whose time drops trailing zeros", async () => {

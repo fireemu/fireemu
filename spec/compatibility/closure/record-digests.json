@@ -96,7 +96,7 @@
     "conformance/src/remote-config-production/judge.mjs": "8909ff5dc860b0de86aa69303bfc096feb12ea7ff8b2decc8e88d9eb41766e33",
     "conformance/src/remote-config-production/sanitise.mjs": "90abdc0b46d03a1a177610efe2077ea5f7a2411cd724ba7bc2b739a1e879434d",
     "conformance/src/remote-config-web/evidence.mjs": "a0706c1ec8a3ac056cb69a651b4a05a2a739aa73c659d68b3039b0f8ebcebbc3",
-    "conformance/src/remote-config-web/evidence.test.mjs": "3561b3da7cf02b18de624b5f146be469a1bedd0b02357a55e878f1de53cc27ff",
+    "conformance/src/remote-config-web/evidence.test.mjs": "589f9a085daf60130c6929816d5cd93f42776a1c878e97a4cfd8aced1d4bb873",
     "conformance/src/remote-config-web/judge.mjs": "3b4f8fc74eecf3feebaa3d38b9fca2d045dbd6d0cec10047bac1c85f4aab7fbc",
     "conformance/src/remote-config-web/known-differences.json": "7d185612fd4e64283990830a341328221a5e78227f87a9da408884b4ae4e424a",
     "conformance/src/remote-config-web/local.mjs": "25a9b9ecd1ed10c0b5ec396c44a5a56a9eb4a5874f29f97e9ee6fa33d9e6f02f",
