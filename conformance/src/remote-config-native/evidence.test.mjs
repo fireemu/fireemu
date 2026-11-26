@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { compareNative, FILES, projection, verifyNativeArtifacts } from "./evidence.mjs";
+import {
+  compareNative,
+  FILES,
+  projection,
+  readNativeRun,
+  verifyNativeArtifacts,
+} from "./evidence.mjs";
 
 const call = (sequence, operation, extra) => ({ sequence, operation, phase: "request", ...extra });
 const done = (sequence, operation, extra) => ({
@@ -111,6 +119,52 @@ test("native comparisons report wire changes and narrowly classify local gzip tr
   );
 });
 
+test("native fetch comparisons accept only the recorded response member order difference", () => {
+  const root = new URL("../../../", import.meta.url);
+  const read = (path) => JSON.parse(readFileSync(new URL(path, root)));
+  const expected = read(FILES.pass1).android;
+  const local = read(FILES.strict).android;
+  const id = "KD-NATIVE-FETCH-MEMBER-ORDER";
+  assert.ok(compareNative(expected, local, true).known.includes(id));
+  assert.ok(
+    compareNative(expected, local, false).differences.some(({ field }) => field === "layout"),
+  );
+
+  const initial = local.exchanges[1];
+  initial.response.layout.finalNewline = false;
+  assert.ok(
+    compareNative(expected, local, true).differences.some(
+      ({ role, field }) => role === "initial-fetch" && field === "layout",
+    ),
+  );
+  initial.response.layout.finalNewline = true;
+  const { state, ...rest } = initial.response.body;
+  initial.response.body = { state, ...rest };
+  const shuffled = compareNative(expected, local, true);
+  assert.ok(
+    shuffled.differences.some(({ role, field }) => role === "initial-fetch" && field === "layout"),
+  );
+
+  local.exchanges[3].request.layout.tokens = "{}";
+  assert.ok(
+    compareNative(expected, local, true).differences.some(
+      ({ role, boundary, field }) =>
+        role === "automatic-fetch" && boundary === "request" && field === "layout",
+    ),
+  );
+});
+
+test("native source intake refuses a mismatched production pass, profile, or role", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "native-evidence-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const write = (name, value) => writeFileSync(join(dir, name), JSON.stringify(value));
+  write("result.json", { pass: "c1", runId: "demo", adminRequests: 10 });
+  assert.throws(() => readNativeRun(dir, "pass2"), /native source slot/);
+  write("result.json", { pass: "c1", runId: "demo", profile: "strict" });
+  assert.throws(() => readNativeRun(dir, "pass1"), /native source slot/);
+  assert.throws(() => readNativeRun(dir, "emulator"), /native source slot/);
+});
+
 test("both production captures and both local profiles bind the verified parent evidence", () => {
   const root = new URL("../../../", import.meta.url);
   const read = (path) => readFileSync(new URL(path, root));
@@ -130,4 +184,16 @@ test("both production captures and both local profiles bind the verified parent 
   const forgedRead = (path) =>
     path === FILES.emulator ? bytes : path === lock ? JSON.stringify(digests) : read(path);
   assert.match(verifyNativeArtifacts({ read: forgedRead, list }).join(), /native fixture contract/);
+
+  const duplicate = JSON.parse(read(FILES.pass2));
+  duplicate.source.runSha256 = JSON.parse(read(FILES.pass1)).source.runSha256;
+  const duplicateBytes = JSON.stringify(duplicate);
+  digests.records[FILES.emulator] = JSON.parse(read(lock)).records[FILES.emulator];
+  digests.records[FILES.pass2] = createHash("sha256").update(duplicateBytes).digest("hex");
+  const duplicateRead = (path) =>
+    path === FILES.pass2 ? duplicateBytes : path === lock ? JSON.stringify(digests) : read(path);
+  assert.match(
+    verifyNativeArtifacts({ read: duplicateRead, list }).join(),
+    /distinct native source/,
+  );
 });

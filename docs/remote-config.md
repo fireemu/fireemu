@@ -83,7 +83,7 @@ Remote Config Android 22.1.0 and Apple 12.18.0 were recorded twice on 2026-11-26
 
 Android sends the configured project number on both SDK routes and uses camelCase request fields. Apple sends the project ID for fetch and the project number for real-time updates, with gzip-compressed bodies. Set the project's number in `daemon.authProjectNumbers` to match the SDK's Firebase options. A native UPDATE includes the SDK package name or bundle identifier as `appName`.
 
-The native comparison uses instrumented test apps and a scoped Installations fixture. Fireemu serves the recorded Remote Config responses with identity encoding and its CORS header policy. The [native comparison fixtures](../conformance/remote-config-native/) document the matched exchanges and these differences.
+The native comparison uses instrumented test apps and a scoped Installations fixture. Fireemu serves the recorded Remote Config responses with identity encoding and its CORS header policy. In the recorded fetch bodies, Fireemu writes `appName` before `entries`; Google writes `entries` first. The [native comparison fixtures](../conformance/remote-config-native/) document the matched exchanges and these differences.
 
 ## Functions triggered by a publish
 

@@ -1,12 +1,15 @@
 {
+  "source": {
+    "slot": "emulator",
+    "runSha256": "cb2698ca10731a339bfea63544003a86c32259ee3367c91f8992fc6ebe9c430f",
+    "receiptSha256": "39a6248435035c43f81cd48e66e37e0ecd398433edbae923c7118a5707ecf23f"
+  },
   "android": {
     "platform": "android",
     "sdk": {
       "initial": "before",
       "cached": "before",
-      "updateKeys": [
-        "native_value"
-      ],
+      "updateKeys": ["native_value"],
       "activated": "after",
       "installationDeleted": true
     },
@@ -285,9 +288,7 @@
     "sdk": {
       "initial": "before",
       "cached": "before",
-      "updateKeys": [
-        "native_value"
-      ],
+      "updateKeys": ["native_value"],
       "activated": "after",
       "installationDeleted": true
     },

@@ -1,12 +1,15 @@
 {
+  "source": {
+    "slot": "pass1",
+    "runSha256": "76d7cd390b490133f14cf5865e67f5eba37e9f086b130592aaf55b730b644d6e",
+    "receiptSha256": "5c315cc4d20407c8edda30c7692d98c3f99945942108738b5399f1d111fc7dbf"
+  },
   "android": {
     "platform": "android",
     "sdk": {
       "initial": "before",
       "cached": "before",
-      "updateKeys": [
-        "native_value"
-      ],
+      "updateKeys": ["native_value"],
       "activated": "after",
       "installationDeleted": true
     },
@@ -290,9 +293,7 @@
     "sdk": {
       "initial": "before",
       "cached": "before",
-      "updateKeys": [
-        "native_value"
-      ],
+      "updateKeys": ["native_value"],
       "activated": "after",
       "installationDeleted": true
     },

@@ -15,6 +15,7 @@
     "strictVsPass1": {
       "android": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -23,6 +24,7 @@
       },
       "ios": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -33,6 +35,7 @@
     "strictVsPass2": {
       "android": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -41,6 +44,7 @@
       },
       "ios": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -51,6 +55,7 @@
     "emulatorVsPass1": {
       "android": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -59,6 +64,7 @@
       },
       "ios": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -69,6 +75,7 @@
     "emulatorVsPass2": {
       "android": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -77,6 +84,7 @@
       },
       "ios": {
         "known": [
+          "KD-NATIVE-FETCH-MEMBER-ORDER",
           "KD-NATIVE-INSTALLATIONS-FIXTURE",
           "KD-NATIVE-RESPONSE-ENCODING",
           "KD-NATIVE-VARY"
@@ -86,6 +94,7 @@
     }
   },
   "knownDifferences": {
+    "KD-NATIVE-FETCH-MEMBER-ORDER": "The recorded native fetch responses place entries before appName in Google and appName before entries in Fireemu. Parsed values and activation are identical.",
     "KD-NATIVE-INSTALLATIONS-FIXTURE": "Fireemu uses the scoped Installations fixture for these SDK runs. The SDK's own create and delete requests are captured and compared.",
     "KD-NATIVE-RESPONSE-ENCODING": "The observed Google data-plane responses use gzip. Fireemu sends the same decoded response over loopback with identity encoding.",
     "KD-NATIVE-VARY": "Google lists Origin, X-Origin and Referer in the response Vary header. The loopback listener uses Fireemu's CORS header policy."

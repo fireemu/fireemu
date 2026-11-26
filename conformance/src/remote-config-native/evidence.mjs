@@ -97,17 +97,40 @@ export function projection(platform, rows, receipt, versions) {
   return result;
 }
 
-export function readNativeRun(out) {
-  const read = (name) => readFileSync(join(out, name), "utf8");
-  const original = read("result.json");
-  const result = JSON.parse(original);
+const SOURCE_SLOTS = {
+  pass1: { pass: "c1", production: true },
+  pass2: { pass: "c2", production: true },
+  strict: { pass: "c1", profile: "strict", production: false },
+  emulator: { pass: "c1", profile: "emulator", production: false },
+};
+
+export function readNativeRun(out, slot) {
+  const digests = {};
+  const read = (name) => {
+    const bytes = readFileSync(join(out, name));
+    digests[name] = sha(bytes);
+    return bytes.toString("utf8");
+  };
+  const result = JSON.parse(read("result.json"));
+  const production = Object.hasOwn(result, "adminRequests");
+  const expected = Object.hasOwn(SOURCE_SLOTS, slot) ? SOURCE_SLOTS[slot] : undefined;
+  if (
+    !expected ||
+    expected.production !== production ||
+    result.pass !== expected.pass ||
+    result.profile !== expected.profile ||
+    typeof result.runId !== "string" ||
+    result.runId.length === 0
+  )
+    throw new Error("native source slot does not match the run receipt");
+
   let terminal =
     result.complete === true && result.sandboxAtBaseline === true && result.open?.length === 0;
-  if (Object.hasOwn(result, "adminRequests")) {
+  if (production) {
     const closure = JSON.parse(read("closure.json"));
     const accepted =
       closure.runId === result.runId &&
-      closure.resultSha256 === sha(original) &&
+      closure.resultSha256 === digests["result.json"] &&
       closure.accepted === true;
     if (accepted && closure.recovered === true) {
       const recovery = JSON.parse(read("recovery.json"));
@@ -129,7 +152,7 @@ export function readNativeRun(out) {
     !isDeepStrictEqual(result.verified, PLATFORMS)
   )
     throw new Error("native run is incomplete");
-  return Object.fromEntries(
+  const clients = Object.fromEntries(
     PLATFORMS.map((platform) => [
       platform,
       projection(
@@ -142,6 +165,35 @@ export function readNativeRun(out) {
         result.versions,
       ),
     ]),
+  );
+  return {
+    source: {
+      slot,
+      runSha256: sha(JSON.stringify([result.profile ?? "production", result.runId])),
+      receiptSha256: sha(JSON.stringify(digests)),
+    },
+    ...clients,
+  };
+}
+
+function orderedLayout(response, fetch) {
+  if (!fetch) return response.layout;
+  return {
+    layout: response.layout,
+    members: Object.keys(response.body ?? {}),
+    entries: Object.keys(response.body?.entries ?? {}),
+  };
+}
+
+function recordedFetchMemberOrder(left, right, a, b) {
+  const jsonLayout = (tokens) => ({ format: "json", tokens, finalNewline: true });
+  return (
+    isDeepStrictEqual(a.body, b.body) &&
+    isDeepStrictEqual(left.entries, right.entries) &&
+    isDeepStrictEqual(left.members, ["entries", "appName", "state", "templateVersion"]) &&
+    isDeepStrictEqual(right.members, ["appName", "entries", "state", "templateVersion"]) &&
+    isDeepStrictEqual(left.layout, jsonLayout("{wd:w{wd:wd,wd:wdw},wd:wd,wd:wd,wd:wdw}w")) &&
+    isDeepStrictEqual(right.layout, jsonLayout("{wd:wd,wd:w{wd:wd,wd:wdw},wd:wd,wd:wdw}w"))
   );
 }
 
@@ -168,21 +220,29 @@ export function compareNative(observed, other, local) {
     const b = other.exchanges[index];
     if (a.role !== role || b.role !== role) throw new Error("native exchange order changed");
     const installation = role.startsWith("installation");
+    const fetch = role === "initial-fetch" || role === "automatic-fetch";
 
     for (const field of [...REQUEST_FIELDS, "layout"]) {
-      const left = field === "layout" ? a.request.layout?.format : a.request[field];
-      const right = field === "layout" ? b.request.layout?.format : b.request[field];
+      const left = a.request[field];
+      const right = b.request[field];
       if (!isDeepStrictEqual(left, right))
         differences.push({ role, boundary: "request", field, left, right });
     }
 
-    for (const field of RESPONSE_FIELDS) {
-      const left = a.response[field];
-      const right = b.response[field];
+    for (const field of [...RESPONSE_FIELDS, "layout"]) {
+      const left = field === "layout" ? orderedLayout(a.response, fetch) : a.response[field];
+      const right = field === "layout" ? orderedLayout(b.response, fetch) : b.response[field];
       if (isDeepStrictEqual(left, right)) continue;
       if (installation && local) known.add("KD-NATIVE-INSTALLATIONS-FIXTURE");
       else if (field === "encoding" && local && left === "gzip" && right === "identity")
         known.add("KD-NATIVE-RESPONSE-ENCODING");
+      else if (
+        field === "layout" &&
+        fetch &&
+        local &&
+        recordedFetchMemberOrder(left, right, a.response, b.response)
+      )
+        known.add("KD-NATIVE-FETCH-MEMBER-ORDER");
       else if (field === "headers" && local && recordedVary(left, right))
         known.add("KD-NATIVE-VARY");
       else differences.push({ role, boundary: "response", field, left, right });
@@ -204,6 +264,8 @@ const RECORD = "spec/compatibility/closure/REMOTE-CONFIG.json";
 const CONDITIONS = ["REMOTE-CONFIG/client-fetch-and-activate", "REMOTE-CONFIG/realtime-updates"];
 
 export const KNOWN = {
+  "KD-NATIVE-FETCH-MEMBER-ORDER":
+    "The recorded native fetch responses place entries before appName in Google and appName before entries in Fireemu. Parsed values and activation are identical.",
   "KD-NATIVE-INSTALLATIONS-FIXTURE":
     "Fireemu uses the scoped Installations fixture for these SDK runs. The SDK's own create and delete requests are captured and compared.",
   "KD-NATIVE-RESPONSE-ENCODING":
@@ -260,10 +322,15 @@ export function nativeMetadata(records) {
   };
 }
 
-function validFixture(fixture) {
+const isDigest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+
+function validFixture(fixture, slot) {
   if (
     PRIVATE_VALUES.test(JSON.stringify(fixture)) ||
-    Object.keys(fixture).toSorted().join(" ") !== PLATFORMS.join(" ")
+    !isDeepStrictEqual(Object.keys(fixture).toSorted(), [...PLATFORMS, "source"]) ||
+    fixture.source?.slot !== slot ||
+    !isDigest(fixture.source.runSha256) ||
+    !isDigest(fixture.source.receiptSha256)
   )
     return false;
   return PLATFORMS.every((platform) => {
@@ -316,12 +383,19 @@ export function verifyNativeArtifacts({ list, read }) {
       return ["native evidence directory differs from its exact artifact list"];
     const records = JSON.parse(read(LOCK)).records;
     const docs = {};
+    const runs = new Set();
+    const receipts = new Set();
     for (const [key, path] of Object.entries(FILES)) {
       const bytes = read(path);
       if (records[path] !== sha(bytes)) return [path + " differs from its record digest"];
       docs[key] = JSON.parse(bytes);
-      if (key !== "comparison" && !validFixture(docs[key]))
-        return [path + " fails the native fixture contract"];
+      if (key === "comparison") continue;
+      if (!validFixture(docs[key], key)) return [path + " fails the native fixture contract"];
+      const { runSha256, receiptSha256 } = docs[key].source;
+      if (runs.has(runSha256) || receipts.has(receiptSha256))
+        return ["each fixture must have a distinct native source"];
+      runs.add(runSha256);
+      receipts.add(receiptSha256);
     }
     const actual = buildComparisons(docs);
     if (!isDeepStrictEqual(actual, docs.comparison))
