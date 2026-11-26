@@ -412,21 +412,33 @@ export async function observe(ctx) {
       authDomain: `${ctx.project}.firebaseapp.com`,
     };
 
+    if (ctx.preflight) result.preflight = await ctx.preflight(config);
+
     // ---- T. the client template ----
     let tag = base.etag;
+    if (ctx.followup) {
+      clients.one = await browser.client(config, "one");
+      result.clients.one = {};
+      const empty = await clients.one.call("fetch", SIGNALS.s1);
+      await gate();
+      if (empty.lastFetchStatus !== "success" || empty.error !== null)
+        throw new Stop("published-empty SDK fetch did not succeed");
+      result.clients.one.empty = empty;
+    }
     const v1 = await write("t1-publish", urls.client, "PUT", template("v1", runId), tag);
     tag = v1.etag;
     step("t1", { version: v1.json.version?.versionNumber ?? null });
 
     // ---- F. fetches of both installations ----
-    clients.one = await browser.client(config, "one");
-    clients.two = await browser.client(config, "two");
+    clients.one ??= await browser.client(config, "one");
+    if (!ctx.followup) clients.two = await browser.client(config, "two");
     for (const [name, signals] of [
       ["one", SIGNALS.s1],
       ["two", SIGNALS.s2],
     ]) {
+      if (!clients[name]) continue;
       const fetches = [];
-      result.clients[name] = { fetches };
+      result.clients[name] = { ...result.clients[name], fetches };
       for (const _ of [1, 2]) {
         await gate();
         const f = await clients[name].call("fetch", signals);
@@ -442,75 +454,89 @@ export async function observe(ctx) {
 
     // ---- R. realtime on installation one ----
     const one = clients.one;
-    await gate();
-    await one.call("listen");
-    const opened = await until(async () => (await streams(one)) >= 1, timing.streamOpenMs);
-    step("r-open", { opened });
-    if (!opened) throw new Stop("the realtime stream did not open");
-    const publications = [
-      ["r1-changed", () => write("r1-changed", urls.client, "PUT", template("v2", runId), tag)],
-      [
-        "r2-metadata",
-        () =>
-          write(
-            "r2-metadata",
-            urls.client,
-            "PUT",
-            template("v2", runId, { description: `fireemu rc-closure-b ${runId} v2 metadata` }),
-            tag,
-          ),
-      ],
-      [
-        "r3-same",
-        () =>
-          write(
-            "r3-same",
-            urls.client,
-            "PUT",
-            template("v2", runId, { description: `fireemu rc-closure-b ${runId} v2 metadata` }),
-            tag,
-          ),
-      ],
-      [
-        "r4-rollback",
-        () =>
-          write("r4-rollback", `${urls.client}:rollback`, "POST", {
-            versionNumber: step2Version(),
-          }),
-      ],
-    ];
-    let v2 = null;
-    const step2Version = () => v2;
-    for (const [name, publish] of publications) {
+    if (ctx.followup) {
+      result.followup = await ctx.followup({
+        client: one,
+        gate,
+        until,
+        timing,
+        writeVersion: async (caseId, label) => {
+          const reply = await write(caseId, urls.client, "PUT", template(label, runId), tag);
+          tag = reply.etag;
+          return reply.json.version?.versionNumber ?? null;
+        },
+      });
+    } else {
+      await gate();
+      await one.call("listen");
+      const opened = await until(async () => (await streams(one)) >= 1, timing.streamOpenMs);
+      step("r-open", { opened });
+      if (!opened) throw new Stop("the realtime stream did not open");
+      const publications = [
+        ["r1-changed", () => write("r1-changed", urls.client, "PUT", template("v2", runId), tag)],
+        [
+          "r2-metadata",
+          () =>
+            write(
+              "r2-metadata",
+              urls.client,
+              "PUT",
+              template("v2", runId, { description: `fireemu rc-closure-b ${runId} v2 metadata` }),
+              tag,
+            ),
+        ],
+        [
+          "r3-same",
+          () =>
+            write(
+              "r3-same",
+              urls.client,
+              "PUT",
+              template("v2", runId, { description: `fireemu rc-closure-b ${runId} v2 metadata` }),
+              tag,
+            ),
+        ],
+        [
+          "r4-rollback",
+          () =>
+            write("r4-rollback", `${urls.client}:rollback`, "POST", {
+              versionNumber: step2Version(),
+            }),
+        ],
+      ];
+      let v2 = null;
+      const step2Version = () => v2;
+      for (const [name, publish] of publications) {
+        const before = (await one.updates()).length;
+        const r = await publish();
+        if (name === "r1-changed") v2 = r.json.version?.versionNumber ?? null;
+        tag = r.etag;
+        const window = name === "r1-changed" ? timing.updateWindowMs : timing.quietWindowMs;
+        const updated = await until(async () => (await one.updates()).length > before, window);
+        step(name, { version: r.json.version?.versionNumber ?? null, updated });
+      }
+      // One reconnect: the listener closed and opened again, then one more changed publication.
+      await gate();
+      await one.call("unlisten");
+      await wait(timing.reconnectGapMs);
+      await gate();
+      const streamsBefore = await streams(one);
+      await one.call("listen");
+      const reopened = await until(
+        async () => (await streams(one)) > streamsBefore,
+        timing.streamOpenMs,
+      );
+      step("r-reopen", { reopened });
       const before = (await one.updates()).length;
-      const r = await publish();
-      if (name === "r1-changed") v2 = r.json.version?.versionNumber ?? null;
-      tag = r.etag;
-      const window = name === "r1-changed" ? timing.updateWindowMs : timing.quietWindowMs;
-      const updated = await until(async () => (await one.updates()).length > before, window);
-      step(name, { version: r.json.version?.versionNumber ?? null, updated });
+      const v5 = await write("r5-changed", urls.client, "PUT", template("v5", runId), tag);
+      tag = v5.etag;
+      const updated = await until(
+        async () => (await one.updates()).length > before,
+        timing.updateWindowMs,
+      );
+      step("r5-changed", { version: v5.json.version?.versionNumber ?? null, updated });
+      await one.call("unlisten");
     }
-    // One reconnect: the listener closed and opened again, then one more changed publication.
-    await gate();
-    await one.call("unlisten");
-    await wait(timing.reconnectGapMs);
-    await gate();
-    const streamsBefore = await streams(one);
-    await one.call("listen");
-    const reopened = await until(
-      async () => (await streams(one)) > streamsBefore,
-      timing.streamOpenMs,
-    );
-    step("r-reopen", { reopened });
-    const before = (await one.updates()).length;
-    const v5 = await write("r5-changed", urls.client, "PUT", template("v5", runId), tag);
-    tag = v5.etag;
-    const updated = await until(
-      async () => (await one.updates()).length > before,
-      timing.updateWindowMs,
-    );
-    step("r5-changed", { version: v5.json.version?.versionNumber ?? null, updated });
-    await one.call("unlisten");
   } catch (error) {
     result.stopped =
       error instanceof Stop || error instanceof Unknown ? error.message : `error: ${error.message}`;
@@ -553,10 +579,22 @@ export async function observe(ctx) {
         let r = await t.send("g-client", urls.client);
         if (!(r.status === 200 && baselineEmpty(r.json)) && wrote) {
           await pace();
-          await t.send("g-restore", `${urls.client}:rollback`, {
-            method: "POST",
-            body: { versionNumber: base.version },
-          });
+          if (ctx.followup) {
+            const description = r.json?.version?.description;
+            if (
+              r.status !== 200 ||
+              !r.etag ||
+              r.etag === "*" ||
+              !description?.startsWith(`fireemu rc-closure-b ${runId} `)
+            )
+              throw new Stop("client template is not owned by the follow-up run");
+            await t.send("g-restore", urls.client, { method: "PUT", body: {}, ifMatch: r.etag });
+          } else {
+            await t.send("g-restore", `${urls.client}:rollback`, {
+              method: "POST",
+              body: { versionNumber: base.version },
+            });
+          }
           lastWrite = Date.now();
           r = await t.send("g-client-after", urls.client);
         }
@@ -599,6 +637,7 @@ export async function observe(ctx) {
   result.adminRequests = t.count;
   result.pageRequests = browser.allowedRequests();
   result.cleanupRequests = browser.cleanupRequests?.() ?? 0;
+  if (ctx.followup) result.automaticPreflights = browser.automaticPreflights?.() ?? [];
   result.refusals = browser.refusals;
   result.complete =
     result.stopped === null &&

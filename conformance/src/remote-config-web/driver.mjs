@@ -182,6 +182,7 @@ export async function openBrowser({
   callTimeoutMs = CALL_TIMEOUT_MS,
   env = process.env,
   rcBase = null,
+  followup = false,
 }) {
   // `rcBase` (local runs only): the SDK's Remote Config base, passed through to fireemu; the
   // Installations host is still answered by `fake` (coordinator ruling 10).
@@ -202,6 +203,7 @@ export async function openBrowser({
   const refusals = [];
   const contexts = [];
   const handles = [];
+  const automaticPreflights = [];
   const stop = (reason) => {
     if (!stopped) stopped = reason;
   };
@@ -211,6 +213,7 @@ export async function openBrowser({
     refusals,
     allowedRequests: () => allowed,
     cleanupRequests: () => reserved,
+    automaticPreflights: () => [...automaticPreflights],
     /** A new context and page with `config`; resolves when the page's SDK is loaded. */
     async client(config, name = `context-${handles.length + 1}`) {
       const context = await browser.newContext({ serviceWorkers: "block" });
@@ -296,11 +299,33 @@ export async function openBrowser({
           stop(`${host} answered ${response.status()}`);
       });
       const page = await context.newPage();
+      if (followup) {
+        const session = await context.newCDPSession(page);
+        await session.send("Network.enable");
+        session.on("Network.requestWillBeSent", ({ request, type }) => {
+          if (type !== "Preflight" || request.method !== "OPTIONS") return;
+          const url = new URL(request.url);
+          const allowed = HOSTS.includes(url.host) || url.origin === rcOrigin;
+          if (!allowed) stop("unapproved automatic browser preflight");
+          if (automaticPreflights.length >= cap + CLEANUP_RESERVE) {
+            stop("automatic browser preflight cap");
+            return;
+          }
+          automaticPreflights.push({
+            host: allowed ? url.host : "unexpected",
+            method: request.method,
+          });
+        });
+        session.on("Network.responseReceived", ({ type, response }) => {
+          if (type === "Preflight" && STOP_STATUSES.has(response.status))
+            stop(`automatic preflight answered ${response.status}`);
+        });
+      }
       await page.addInitScript(
         (input) => {
           window.__RC_INPUT = input;
         },
-        { config, sdk: GSTATIC, ...(rcBase ? { rcBase } : {}) },
+        { config, sdk: GSTATIC, ...(rcBase ? { rcBase } : {}), ...(followup ? { followup } : {}) },
       );
       await page.goto(`${origin}/`);
       await page.waitForFunction(() => window.rcReady === true, null, { timeout: 30_000 });

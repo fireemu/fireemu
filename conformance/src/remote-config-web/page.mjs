@@ -116,6 +116,7 @@ const masked = (value) => {
 let sequence = 0;
 const started = performance.now();
 const realFetch = window.fetch.bind(window);
+const streams = new Map();
 
 window.fetch = async (resource, init) => {
   // A redirect is an error, never followed: the recorder's hook sees and counts every request.
@@ -142,8 +143,17 @@ window.fetch = async (resource, init) => {
   else if (recorded) entry.requestBody = maskText(bodyText);
   wire.push(entry);
   let response;
+  const control =
+    input.followup && recorded && url.pathname.endsWith(":streamFetchInvalidations")
+      ? new AbortController()
+      : null;
   try {
-    response = await realFetch(request);
+    response = await realFetch(
+      control
+        ? new Request(request, { signal: AbortSignal.any([request.signal, control.signal]) })
+        : request,
+    );
+    if (control && response.status === 200) streams.set(n, { control, entry });
   } catch (error) {
     entry.error = error?.name ?? "error";
     throw error;
@@ -182,6 +192,9 @@ window.fetch = async (resource, init) => {
         entry.ended = "done";
       } catch (error) {
         entry.ended = `error:${error?.name ?? "error"}`;
+      } finally {
+        if (input.followup) entry.finishedAt = Math.round(performance.now() - started);
+        if (control) streams.delete(n);
       }
     })();
     return new Response(own, {
@@ -205,6 +218,30 @@ let subscription = null;
 const updates = [];
 
 window.rc = {
+  sampleTime: () => Math.round(performance.now() - started),
+  abortRealtime(n) {
+    const active = streams.get(n);
+    if (
+      !active ||
+      active.entry.ended ||
+      active.entry.disconnectedAt !== undefined ||
+      !active.entry.chunks?.length
+    )
+      return false;
+    active.entry.disconnectedAt = Math.round(performance.now() - started);
+    active.control.abort();
+    return true;
+  },
+  async activateOnly() {
+    const activated = await rcModule.activate(remoteConfig);
+    const values = Object.fromEntries(
+      Object.entries(rcModule.getAll(remoteConfig)).map(([key, value]) => [
+        key,
+        { value: value.asString(), source: value.getSource() },
+      ]),
+    );
+    return masked({ activated, values });
+  },
   /** Sets the custom signals, fetches, activates; returns the values and their sources. */
   async fetch(signals) {
     await rcModule.setCustomSignals(remoteConfig, signals ?? {});

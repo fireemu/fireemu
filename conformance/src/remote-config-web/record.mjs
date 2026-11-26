@@ -446,15 +446,17 @@ export async function main(argv, env = process.env, deps = {}) {
     console.log(JSON.stringify(back));
     return back.atBaseline ? 0 : 1;
   }
-  const runId = newRunId();
+  const runId = deps.runId ?? newRunId();
   writeFileSync(
     join(out, "run.json"),
     JSON.stringify({ runId, pid: process.pid, startedAt: new Date().toISOString() }) + "\n",
   );
   Object.assign(current, { out, runId });
+  await deps.ready?.(runId);
   const browser = await (deps.openBrowser ?? openBrowser)({
     port: deps.port ?? 47853,
     cap: MAX_PAGE_REQUESTS,
+    ...(deps.followup ? { followup: true } : {}),
   });
   let result;
   try {
@@ -466,6 +468,8 @@ export async function main(argv, env = process.env, deps = {}) {
       number,
       runId,
       timing: deps.timing ?? PRODUCTION_TIMING,
+      ...(deps.followup ? { followup: deps.followup } : {}),
+      ...(deps.preflight ? { preflight: deps.preflight } : {}),
       production: true,
       secrets,
       grant: (kind, value) => {

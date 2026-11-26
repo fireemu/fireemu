@@ -57,7 +57,14 @@ export function installations() {
   };
 }
 
-export async function runLocal({ binary, profile, out, port = 47901 }) {
+export async function runLocal({
+  binary,
+  profile,
+  out,
+  port = 47901,
+  followup = null,
+  preflight = null,
+}) {
   const { withTestWorld } = await import(pathToFileURL(join(ROOT, "npm/fireemu/testing.mjs")).href);
   return withTestWorld(
     {
@@ -98,6 +105,7 @@ export async function runLocal({ binary, profile, out, port = 47901 }) {
         cap: MAX_PAGE_REQUESTS,
         fake: installations(),
         rcBase: new URL(base).origin,
+        followup: followup !== null,
       });
       let result;
       try {
@@ -111,6 +119,8 @@ export async function runLocal({ binary, profile, out, port = 47901 }) {
           fakeKey: LOCAL_KEY,
           runId,
           timing: LOCAL_TIMING,
+          ...(followup ? { followup } : {}),
+          ...(preflight ? { preflight: (config) => preflight(config, base) } : {}),
           production: false,
         });
       } finally {
