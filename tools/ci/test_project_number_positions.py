@@ -48,6 +48,7 @@ ALLOWED_MADE_UP_NUMBERS = frozenset(
     0123456789
     210987654321
     9999999999
+    100000000004
     """.split()
 )
 POSITIONS = {
