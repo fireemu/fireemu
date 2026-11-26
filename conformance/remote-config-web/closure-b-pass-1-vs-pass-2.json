@@ -134,9 +134,7 @@
       "id": "two-2-fetch",
       "verdict": "KNOWN_DIFFERENCE",
       "differences": [],
-      "knownDifferences": [
-        "KD-WEB-PERCENT-INSTALLATION"
-      ]
+      "knownDifferences": ["KD-WEB-PERCENT-INSTALLATION"]
     },
     {
       "id": "two-3-fetch",
@@ -152,17 +150,13 @@
       "id": "two-sdk-fetch-1",
       "verdict": "KNOWN_DIFFERENCE",
       "differences": [],
-      "knownDifferences": [
-        "KD-WEB-PERCENT-INSTALLATION"
-      ]
+      "knownDifferences": ["KD-WEB-PERCENT-INSTALLATION"]
     },
     {
       "id": "two-sdk-fetch-2",
       "verdict": "KNOWN_DIFFERENCE",
       "differences": [],
-      "knownDifferences": [
-        "KD-WEB-PERCENT-INSTALLATION"
-      ]
+      "knownDifferences": ["KD-WEB-PERCENT-INSTALLATION"]
     },
     {
       "id": "two-updates",

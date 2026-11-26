@@ -473,25 +473,34 @@ export async function main(argv, env = process.env, deps = {}) {
         if (kind === "key") grants.key = value;
       },
     });
-    for (const [name, client] of Object.entries(result.clients)) {
-      writeFileSync(
-        join(out, `wire-${name}.json`),
-        JSON.stringify(client.wire ?? [], null, 2) + "\n",
-      );
-      delete client.wire;
-    }
-    // result.json is first written not complete; its final `complete` is written only once the
-    // leak check has passed (ruling 19 item 2), so an interrupted or failed check never closes.
     const complete = result.complete;
     result.complete = false;
     result.leakCheck = "pending";
-    writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
-    // The leak check runs while the key and the pages' secrets are still known (ruling 18 item 3).
-    const leaked = await leakCheck(out, secrets, browser);
+    // Keep a credential-free interruption checkpoint even if a page cannot finish masking.
+    const resultFile = join(out, "result.json");
+    writeFileSync(
+      resultFile,
+      JSON.stringify({ runId, complete: false, leakCheck: "pending" }) + "\n",
+    );
+    const leaked = new Set();
+    const persist = async (name, value) => {
+      const text = JSON.stringify(value, null, 2) + "\n";
+      const masked = await browser.mask(redact(text));
+      if (text !== masked) leaked.add(name);
+      writeFileSync(join(out, name), masked);
+      return masked;
+    };
+    for (const [name, client] of Object.entries(result.clients)) {
+      await persist(`wire-${name}.json`, client.wire ?? []);
+      delete client.wire;
+    }
+    // Always derive the final file and summary from the already-masked representation.
+    result = JSON.parse(await persist("result.json", result));
+    for (const name of await leakCheck(out, secrets, browser)) leaked.add(name);
     for (const name of leaked) result.open.push(`leak: ${name} held a secret (masked copy kept)`);
-    result.complete = complete && leaked.length === 0;
+    result.complete = complete && leaked.size === 0;
     result.leakCheck = "done";
-    writeFileSync(join(out, "result.json"), JSON.stringify(result, null, 2) + "\n");
+    writeFileSync(resultFile, JSON.stringify(result, null, 2) + "\n");
   } finally {
     secrets.clear();
     await browser.close();

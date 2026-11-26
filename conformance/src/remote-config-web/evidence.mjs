@@ -21,7 +21,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { gitReaders } from "../remote-config-production/evidence.mjs";
 import { compare } from "./judge.mjs";
-import { assertSanitised, sanitise } from "./sanitise.mjs";
+import { assertSanitised, sanitise, settlementProblems } from "./sanitise.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const DIR = "conformance/remote-config-web";
@@ -124,9 +124,7 @@ export function fixtureProblems(path, bytes) {
   } catch (error) {
     problems.push(`${path}: ${error.message}`);
   }
-  if (fixture.schema !== "rc-closure-b-fixture/1") problems.push(`${path}: not a fixture`);
-  if (fixture.complete !== true || fixture.stopped !== null || (fixture.open ?? []).length)
-    problems.push(`${path}: not a complete pass`);
+  problems.push(...settlementProblems(fixture).map((problem) => `${path}: ${problem}`));
   return problems;
 }
 

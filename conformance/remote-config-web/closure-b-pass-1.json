@@ -109,29 +109,19 @@
       ],
       "updates": [
         {
-          "keys": [
-            "fireemu_message"
-          ]
+          "keys": ["fireemu_message"]
         },
         {
-          "keys": [
-            "fireemu_message"
-          ]
+          "keys": ["fireemu_message"]
         },
         {
-          "keys": [
-            "fireemu_message"
-          ]
+          "keys": ["fireemu_message"]
         },
         {
-          "keys": [
-            "fireemu_message"
-          ]
+          "keys": ["fireemu_message"]
         },
         {
-          "keys": [
-            "fireemu_message"
-          ]
+          "keys": ["fireemu_message"]
         }
       ],
       "wire": [
@@ -233,13 +223,7 @@
             "vary": "Origin, X-Origin, Referer"
           },
           "text": "[{\n  \"latestTemplateVersionNumber\": \"48\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"49\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"50\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"51\"\n}\n,\r\n{\n  \"latestTemplateVersionNumber\": \"52\"\n}\n",
-          "chunkLengths": [
-            43,
-            45,
-            45,
-            45,
-            45
-          ]
+          "chunkLengths": [43, 45, 45, 45, 45]
         },
         {
           "n": 5,

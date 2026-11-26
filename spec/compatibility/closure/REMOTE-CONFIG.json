@@ -314,12 +314,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
-          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+          "fixtureSha256": "97fc10f64dd0bb0ba1c209ff8df677036c6d0dcc9798f3095a7b61ae746bc542"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
-          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+          "fixtureSha256": "1f711a7db915b59c2b86a1508a275584959e49e01d17f67eccf552a6c14f844e"
         }
       ],
       "localEvidence": [
@@ -450,12 +450,12 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
-          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+          "fixtureSha256": "97fc10f64dd0bb0ba1c209ff8df677036c6d0dcc9798f3095a7b61ae746bc542"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
-          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+          "fixtureSha256": "1f711a7db915b59c2b86a1508a275584959e49e01d17f67eccf552a6c14f844e"
         }
       ],
       "localEvidence": [
@@ -666,51 +666,51 @@
         {
           "alias": "pass-1",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-1.json",
-          "fixtureSha256": "f58ec50de77ebb9abca19280572609262faf5520ab98fd6286f81bd9d6f1eb0b"
+          "fixtureSha256": "97fc10f64dd0bb0ba1c209ff8df677036c6d0dcc9798f3095a7b61ae746bc542"
         },
         {
           "alias": "pass-2",
           "fixturePath": "conformance/remote-config-web/closure-b-pass-2.json",
-          "fixtureSha256": "5090a97a99faeed69a1510f31d853ed8e2372b78666607e2848434fb0b70405f"
+          "fixtureSha256": "1f711a7db915b59c2b86a1508a275584959e49e01d17f67eccf552a6c14f844e"
         }
       ],
       "localRuns": [
         {
           "profile": "strict",
           "fixturePath": "conformance/remote-config-web/closure-b-local-strict.json",
-          "fixtureSha256": "6c8ac97fbbf9d05f665014fae53f325ed9ee616cf99ee656915f241c6455a417"
+          "fixtureSha256": "bdfb8677bb29f1072177e08fcf79f174a18e40ae8446cd9d58b98a905a78e764"
         },
         {
           "profile": "emulator",
           "fixturePath": "conformance/remote-config-web/closure-b-local-emulator.json",
-          "fixtureSha256": "3c714844b9d9c442e43a22135cc737c03cd70643e437cb2225fc7f677f97966a"
+          "fixtureSha256": "04a2ecfe75ea483674ec2a9def7c4c7438dc562d635f1e73f6c104eac59b9c75"
         }
       ],
       "comparisons": [
         {
           "name": "runVsRun",
           "comparisonPath": "conformance/remote-config-web/closure-b-pass-1-vs-pass-2.json",
-          "comparisonSha256": "463d24f0a1a1729e398da9ac93b37d95eaba1aa1d0f4e8b083cc8d6f80f8cc11"
+          "comparisonSha256": "6cc1dc91c2f2d0fb5ec979fc473637ba52a88a0b770865b2d8df3c10d87a4c2f"
         },
         {
           "name": "strictVsPass1",
           "comparisonPath": "conformance/remote-config-web/closure-b-strict-vs-pass-1.json",
-          "comparisonSha256": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec"
+          "comparisonSha256": "201a016d001aa0ba3f69388317037de9fee65ea98c36553238c572651c5c7ba9"
         },
         {
           "name": "strictVsPass2",
           "comparisonPath": "conformance/remote-config-web/closure-b-strict-vs-pass-2.json",
-          "comparisonSha256": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3"
+          "comparisonSha256": "d954e83e07b55ddf0c58ac0f3b14bacea243ef3cd045c067a22367d539402bc6"
         },
         {
           "name": "emulatorVsPass1",
           "comparisonPath": "conformance/remote-config-web/closure-b-emulator-vs-pass-1.json",
-          "comparisonSha256": "4f481a603f68066bb03e8ead29b5abb8905865242ee13d7960e293da4c8943ec"
+          "comparisonSha256": "201a016d001aa0ba3f69388317037de9fee65ea98c36553238c572651c5c7ba9"
         },
         {
           "name": "emulatorVsPass2",
           "comparisonPath": "conformance/remote-config-web/closure-b-emulator-vs-pass-2.json",
-          "comparisonSha256": "8922e18e6123d89a4ca7b454bd14e10eb5f10c53405782ae4a731a0e1adafbd3"
+          "comparisonSha256": "d954e83e07b55ddf0c58ac0f3b14bacea243ef3cd045c067a22367d539402bc6"
         }
       ]
     }

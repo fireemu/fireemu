@@ -1417,3 +1417,48 @@ for (const point of ["gate", "credentials"]) {
     assert.ok(!casesOf(out).includes("t1-publish"), String(casesOf(out)));
   });
 }
+
+test("a secret in a returned template version cannot appear in the saved result or summary", async (t) => {
+  const { main, PROJECT: SANDBOX } = await import("./record.mjs");
+  const out = mkdtempSync(join(tmpdir(), "rc-result-mask-"));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const fake = productionAdmin(world({ project: SANDBOX }));
+  const messages = [];
+  t.mock.method(console, "log", (line) => messages.push(line));
+  const resultDir = join(out, "send-web-1");
+  const status = await main(
+    ["--send-production", "--out", resultDir],
+    { FIREEMU_SANDBOX_PROJECT_NUMBER: NUMBER },
+    {
+      token: () => "t",
+      fetchImpl: async (url, init) => {
+        const response = await fake(url, init);
+        if (init.method !== "PUT" || response.status !== 200) return response;
+        const document = await response.json();
+        document.version.versionNumber = KEY;
+        return Response.json(document, { headers: response.headers });
+      },
+      openBrowser: async () => ({
+        client: async () => {
+          throw new Error("test: no page");
+        },
+        stopped: () => null,
+        stop: () => {},
+        mask: async (value) => value,
+        installations: async () => [],
+        allowedRequests: () => 0,
+        refusals: [],
+        close: async () => {},
+      }),
+      timing: TIMING,
+    },
+  );
+  assert.equal(status, 1);
+  const text = readFileSync(join(resultDir, "result.json"), "utf8");
+  assert.ok(!text.includes(KEY));
+  assert.ok(!messages.join("").includes(KEY));
+  const result = JSON.parse(text);
+  assert.equal(result.leakCheck, "done");
+  assert.equal(result.steps.find(({ name }) => name === "t1").version, "API_KEY");
+  assert.ok(result.open.some((line) => line.startsWith("leak: result.json")));
+});

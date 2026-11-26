@@ -125,7 +125,7 @@ test("the judge compares versions as offsets and names every difference it accep
         "v1-default",
       );
     }),
-    ["one-2-fetch"],
+    ["one-2-fetch", "one-sdk-fetch-1", "one-sdk-fetch-2"],
   );
   assert.deepEqual(
     changed((f) => {
@@ -174,7 +174,7 @@ test("the judge compares versions as offsets and names every difference it accep
         "v1-half",
       );
     }),
-    ["one-2-fetch"],
+    ["one-2-fetch", "one-sdk-fetch-1", "one-sdk-fetch-2"],
   );
   assert.deepEqual(
     changed((f) => {
@@ -183,7 +183,7 @@ test("the judge compares versions as offsets and names every difference it accep
         '"fireemu_limit": "20"',
       );
     }),
-    ["two-2-fetch"],
+    ["two-2-fetch", "two-sdk-fetch-1", "two-sdk-fetch-2"],
   );
   // An exchange missing on one side is UNKNOWN.
   const short = structuredClone(pass2);
@@ -286,7 +286,7 @@ test("near misses from mutation: the percent swap's bounds, paths, queries, sour
         "v2-default",
       );
     }),
-    ["two-2-fetch"],
+    ["two-2-fetch", "two-sdk-fetch-1", "two-sdk-fetch-2"],
   );
   const other = structuredClone(pass1);
   const swapped = structuredClone(pass2);
@@ -395,5 +395,56 @@ test("the judge refuses undeclared fetch and realtime wire differences", () => {
     const forged = structuredClone(pass);
     edit(forged);
     assert.ok(compare(pass, forged, { local: true }).counts.MISMATCH > 0, name);
+  }
+});
+
+test("closure evidence binds each SDK result, stream state and settlement to its own pass", async () => {
+  const { fixtureProblems } = await import("./evidence.mjs");
+  const pass = fixture("pass1");
+  const withChanges = (alter) => {
+    const edited = structuredClone(pass);
+    alter(edited);
+    return edited;
+  };
+  for (const alter of [
+    (run) => {
+      for (const response of run.clients.two.fetches)
+        response.values.fireemu_message.value = "v1-half";
+    },
+    (run) => {
+      run.clients.two.fetches[1].values.fireemu_message.value = "v1-half";
+    },
+    (run) => {
+      run.clients.one.wire.find((w) => role(w) === "realtime").ended = "error:TypeError";
+    },
+    (run) => {
+      const lengths = run.clients.one.wire.find((w) => role(w) === "realtime").chunkLengths;
+      lengths[0] += 1;
+      lengths[1] -= 1;
+    },
+  ]) {
+    const edited = withChanges(alter);
+    assert.ok(compare(pass, edited).counts.MISMATCH > 0, String(alter));
+  }
+  for (const alter of [
+    (run) => {
+      delete run.open;
+    },
+    (run) => {
+      delete run.baseline.after;
+    },
+    (run) => {
+      run.baseline.after = run.baseline.before;
+    },
+    (run) => {
+      run.installations[0].proved = 0;
+    },
+    (run) => {
+      run.installations[1].name = "one";
+    },
+  ]) {
+    const edited = withChanges(alter);
+    assert.notDeepEqual(fixtureProblems("forged", JSON.stringify(edited)), [], String(alter));
+    assert.ok(compare(pass, edited).counts.MISMATCH > 0, String(alter));
   }
 });

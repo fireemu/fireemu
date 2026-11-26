@@ -12,6 +12,8 @@
 // declared difference of known-differences.json, named), MISMATCH, UNKNOWN (a side is missing).
 import { readFileSync } from "node:fs";
 
+import { settlementProblems } from "./sanitise.mjs";
+
 export const KNOWN = JSON.parse(
   readFileSync(new URL("./known-differences.json", import.meta.url), "utf8"),
 );
@@ -117,6 +119,20 @@ function headerDiff(a = {}, b = {}, differences, kds, at, { local }) {
   }
 }
 
+/** Preserve where each recorded chunk ends after applying its version offset. */
+function streamChunks(entry, base) {
+  if (typeof entry.text !== "string" || !Array.isArray(entry.chunkLengths)) return null;
+  let start = 0;
+  const chunks = [];
+  for (const length of entry.chunkLengths) {
+    if (!Number.isSafeInteger(length) || length <= 0 || length > entry.text.length - start)
+      return null;
+    chunks.push(offsetText(entry.text.slice(start, start + length), base));
+    start += length;
+  }
+  return start === entry.text.length ? chunks : null;
+}
+
 /** Compares one exchange; returns its differences and the known differences it shows. */
 function compareExchange(a, b, baseA, baseB, { local }) {
   const differences = [];
@@ -169,8 +185,12 @@ function compareExchange(a, b, baseA, baseB, { local }) {
   } else if (r === "realtime") {
     if (offsetText(a.text, baseA) !== offsetText(b.text, baseB))
       differences.push({ path: "text", kind: "frames" });
-    if ((a.chunkLengths ?? []).length !== (b.chunkLengths ?? []).length)
+    const [chunksA, chunksB] = [streamChunks(a, baseA), streamChunks(b, baseB)];
+    if (chunksA === null || chunksB === null || !same(chunksA, chunksB))
       differences.push({ path: "chunkLengths", kind: "frames" });
+    // Both passes captured the stream before termination.
+    if (a.ended !== undefined || b.ended !== undefined)
+      differences.push({ path: "ended", kind: "value" });
   }
   return { differences, kds };
 }
@@ -212,11 +232,43 @@ const row = (id, { differences, kds }) => {
   };
 };
 
+function initialRemoteValues(client) {
+  const first = client.wire.find((entry) => role(entry) === "fetch");
+  const response = parse(first?.responseBody);
+  return response?.state === "UPDATE" ? response.entries : undefined;
+}
+
+function activatedEntriesMatch(fetch, entries) {
+  if (!entries) return false;
+  const values = Object.entries(fetch.values ?? {});
+  return (
+    values.length === Object.keys(entries).length &&
+    values.every(
+      ([key, value]) =>
+        value?.source === "remote" && Object.hasOwn(entries, key) && entries[key] === value.value,
+    )
+  );
+}
+
 /**
  * Compares fixture `b` (a local run, or another pass) with fixture `a` (production). `local`
  * marks `b` as fireemu's.
  */
 export function compare(a, b, { local = false } = {}) {
+  const problems = [...settlementProblems(a), ...settlementProblems(b)];
+  if (problems.length) {
+    return {
+      rows: 1,
+      counts: { MATCH: 0, MATCH_LAYOUT: 0, KNOWN_DIFFERENCE: 0, MISMATCH: 1, UNKNOWN: 0 },
+      table: [
+        {
+          id: "settlement",
+          verdict: "MISMATCH",
+          differences: problems.map((path) => ({ path, kind: "settlement" })),
+        },
+      ],
+    };
+  }
   const baseA = Number(a.baseline.before);
   const baseB = Number(b.baseline.before);
   const rows = [];
@@ -261,6 +313,7 @@ export function compare(a, b, { local = false } = {}) {
       if (role(y) === "fetch") tagB = y.responseHeaders?.etag;
       rows.push(row(`${name}-${i + 1}-${role(x)}`, compared));
     }
+    const [entriesA, entriesB] = [initialRemoteValues(ca), initialRemoteValues(cb)];
     for (let i = 0; i < Math.max(ca.fetches.length, cb.fetches.length); i += 1) {
       const [x, y] = [ca.fetches[i], cb.fetches[i]];
       const differences = [];
@@ -273,6 +326,8 @@ export function compare(a, b, { local = false } = {}) {
           Object.fromEntries(Object.entries(f.values ?? {}).map(([k, v]) => [k, v.value]));
         const sources = (f) =>
           Object.fromEntries(Object.entries(f.values ?? {}).map(([k, v]) => [k, v.source]));
+        if (!activatedEntriesMatch(x, entriesA) || !activatedEntriesMatch(y, entriesB))
+          differences.push({ path: "values", kind: "relation" });
         entriesDiff(values(x), values(y), differences, kds, "values");
         if (!same(sources(x), sources(y))) differences.push({ path: "sources", kind: "value" });
       }

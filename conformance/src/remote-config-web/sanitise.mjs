@@ -102,8 +102,11 @@ export function sanitise(dir) {
     stopped: result.stopped,
     open: result.open,
     baseline: {
-      before: result.baseline?.before?.version ?? null,
-      after: result.baseline?.after?.version ?? null,
+      before: result.baseline?.before?.empty === true ? result.baseline.before.version : null,
+      after:
+        result.baseline?.after?.status === 200 && result.baseline.after.empty === true
+          ? result.baseline.after.version
+          : null,
     },
     steps: result.steps.map((step) =>
       Object.fromEntries(STEP_FIELDS.filter((f) => f in step).map((f) => [f, step[f]])),
@@ -123,6 +126,48 @@ export function sanitise(dir) {
   const out = maskValue(fixture, secrets);
   assertSanitised(out, secrets);
   return out;
+}
+
+/** The recorded completion obligations of one stage B pass. */
+export function settlementProblems(fixture) {
+  const problems = [];
+  if (fixture?.schema !== "rc-closure-b-fixture/1") return ["not a fixture"];
+  if (
+    fixture.complete !== true ||
+    fixture.stopped !== null ||
+    !Array.isArray(fixture.open) ||
+    fixture.open.length !== 0
+  ) {
+    problems.push("not a complete pass");
+  }
+  const { before, after } = fixture.baseline ?? {};
+  const revision = (value) =>
+    typeof value === "string" &&
+    /^(0|[1-9][0-9]*)$/.test(value) &&
+    Number.isSafeInteger(Number(value));
+  if (!revision(before) || !revision(after) || Number(after) !== Number(before) + 7) {
+    problems.push("no restored baseline version");
+  }
+  const proofs = fixture.installations;
+  if (
+    !Array.isArray(proofs) ||
+    proofs.length !== 2 ||
+    !["one", "two"].every((name) =>
+      proofs.some((proof) => proof?.name === name && proof.dispatched === 1 && proof.proved === 1),
+    )
+  ) {
+    problems.push("both installation deletions must be proved");
+  }
+  if (
+    !Array.isArray(fixture.steps) ||
+    !["one", "two"].every((name) => {
+      const client = fixture.clients?.[name];
+      return ["wire", "fetches", "updates"].every((field) => Array.isArray(client?.[field]));
+    })
+  ) {
+    problems.push("missing stage B steps or client exchanges");
+  }
+  return problems;
 }
 
 /** Refuses a fixture that still holds a private value, or a key-, token- or id-shaped string. */
