@@ -8,6 +8,8 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-11-26
+
 ### Added
 
 - Remote Config: the Web SDK's fetch and realtime routes. `POST /v1/projects/<project>/namespaces/firebase:fetch` answers the template's values for the request's custom signals and installation id (custom-signal exact match and numeric comparison, seeded percent, the first matching condition in template order), with `UPDATE` and `NO_CHANGE` answers and a fetch ETag in production's form; `POST .../namespaces/firebase:streamFetchInvalidations` holds its answer until a newer client template is published and then streams one `latestTemplateVersionNumber` frame per version, as recorded in production on 2026-11-25. Point the SDK at fireemu with `window.FIREBASE_REMOTE_CONFIG_URL_BASE`; Installations is not emulated, so a page needs its own answer for the SDK's Installations requests. The tag's number, the percent outcome for a given installation id and the transport encoding differ from production.
@@ -1570,7 +1572,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.66.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.67.0...HEAD
+[0.67.0]: https://github.com/fireemu/fireemu/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/fireemu/fireemu/compare/v0.65.0...v0.66.0
 [0.65.0]: https://github.com/fireemu/fireemu/compare/v0.64.0...v0.65.0
 [0.64.0]: https://github.com/fireemu/fireemu/compare/v0.63.0...v0.64.0
