@@ -32,7 +32,7 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
   let tokenCount = 0;
 
   function addFID(fid) {
-    if (fid && !secrets.has(fid)) secrets.set(fid, `FID_${++fidCount}`);
+    if (typeof fid === "string" && fid && !secrets.has(fid)) secrets.set(fid, `FID_${++fidCount}`);
   }
 
   function addToken(token) {
@@ -43,7 +43,7 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
   function mask(text) {
     const substitutions = [...secrets.entries()]
       .flatMap(([value, label]) => encodedForms(value).map((form) => [form, label]))
-      .sort(([a], [b]) => b.length - a.length);
+      .toSorted(([a], [b]) => b.length - a.length);
     let result = text;
     for (const [source, label] of substitutions) result = result.replaceAll(source, label);
     if (CREDENTIAL.test(result)) throw new Error("unrecognized native capture secret");
@@ -88,6 +88,7 @@ export function nativeCapture({ platform, projectId, projectNumber, appId, key }
     if (isSuccess && wire.length) {
       body = JSON.parse(UTF8.decode(nativeRequestBody(wire, encoding).decoded));
       if (operation === "create") {
+        addFID(body.fid);
         addToken(body.refreshToken);
         addToken(body.authToken?.token);
       } else if (operation === "token") {

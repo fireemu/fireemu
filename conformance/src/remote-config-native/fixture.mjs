@@ -58,7 +58,10 @@ export function nativeFixture({ platform, projectId, projectNumber, key, appId }
                 ? { state: "NO_CHANGE" }
                 : {
                     state: "UPDATE",
-                    entries: { native_value: version === 1 ? "before" : "after" },
+                    entries: {
+                      native_value: version === 1 ? "before" : "after",
+                      native_tier: "gold",
+                    },
                     templateVersion: String(version),
                   },
           };

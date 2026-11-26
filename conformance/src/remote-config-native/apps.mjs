@@ -1,3 +1,5 @@
+import { KEY_UID } from "./key.mjs";
+
 const MANAGEMENT = "https://firebase.googleapis.com/v1beta1";
 const OPERATION = /^operations\/[A-Za-z0-9:_-]+(?:\/[A-Za-z0-9:_-]+)*$/;
 const PLATFORMS = {
@@ -24,14 +26,25 @@ function sortedActive(body) {
     !apps.every((entry) => typeof entry?.appId === "string" && entry.appId.length > 0)
   )
     throw new Error("native app list incomplete");
-  const active = apps.map((app) => app.appId).sort();
+  const active = apps.map((app) => app.appId).toSorted();
   if (new Set(active).size !== active.length)
     throw new Error("native app list repeated an identity");
   return { apps, active };
 }
 
 /** One pass's app registry. Management operations can grant only paths received for this app. */
-export function nativeAppRegistry({ project, number, platform, bundle, name, send, pause, polls }) {
+export function nativeAppRegistry({
+  project,
+  number,
+  platform,
+  bundle,
+  name,
+  apiKeyId,
+  send,
+  pause,
+  polls,
+  beforeCreate,
+}) {
   const variant = PLATFORMS[platform];
   if (
     !variant ||
@@ -39,6 +52,7 @@ export function nativeAppRegistry({ project, number, platform, bundle, name, sen
     !/^[0-9]{6,18}$/.test(number) ||
     !/^[a-z0-9]+(?:\.[a-z0-9]+)+$/.test(bundle) ||
     !/^[a-z][a-z0-9-]{1,48}$/.test(name) ||
+    !KEY_UID.test(apiKeyId) ||
     !Number.isSafeInteger(polls) ||
     polls < 1
   )
@@ -105,6 +119,7 @@ export function nativeAppRegistry({ project, number, platform, bundle, name, sen
     const { appId: received, displayName, etag } = body;
     if (
       received !== appId ||
+      body.apiKeyId !== apiKeyId ||
       displayName !== name ||
       body[bundleField] !== bundle ||
       typeof etag !== "string" ||
@@ -125,9 +140,13 @@ export function nativeAppRegistry({ project, number, platform, bundle, name, sen
       throw new Error("native app registration would collide");
     baseline = before.active;
     progress = "create-pending";
-    const body = { [bundleField]: bundle, displayName: name };
+    const body = { [bundleField]: bundle, displayName: name, apiKeyId };
     const first = success(
-      await send(`${platform}-create`, collection, { method: "POST", body }),
+      await send(`${platform}-create`, collection, {
+        method: "POST",
+        body,
+        beforeDispatch: beforeCreate,
+      }),
       "create",
     );
     const created = await complete(first, "create");

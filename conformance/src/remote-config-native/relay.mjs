@@ -93,7 +93,12 @@ export function nativeRelay({ session, dispatch, record, capture }) {
         requestBytes: ticket.wire.length,
         ...capture?.request({ ...ticket, headers: requestHeaders }),
       });
-      response = await dispatch({ ...ticket, method: request.method, headers: requestHeaders });
+      response = await dispatch({
+        ...ticket,
+        method: request.method,
+        headers: requestHeaders,
+        signal: request.signal,
+      });
       session.noteStatus(response.status);
       const redirected = response.status >= 300 && response.status < 400;
       if (!redirected && (ticket.operation !== "realtime" || response.status !== 200)) {
@@ -126,6 +131,8 @@ export function nativeRelay({ session, dispatch, record, capture }) {
           session.settle(ticket, { status: response.status });
           let projection;
           try {
+            if (capture && responseBytes > MAX_NATIVE_REQUEST_BYTES)
+              throw new Error("native stream exceeds capture limit");
             projection = capture?.stream({ wire: Buffer.concat(chunks), headers, chunkLengths });
           } catch {
             session.noteStatus(null);

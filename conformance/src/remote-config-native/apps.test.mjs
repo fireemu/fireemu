@@ -7,6 +7,7 @@ const number = "100000000004";
 const bundle = "com.example.fixture.pass1";
 const name = "fixture-stage-c-pass1-android";
 const platform = "android";
+const apiKeyId = "934c1011-e912-4c1e-8f5f-e2097dbc71f9";
 const id = `1:${number}:android:aa0011`;
 const existing = `1:${number}:android:bb0022`;
 const origin = "https://firebase.googleapis.com";
@@ -16,6 +17,7 @@ const operation = `${origin}/v1beta1/operations/sample/create`;
 const removeOperation = `${origin}/v1beta1/operations/sample/remove`;
 const app = {
   appId: id,
+  apiKeyId,
   packageName: bundle,
   displayName: name,
   etag: "owned-app-tag",
@@ -35,6 +37,7 @@ function registry(sends) {
     platform,
     bundle,
     name,
+    apiKeyId,
     pause: () => {},
     polls: 2,
     async send(caseId, rawURL, options = {}) {
@@ -80,7 +83,7 @@ test("the lifecycle binds reads, polls and removal to the exact created app", as
   assert.equal(allow(resource.replace(project, "wrong-project")), false);
   assert.equal(allow(resource + "/config"), false);
   assert.equal(allow(resource + ":remove", "GET"), false);
-  assert.deepEqual(calls[1][2], { packageName: bundle, displayName: name });
+  assert.deepEqual(calls[1][2], { packageName: bundle, displayName: name, apiKeyId });
   assert.throws(() => service.assertClosed(), /app remains/);
   await service.remove();
   assert.deepEqual(calls[5][2], { etag: app.etag });
@@ -115,5 +118,15 @@ test("a terminal removal followed by a contradictory active list remains unsettl
   ]);
   await service.create();
   await assert.rejects(service.remove(), /restored/);
+  assert.throws(() => service.assertClosed(), /app remains/);
+});
+
+test("a registration associated with another key cannot arm an SDK", async () => {
+  const { service } = registry([
+    [collection, response({ apps: baseline })],
+    [collection, response({ name: "operations/sample/create", done: true, response: app })],
+    [resource, response({ ...app, apiKeyId: "unowned" })],
+  ]);
+  await assert.rejects(service.create(), /ownership/);
   assert.throws(() => service.assertClosed(), /app remains/);
 });
