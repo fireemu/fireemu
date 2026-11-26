@@ -372,6 +372,7 @@
       "Storage object finalized / deleted / metadataUpdated triggers (v2 and v1; an overwrite also announces deleted for the replaced generation in a bucket that is not versioned, stamped with the replacement's creation instant, as production does (recorded, FE v5, functions-events-formal-20261004T182904Z) and unlike the official emulator, which announces finalized only), and archived triggers (onArchive / onObjectArchived) for versioned buckets, whose payload and time are recorded (FE v5) and whose order is not fixed by production (observed: finalized before archived 4 of 4, deleted before finalized 3 of 4); whether a plain delete of a live object also announces Deleted is unrecorded",
       "Pub/Sub topic triggers (v2 onMessagePublished, v1 topic().onPublish) fed by POST /v1/sessions/{s}/pubsub/topics/{t}:publish or /v1/projects/{p}/topics/{t}:publish",
       "Remote Config client and server template administration on the loopback control listener (read, validate, publish, list versions, roll back), and the server-template data plane the Node Admin SDK reads; a client-template publish or rollback delivers production's recorded v1 and v2 event shapes to onUpdate and onConfigUpdated handlers, and a server-template publish delivers no event, as production delivered none within five minutes in three recordings",
+      "Remote Config Web, Android, and Apple SDK fetch-and-activate and real-time updates in both profiles for the recorded cases; local SDK tests supply their own Firebase Installations responses",
       "Remote Config v1 remoteConfig.onUpdate and v2 onConfigUpdated accept local POST /v1/sessions/default/functions/remoteConfig:publish with Authorization: Bearer <control capability> in both profiles; the complete fanout uses the bounded shared delivery and retry queue",
       "the Pub/Sub wire bridge preserves the canonical source topic resource and invokes a topic trigger only when that topic belongs to the Functions runtime project; a same-named topic in another project cannot cross the session boundary",
       "Auth user created / deleted events to v1 auth.user() handlers (Admin deleteUsers delivers no deleted event, as the 1st-gen Auth documentation says and FE v5 recorded in two passes (functions-events-formal-20261004T182904Z: 4 users, 0 frames), unlike the official emulator, which fires one per user)",
@@ -389,7 +390,6 @@
     ],
     "status": "implemented",
     "unimplemented": [
-      "Remote Config Android and Apple client SDK fetch-and-activate and real-time updates (the Web SDK is served as recorded)",
       "protobuf CloudEvents payloads (JSON is what firebase-functions consumes)"
     ],
     "notes": [

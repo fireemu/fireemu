@@ -210,6 +210,28 @@ fn published() -> &'static (Value, Value) {
     })
 }
 
+#[test]
+fn remote_config_metadata_matches_the_served_clients() {
+    let events = &manifest()["capabilities"]["FN-EVT-1"];
+    let implemented = text_of(&events["implemented"]);
+    let unimplemented = text_of(&events["unimplemented"]);
+    assert!(implemented.contains("Remote Config Web, Android, and Apple SDK"));
+    assert!(!unimplemented.contains("client SDK fetch-and-activate"));
+
+    let contract: Value =
+        serde_json::from_str(include_str!("../../../spec/compatibility/contract.json"))
+            .expect("the compatibility contract is JSON");
+    let functions = contract["surfaces"]
+        .as_array()
+        .expect("the contract lists surfaces")
+        .iter()
+        .find(|surface| surface["id"] == "functions")
+        .expect("the contract lists Functions");
+    let gaps = text_of(&functions["gaps"]);
+    assert!(!gaps.contains("template storage and publishing service are not implemented"));
+    assert!(gaps.contains("retry timing, duplicate delivery, and ordering"));
+}
+
 /// The synchronous Auth-to-Functions bridge and the two public metadata authorities must agree
 /// on the Blocking Functions surface. This keeps an implemented trigger from returning to a
 /// whole-feature gap after the runtime and its integration coverage move ahead.

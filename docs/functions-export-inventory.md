@@ -45,7 +45,7 @@ Non-trigger exports (`params`, `logger`, `config`, `app`, `onInit`, `runWith`, `
 | `remoteConfig` (`onConfigUpdated`) | served | `remoteConfig` | as v1 `remoteConfig` | Local injection accepts caller-supplied CloudEvent metadata |
 | `testLab` (`onTestMatrixCompleted`) | not-planned | none | `DEFERRED_TRIGGER_PRODUCTS` | Test Lab has no local emulator |
 
-The [local template administration API](remote-config.md) supports client and server template storage and publishing. A client-template publish or rollback delivers the event shape recorded in production to these handlers. Trigger delivery is verified against production for the recorded cases; the Web client SDK's fetch-and-activate and real-time updates are served as recorded (see [Remote Config](remote-config.md)); Android and Apple clients are tracked in the [Remote Config compatibility parent](../spec/compatibility/closure/REMOTE-CONFIG.json).
+The [local template administration API](remote-config.md) supports client and server template storage and publishing. A client-template publish or rollback delivers the event shape recorded in production to these handlers. Trigger delivery is verified against production for the recorded cases. Web, Android, and Apple SDK fetch-and-activate and real-time updates are verified for the recorded cases in both profiles. See [Remote Config](remote-config.md) and the [Remote Config compatibility record](../spec/compatibility/closure/REMOTE-CONFIG.json).
 
 ## Anything else
 

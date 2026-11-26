@@ -1724,7 +1724,7 @@
       ],
       "notes": [],
       "gaps": [
-        "Remote Config template storage and publishing service are not implemented. Capability-protected local injection runs v1/v2 Remote Config handlers with caller-supplied metadata in both profiles; production envelope, metadata, retry and ordering parity remain unobserved.",
+        "Remote Config client-template publishes and rollbacks deliver the recorded v1/v2 event envelopes. Production retry timing, duplicate delivery, and ordering guarantees remain unverified.",
         "Data Connect triggers are deferred; Firebase AI Logic blocking triggers are not planned",
         "Dart codebases and Python runtimes outside python310 through python314 are not supported",
         "Python source changes are not reloaded; restart fireemu. Python handlers run in real time in one process per codebase on macOS and Linux, without the Node virtual clock or per-function process isolation",
