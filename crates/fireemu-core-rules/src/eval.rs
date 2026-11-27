@@ -4326,9 +4326,11 @@ impl<'a> Evaluator<'a> {
         ) {
             return None;
         }
-        let charges = u64::try_from(members.len().saturating_add(1)).unwrap_or(u64::MAX);
-        for _ in 0..charges {
-            if let Err(error) = self.budget.charge() {
+        if let Err(error) = self.budget.charge_node(root_expr) {
+            return Some(Err(error));
+        }
+        for (member_expr, _) in &members {
+            if let Err(error) = self.budget.charge_node(member_expr) {
                 return Some(Err(error));
             }
         }
