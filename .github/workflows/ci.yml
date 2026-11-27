@@ -195,7 +195,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.13'
-      - uses: astral-sh/setup-uv@v6.8.0
+      - uses: astral-sh/setup-uv@v10.4.0
       - name: install frozen conformance dependencies
         run: pnpm -C conformance install --frozen-lockfile
       # The federation fixtures' tests need the req validity flags of OpenSSL 3.4.
@@ -408,7 +408,7 @@ jobs:
         with:
           key: txn04-replay-${{ matrix.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: astral-sh/setup-uv@v6.8.0
+      - uses: astral-sh/setup-uv@v10.4.0
       - name: build fireemu from this commit
         run: cargo build --locked -p fireemu --bin fireemu
       - name: replay both profiles against the recorded production answers

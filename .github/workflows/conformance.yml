@@ -49,7 +49,7 @@ jobs:
       - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.13'
-      - uses: astral-sh/setup-uv@v6.8.0
+      - uses: astral-sh/setup-uv@v10.4.0
       # Only the oracle needs a JVM, but installing it unconditionally keeps the two modes
       # otherwise identical, so a `record` run cannot differ from a `check` run by setup.
       - uses: actions/setup-java@v6.3.0
