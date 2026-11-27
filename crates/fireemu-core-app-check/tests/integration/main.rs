@@ -1,4 +1,9 @@
 //! Consolidated integration test harness for `fireemu-core-app-check`.
+#![allow(
+    clippy::duplicate_mod,
+    reason = "Historical evidence binds the original test files, including their support modules"
+)]
+
 #[path = "../admin.rs"]
 mod admin;
 #[path = "../admission.rs"]
