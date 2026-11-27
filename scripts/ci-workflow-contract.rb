@@ -242,6 +242,7 @@ assert(!YAML.dump(strict).include?("secrets."), "strict-production must not read
 strict_checkout = strict.fetch("steps").find { |step| step["uses"]&.start_with?("actions/checkout@") }
 assert(strict_checkout&.dig("with", "persist-credentials") == false, "strict-production must not leave a token in the checkout")
 assert(strict_checkout.dig("with", "fetch-depth") == 0, "strict-production must fetch the whole history: the harness lineage check verifies every hop against it and refuses a shallow clone")
+assert(!strict_checkout.fetch("with").key?("filter"), "strict-production must fetch historical blobs before entering the isolated network namespace")
 assert(strict.fetch("steps").any? { |step| step["uses"]&.start_with?("actions/download-artifact@") && step.dig("with", "name") == "package-linux-x64" }, "strict-production must test the package publish ships")
 strict_runs = strict.fetch("steps").map { |step| step["run"] }.compact.join("\n")
 assert(strict_runs.include?("node npm/scripts/verify-install.mjs --dist npm/dist --keep"), "strict-production must install the packed artifact as verify-artifact does")
