@@ -64,6 +64,15 @@ class RuntimeClockTests(unittest.TestCase):
         finally:
             clock.uninstall()
 
+    def test_datetime_keeps_the_last_microsecond_of_its_supported_range(self):
+        clock = RuntimeClock({"date": "virtual", "instantNanos": "253402300799999999000"})
+        clock.install()
+        try:
+            value = datetime.datetime.now(datetime.timezone.utc)
+            self.assertEqual(value.isoformat(), "9999-12-31T23:59:59.999999+00:00")
+        finally:
+            clock.uninstall()
+
     def test_real_policy_does_not_patch_clock(self):
         clock = RuntimeClock({"date": "real"})
         clock.install()

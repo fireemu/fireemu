@@ -112,13 +112,12 @@ class RuntimeClock:
         class _VirtualDatetime(_REAL_DATETIME):
             @classmethod
             def now(cls, tz=None):
-                ts = clock.current_instant_nanos() / _NANOS_PER_SEC
-                return cls.fromtimestamp(ts, tz=tz)
+                seconds, nanos = divmod(clock.current_instant_nanos(), _NANOS_PER_SEC)
+                return cls.fromtimestamp(seconds, tz=tz).replace(microsecond=nanos // 1_000)
 
             @classmethod
             def utcnow(cls):
-                ts = clock.current_instant_nanos() / _NANOS_PER_SEC
-                return cls.fromtimestamp(ts, tz=_datetime_mod.timezone.utc).replace(tzinfo=None)
+                return cls.now(_datetime_mod.timezone.utc).replace(tzinfo=None)
 
             @classmethod
             def today(cls):
