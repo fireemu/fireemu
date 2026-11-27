@@ -35,6 +35,10 @@ description: fireemu/testingヘルパーを使い、それぞれが独自のク�
 - 古い世代で`world.run()`により起動したコマンドは終了されます。
 - `reset()`が戻るのは*作成時のスナップショット*であり、現在のソースではありません。ワールドの作成後に行ったFunctionsのコード、Rules、インデックス、設定への変更は反映されません。それらを使うには新しいワールドを作成してください。
 
+### 再起動せずに状態を戻す
+
+v0.69.0以降、`world.resetState()`はエンドポイントを保持したまま起動時の状態を復元します。`world.checkpoint()`、`world.restore()`、`world.deleteCheckpoint()`で名前付きの復元点を管理できます。
+
 ## ワールドを起動する
 
 ```js
@@ -250,6 +254,10 @@ export const test = base.extend<{ db: Firestore }, { world: TestWorld }>({
 ```
 
 Admin Authのように、エミュレーターのホストを環境から読み取るクライアントは、名前付きアプリ経由ではワールドに向けられません。そのコードは`world.run()`で実行してください。`world.run()`は`world.environment`を子プロセスに渡します。
+
+## Python / Go
+
+参照 [Python and Go](https://fireemu.github.io/fireemu/guides/test-worlds/#python-and-go).
 
 ## TypeScript
 

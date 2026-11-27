@@ -105,7 +105,7 @@ Pythonコードベースは、次の点で本番およびFirebase CLIと異な�
 
 ### 時間
 
-時間は実時間です。Pythonのコードは仮想クロックに移されないため、`datetime.now()`は`daemon.clock`の設定を無視します。Functionsランナーに仮想の日付を求める設定は、Pythonコードベースでは拒否されます。
+v0.69.0以降、`functions.clock.date = "virtual"`を設定すると、Pythonの日付取得関数が仮想クロックに従います。Pythonのタイマーは実時間で動作します。
 
 ### ソースのリロード
 
@@ -140,7 +140,7 @@ PythonのStorageとEventarcのハンドラーは、イベントの`time`を小�
 
 ### デバッガー
 
-`--inspect-functions`は、Firebase CLIと同様に、警告を出して無視されます。
+v0.69.0以降、コードベースの仮想環境にdebugpyをインストールすると、`--inspect-functions`でループバックのデバッガーを起動できます。
 
 ### App Check
 

@@ -35,6 +35,10 @@ description: 使用 fireemu/testing 辅助工具，在各自拥有独立时钟�
 - 在旧代中用 `world.run()` 启动的命令会被终止。
 - `reset()` 回到的是*创建时的快照*，而不是你当前的源码。世界创建之后对 Functions 代码、Rules、索引或配置所做的修改不会被采用。要使用它们，请创建一个新世界。
 
+### 无需重启即可恢复状态
+
+从 v0.69.0 开始，`world.resetState()` 可以在保留端点的同时恢复初始状态。使用 `world.checkpoint()`、`world.restore()` 和 `world.deleteCheckpoint()` 管理命名检查点。
+
 ## 启动世界
 
 ```js
@@ -250,6 +254,10 @@ export const test = base.extend<{ db: Firestore }, { world: TestWorld }>({
 ```
 
 从环境中读取模拟器主机的客户端（例如 Admin Auth）无法通过具名应用指向某个世界：请用 `world.run()` 运行这类代码，它会把 `world.environment` 传给子进程。
+
+## Python / Go
+
+参阅 [Python and Go](https://fireemu.github.io/fireemu/guides/test-worlds/#python-and-go).
 
 ## TypeScript
 

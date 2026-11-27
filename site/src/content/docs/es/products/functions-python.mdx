@@ -105,7 +105,7 @@ Por defecto un proceso de Python sirve todo el codebase, mientras que producció
 
 ### Tiempo
 
-El tiempo es tiempo real. El código de Python no se traslada al reloj virtual, así que `datetime.now()` ignora los ajustes de `daemon.clock`. Una configuración que pide una fecha virtual para el runner de Functions se rechaza para un codebase de Python.
+Desde v0.69.0, `functions.clock.date = "virtual"` hace que las fechas de Python sigan el reloj virtual. Los temporizadores de Python usan el tiempo real.
 
 ### Recarga del código fuente
 
@@ -140,7 +140,7 @@ Los handlers de Storage y Eventarc de Python analizan el `time` del evento con u
 
 ### Depurador
 
-`--inspect-functions` se ignora con una advertencia, como hace la CLI de Firebase.
+Desde v0.69.0, `--inspect-functions` inicia el depurador local si debugpy está instalado en el entorno virtual del codebase.
 
 ### App Check
 

@@ -105,7 +105,7 @@ Python 코드베이스는 다음과 같은 점에서 프로덕션 및 Firebase C
 
 ### 시간
 
-시간은 실제 시간입니다. Python 코드는 가상 시계로 옮겨지지 않으므로 `datetime.now()`는 `daemon.clock` 설정을 무시합니다. Functions 러너에 가상 date를 요청하는 구성은 Python 코드베이스에 대해 거부됩니다.
+v0.69.0부터 `functions.clock.date = "virtual"`을 설정하면 Python의 날짜 함수가 가상 시계를 따릅니다. Python 타이머는 실제 시간으로 동작합니다.
 
 ### 소스 리로드
 
@@ -140,7 +140,7 @@ Python Storage 및 Eventarc 핸들러는 이벤트 `time`을 소수 초 패턴�
 
 ### 디버거
 
-`--inspect-functions`는 Firebase CLI와 마찬가지로 경고와 함께 무시됩니다.
+v0.69.0부터 코드베이스의 가상 환경에 debugpy가 설치되어 있으면 `--inspect-functions`로 로컬 디버거를 시작할 수 있습니다.
 
 ### App Check
 

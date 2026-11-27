@@ -105,7 +105,7 @@ Python 代码库在以下方面与生产环境和 Firebase CLI 不同。
 
 ### 时间
 
-时间为真实时间。Python 代码不会被移到虚拟时钟上，因此 `datetime.now()` 会忽略 `daemon.clock` 设置。为 Functions 运行器请求虚拟日期的配置在 Python 代码库中会被拒绝。
+从 v0.69.0 开始，设置 `functions.clock.date = "virtual"` 后，Python 日期函数跟随虚拟时钟。Python 计时器使用真实时间。
 
 ### 源代码重新加载
 
@@ -140,7 +140,7 @@ Python 的 Storage 和 Eventarc 处理程序使用带小数秒的模式解析事
 
 ### 调试器
 
-与 Firebase CLI 一样，`--inspect-functions` 会被忽略并显示警告。
+从 v0.69.0 开始，如果在代码库的虚拟环境中安装了 debugpy，`--inspect-functions` 就会启动本地调试器。
 
 ### App Check
 

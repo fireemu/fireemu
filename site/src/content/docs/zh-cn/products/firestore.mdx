@@ -192,6 +192,10 @@ npx fireemu exec -- sh -c '
 - 在不报告任何内容的情况下（`emulator` profile、使用 `"refuse"` 的 `strict`，或未选择 Firestore），`GET` 以 `409` 和 `FAILED_PRECONDITION` 应答，因此依赖该列表的检查不会在空应答上通过。`DELETE` 仍应答 `{"cleared": 0}`。
 - 浏览器中的页面对这两种方法都需要 `Authorization: Bearer <control token>`，与资源报告相同，因为条目会指明你的查询进行筛选和排序的字段。
 
+### 退出时写入发现的索引
+
+从 v0.69.0 开始，`fireemu exec --profile strict --write-missing-indexes -- npm test` 会在退出时追加测试中发现的索引。对于命名数据库，请通过 `--write-missing-indexes=<file>` 指定输出路径。
+
 ### 对 `firestore.indexes.json` 的检查
 
 在 `strict` 下，Fireemu 在启动时拒绝 `firebase deploy` 会拒绝的内容。当文件在 Fireemu 运行期间发生变化时，它会保留之前的索引。消息会指明条目，并以文件路径开头，例如 `./firestore.indexes.json: indexes[0] (collection group notes): ...`。下面的每种拒绝都会展示导致它的条目以及生产环境接受的条目。

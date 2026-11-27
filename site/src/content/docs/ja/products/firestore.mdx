@@ -192,6 +192,10 @@ npx fireemu exec -- sh -c '
 - 何も報告されない場合（`emulator`プロファイル、`strict`で`"refuse"`、またはFirestoreを選択していない場合）、`GET`は`FAILED_PRECONDITION`の`409`を返すため、一覧に依存するチェックが空の応答で通ってしまうことはありません。`DELETE`は引き続き`{"cleared": 0}`を返します。
 - ブラウザのページからは、リソースレポートと同様に、どちらのメソッドでも`Authorization: Bearer <control token>`が必要です。エントリには、クエリがフィルタや並べ替えに使うフィールド名が含まれるためです。
 
+### 終了時に不足インデックスを書き込む
+
+v0.69.0以降、`fireemu exec --profile strict --write-missing-indexes -- npm test`はテスト中に見つかったインデックスを終了時に追記します。名前付きデータベースを対象にする場合は`--write-missing-indexes=<file>`で出力先を指定してください。
+
 ### `firestore.indexes.json`のチェック
 
 `strict`では、`firebase deploy`が拒否するものをFireemuも起動時に拒否します。Fireemuの実行中にファイルが変更された場合は、以前のインデックスを保持します。メッセージにはエントリが示され、`./firestore.indexes.json: indexes[0] (collection group notes): ...`のようにファイルのパスで始まります。以下の各拒否は、原因となるエントリと、本番が受け入れるエントリとあわせて示しています。

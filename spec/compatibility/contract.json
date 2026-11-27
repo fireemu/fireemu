@@ -2009,8 +2009,8 @@
           "evidence": {
             "tests": [],
             "integration": [
-              "crates/fireemu-core-app-check/tests/token.rs",
-              "crates/fireemu-core-app-check/tests/exchange.rs",
+              "crates/fireemu-core-app-check/tests/integration/token.rs",
+              "crates/fireemu-core-app-check/tests/integration/exchange.rs",
               "crates/fireemu-adapter-http/tests/app_check.rs"
             ],
             "conformance": [
@@ -2049,7 +2049,7 @@
           "evidence": {
             "tests": [],
             "integration": [
-              "crates/fireemu-core-app-check/tests/admission.rs",
+              "crates/fireemu-core-app-check/tests/integration/admission.rs",
               "crates/fireemu-adapter-grpc/tests/app_check.rs",
               "crates/fireemu-adapter-http/tests/app_check_auth.rs",
               "crates/fireemu-adapter-http/tests/app_check_storage.rs",
@@ -2145,7 +2145,7 @@
           "evidence": {
             "tests": [],
             "integration": [
-              "crates/fireemu-core-app-check/tests/exchange.rs"
+              "crates/fireemu-core-app-check/tests/integration/exchange.rs"
             ],
             "conformance": []
           },

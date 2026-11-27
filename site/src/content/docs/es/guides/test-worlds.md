@@ -35,6 +35,10 @@ Lee estas dos secciones antes de escribir una prueba: indican qué no alcanza un
 - Los comandos iniciados con `world.run()` en la generación anterior se terminan.
 - `reset()` vuelve a la *instantánea de creación*, no a tus fuentes actuales. Las ediciones hechas al código de Functions, a las Rules, a los índices o a la configuración después de crear el mundo no se recogen. Crea un mundo nuevo para usarlas.
 
+### Restablecer el estado sin reiniciar
+
+Desde v0.69.0, `world.resetState()` recupera el estado inicial y conserva los endpoints. Usa `world.checkpoint()`, `world.restore()` y `world.deleteCheckpoint()` para gestionar puntos de restauración.
+
 ## Iniciar un mundo
 
 ```js
@@ -250,6 +254,10 @@ export const test = base.extend<{ db: Firestore }, { world: TestWorld }>({
 ```
 
 Los clientes que leen el host de su emulador del entorno, como Admin Auth, no se pueden apuntar a un mundo mediante una app con nombre: ejecuta ese código con `world.run()`, que pasa `world.environment` al proceso hijo.
+
+## Python / Go
+
+Consulta [Python and Go](https://fireemu.github.io/fireemu/guides/test-worlds/#python-and-go).
 
 ## TypeScript
 

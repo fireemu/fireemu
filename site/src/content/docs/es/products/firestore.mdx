@@ -192,6 +192,10 @@ npx fireemu exec -- sh -c '
 - Cuando no se informa de nada (el perfil `emulator`, `strict` con `"refuse"`, o Firestore no seleccionado), `GET` responde `409` con `FAILED_PRECONDITION`, de modo que una comprobación que depende de la lista no puede pasar con una respuesta vacía. `DELETE` sigue respondiendo `{"cleared": 0}`.
 - Una página en un navegador necesita `Authorization: Bearer <control token>` para ambos métodos, igual que para el informe de recursos, porque las entradas nombran los campos por los que tus consultas filtran y ordenan.
 
+### Escribir los índices detectados al salir
+
+Desde v0.69.0, `fireemu exec --profile strict --write-missing-indexes -- npm test` añade los índices detectados durante la prueba. Para una base de datos con nombre, pasa una ruta explícita con `--write-missing-indexes=<file>`.
+
 ### Comprobaciones de `firestore.indexes.json`
 
 Con `strict`, Fireemu rechaza al arrancar lo que rechaza `firebase deploy`. Cuando el archivo cambia mientras Fireemu se ejecuta, conserva los índices anteriores. El mensaje nombra la entrada y empieza con la ruta del archivo, como en `./firestore.indexes.json: indexes[0] (collection group notes): ...`. Cada rechazo siguiente se muestra con la entrada que lo causa y una que producción acepta.

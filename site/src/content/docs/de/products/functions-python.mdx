@@ -105,7 +105,7 @@ Standardmäßig bedient ein Python-Prozess die gesamte Codebasis, wo die Produkt
 
 ### Zeit
 
-Die Zeit ist Echtzeit. Python-Code wird nicht auf die virtuelle Uhr gelegt, daher ignoriert `datetime.now()` die Einstellungen von `daemon.clock`. Eine Konfiguration, die für den Functions-Runner ein virtuelles Datum verlangt, wird für eine Python-Codebasis abgelehnt.
+Ab v0.69.0 folgen Python-Datumsfunktionen bei `functions.clock.date = "virtual"` der virtuellen Uhr. Python-Timer laufen in Echtzeit.
 
 ### Neuladen der Quelle
 
@@ -140,7 +140,7 @@ Python-Handler für Storage und Eventarc parsen die Event-Zeit `time` mit einem 
 
 ### Debugger
 
-`--inspect-functions` wird mit einer Warnung ignoriert, wie es die Firebase CLI tut.
+Ab v0.69.0 startet `--inspect-functions` den lokalen Debugger, wenn debugpy in der virtuellen Umgebung der Codebasis installiert ist.
 
 ### App Check
 
