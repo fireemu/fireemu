@@ -197,7 +197,7 @@ npx fireemu exec -- sh -c '
 Starting in Fireemu v0.69.0, run a suite with index reporting and merge its discoveries when it exits:
 
 ```sh
-fireemu exec --profile strict --only firestore --write-missing-indexes -- npm test
+fireemu exec --only firestore --write-missing-indexes -- npm test
 ```
 
 Fireemu uses the configured indexes file for `(default)` or `firestore.indexes.json` if none is configured. To collect from one named database, pass `--write-missing-indexes=path/to/indexes.json` and exercise that database alone. A run that reports missing indexes for more than one database refuses to write. The merge preserves existing definitions and field overrides. Give simultaneous runs separate output files.

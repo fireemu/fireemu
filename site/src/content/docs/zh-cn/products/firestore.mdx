@@ -194,7 +194,7 @@ npx fireemu exec -- sh -c '
 
 ### 退出时写入发现的索引
 
-从 v0.69.0 开始，`fireemu exec --profile strict --write-missing-indexes -- npm test` 会在退出时追加测试中发现的索引。对于命名数据库，请通过 `--write-missing-indexes=<file>` 指定输出路径。
+从 v0.69.0 开始，`fireemu exec --write-missing-indexes -- npm test` 会在退出时追加测试中发现的索引。对于命名数据库，请通过 `--write-missing-indexes=<file>` 指定输出路径。
 
 ### 对 `firestore.indexes.json` 的检查
 

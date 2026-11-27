@@ -194,7 +194,7 @@ npx fireemu exec -- sh -c '
 
 ### 終了時に不足インデックスを書き込む
 
-v0.69.0以降、`fireemu exec --profile strict --write-missing-indexes -- npm test`はテスト中に見つかったインデックスを終了時に追記します。名前付きデータベースを対象にする場合は`--write-missing-indexes=<file>`で出力先を指定してください。
+v0.69.0以降、`fireemu exec --write-missing-indexes -- npm test`はテスト中に見つかったインデックスを終了時に追記します。名前付きデータベースを対象にする場合は`--write-missing-indexes=<file>`で出力先を指定してください。
 
 ### `firestore.indexes.json`のチェック
 
