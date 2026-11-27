@@ -590,8 +590,23 @@ async fn respond(
     state: Arc<HubState>,
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, std::convert::Infallible> {
-    let has_origin = req.headers().contains_key(hyper::header::ORIGIN);
-    let origin = local_origin(&req).map(str::to_owned);
+    let origin = match fireemu_core_session::loopback::parse_origin_headers(
+        req.headers()
+            .get_all(hyper::header::ORIGIN)
+            .iter()
+            .map(hyper::header::HeaderValue::as_bytes),
+    ) {
+        fireemu_core_session::loopback::OriginHeader::Absent => None,
+        fireemu_core_session::loopback::OriginHeader::Local(origin) => Some(origin.to_owned()),
+        fireemu_core_session::loopback::OriginHeader::Forbidden => {
+            return Ok(json_response(
+                StatusCode::FORBIDDEN,
+                &fireemu_adapter_support::api_error::flat("forbidden origin"),
+                None,
+            ));
+        }
+    };
+    let has_origin = origin.is_some();
     if !host_is_local(&req) {
         return Ok(json_response(
             StatusCode::FORBIDDEN,

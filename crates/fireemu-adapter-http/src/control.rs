@@ -3162,10 +3162,9 @@ pub fn remote_config_guard(
 ///
 /// The decision itself is [`fireemu_core_session::loopback::privileged_route_admission`], the
 /// one privileged-route policy every surface applies; this function only decides which routes
-/// of the control API are privileged. The browser test is `Origin` alone here because that is
-/// the only browser field [`RequestHeaders`] carries; surfaces whose transport forwards the
-/// rest pass [`fireemu_core_session::loopback::carries_browser_metadata`] instead, which is
-/// strictly wider.
+/// of the control API are privileged. The HTTP transport populates
+/// [`RequestHeaders::browser_metadata`] from [`fireemu_core_session::loopback::BROWSER_METADATA_HEADERS`]
+/// (including non-UTF-8 instances) so browser requests without `Origin` are also challenged.
 #[must_use]
 pub fn browser_guard(
     state: &ControlState,

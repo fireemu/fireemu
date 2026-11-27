@@ -476,8 +476,14 @@ async fn rest_call(
     let query = req.uri().query().unwrap_or("").to_owned();
     let remote_peer = req.extensions().get::<RemotePeer>().is_some();
     let authorization = header(&req, "authorization").map(str::to_owned);
-    let browser_metadata =
-        fireemu_core_session::loopback::carries_browser_metadata(|name| header(&req, name));
+    let browser_metadata = fireemu_core_session::loopback::BROWSER_METADATA_HEADERS
+        .iter()
+        .any(|name| {
+            req.headers()
+                .get_all(*name)
+                .iter()
+                .any(|v| !v.as_bytes().is_empty())
+        });
     // Every instance, in wire order: duplicates and folded values must survive to the
     // classifier, which refuses them (spec 7.3).
     let app_check: Vec<String> = req
@@ -1091,6 +1097,14 @@ where
                             .body(full(Bytes::from(refusal.body())))
                             .unwrap_or_else(|_| Response::new(full(Bytes::new()))));
                     }
+                    if has_forbidden_origin(req.headers()) {
+                        // A page on another site must not drive this credentialed
+                        // loopback runtime (simple requests need no preflight).
+                        return Ok(Response::builder()
+                            .status(403)
+                            .body(full(Bytes::from_static(b"forbidden origin")))
+                            .unwrap_or_else(|_| Response::new(full(Bytes::new()))));
+                    }
                     if is_grpc(&req) {
                         let write_stream =
                             req.uri().path() == "/google.firestore.v1.Firestore/Write";
@@ -1119,14 +1133,6 @@ where
                             write_stream,
                             strict_pipeline,
                         ));
-                    }
-                    if has_forbidden_origin(req.headers()) {
-                        // A page on another site must not drive this credentialed
-                        // loopback runtime (simple requests need no preflight).
-                        return Ok(Response::builder()
-                            .status(403)
-                            .body(full(Bytes::from_static(b"forbidden origin")))
-                            .unwrap_or_else(|_| Response::new(full(Bytes::new()))));
                     }
                     if req.method() == hyper::Method::OPTIONS {
                         return Ok(preflight(&req));
