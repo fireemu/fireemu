@@ -3355,12 +3355,7 @@ mod dispatch_tests {
             dispatch.claim().unwrap()
         };
         let in_flight = handle
-            .pull_batched_at(
-                &subscription,
-                1,
-                OrderedPullBatching::Mixed,
-                handle.lease_times(),
-            )
+            .pull_batched(&subscription, 1, OrderedPullBatching::Mixed)
             .unwrap();
         assert_eq!(in_flight.len(), 1);
         handle

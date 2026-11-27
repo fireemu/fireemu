@@ -173,9 +173,9 @@ test('uses a local Firestore listener', () => {
 ```ts
 // Playwright
 import { test as base } from '@playwright/test';
-import { createFireemuFixtures } from 'fireemu/playwright';
+import { createFireemuFixtures, type FireemuPlaywrightTestFixtures, type FireemuPlaywrightWorkerFixtures } from 'fireemu/playwright';
 
-export const test = base.extend(createFireemuFixtures({ services: ['firestore'] }));
+export const test = base.extend<FireemuPlaywrightTestFixtures, FireemuPlaywrightWorkerFixtures>(createFireemuFixtures({ services: ['firestore'] }));
 ```
 
 Vitest shares one world per suite and Playwright one per worker. Use sequential Vitest tests when sharing a world. Playwright tests should request the `fireemu` fixture so the reset runs. Both integrations default to `resetMode: 'state'` between tests. Choose `'restart'` for a fresh generation or `'none'` to keep state.
