@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use fireemu_core_rules::eval::{
-    evaluate_request, evaluate_request_with, Decision, DenyReason, DocumentAccess, Method,
-    RequestContext, RulesService,
+    evaluate_request, evaluate_request_traced, evaluate_request_with, Decision, DenyReason,
+    DocumentAccess, Method, RequestContext, RulesService,
 };
 use fireemu_core_rules::parse::parse_ruleset;
 use fireemu_core_rules::value::{AuthContext, RulesValue};
@@ -770,8 +770,9 @@ fn scalar_projection_parentheses_count_toward_budget_pict() {
             _ => unreachable!(),
         };
         let (chain, parens_cost) = parens_member_chain(root, mid, leaf, placement);
-        // `pad && (chain != null)`:
-        // pad (k) + `&&` (1) + outer parens (1) + `!=` (1) + `null` (1) + chain (3 + parens_cost)
+        // `pad && (null != chain)`:
+        // pad (k) + `&&` (1) + outer parens (1) + `!=` (1) + `null` (1) + chain (3 + parens_cost).
+        // Putting `chain` on the RHS ensures `over_by_one` hits the budget inside the chain itself.
         let fixed_cost = 7 + parens_cost;
         let pad_cost = match budget_relation {
             "well_below" => 1,
@@ -779,7 +780,7 @@ fn scalar_projection_parentheses_count_toward_budget_pict() {
             "over_by_one" => 1_001 - fixed_cost,
             other => panic!("unexpected budget_relation: {other}"),
         };
-        let cond = format!("{} && ({chain} != null)", exact_budget_pad(pad_cost));
+        let cond = format!("{} && (null != {chain})", exact_budget_pad(pad_cost));
         let report = evaluate_request(&parse_ruleset(&rules(&cond)).unwrap(), &context);
         match budget_relation {
             "well_below" | "exact_limit" => {
@@ -808,12 +809,17 @@ fn scalar_projection_parentheses_count_toward_budget_pict() {
                         report.decision,
                         Decision::Deny(DenyReason::BudgetExceeded {
                             limit_id: "RULES-EXPRESSIONS-PER-REQUEST",
-                            ..
+                            current: 1_001,
+                            maximum: 1_000,
                         })
                     ),
                     "expected BudgetExceeded for ({root}, {placement}, {target_kind}, {budget_relation}), got {:?} (expressions={})",
                     report.decision,
                     report.expressions_evaluated
+                );
+                assert_eq!(
+                    report.projected_member_reads, 0,
+                    "budget-exceeded chain must fall back to ordinary evaluator for ({root}, {placement}, {target_kind})"
                 );
             }
             _ => unreachable!(),
@@ -829,17 +835,49 @@ fn scalar_and_map_member_chains_charge_identical_parens_budget() {
         token: BTreeMap::new(),
     });
 
-    let scalar = evaluate_request(
-        &parse_ruleset(&rules("((((request)).auth).uid) != null")).unwrap(),
+    let (scalar, _) = evaluate_request_traced(
+        &parse_ruleset(&rules("null != ((((request)).auth).uid)")).unwrap(),
         &context,
+        None,
     );
-    let map = evaluate_request(
-        &parse_ruleset(&rules("((((request)).auth).token) != null")).unwrap(),
+    let (map, _) = evaluate_request_traced(
+        &parse_ruleset(&rules("null != ((((request)).auth).token)")).unwrap(),
         &context,
+        None,
     );
     assert!(matches!(scalar.decision, Decision::Allow));
     assert!(matches!(map.decision, Decision::Allow));
     assert!(scalar.projected_member_reads >= 1);
     assert_eq!(map.projected_member_reads, 0);
     assert_eq!(scalar.expressions_evaluated, map.expressions_evaluated);
+
+    // When the chain exceeds the expression budget mid-evaluation, scalar fallback must match
+    // the ordinary map path in decision, expression count, and coverage outcomes.
+    let pad = exact_budget_pad(1_001 - (7 + 4));
+    let (scalar_over, scalar_cov) = evaluate_request_traced(
+        &parse_ruleset(&rules(&format!(
+            "{pad} && (null != ((((request)).auth).uid))"
+        )))
+        .unwrap(),
+        &context,
+        None,
+    );
+    let (map_over, map_cov) = evaluate_request_traced(
+        &parse_ruleset(&rules(&format!(
+            "{pad} && (null != ((((request)).auth).token))"
+        )))
+        .unwrap(),
+        &context,
+        None,
+    );
+    assert_eq!(scalar_over.decision, map_over.decision);
+    assert_eq!(
+        scalar_over.expressions_evaluated,
+        map_over.expressions_evaluated
+    );
+    assert_eq!(scalar_over.projected_member_reads, 0);
+    assert_eq!(scalar_cov.entries().len(), map_cov.entries().len());
+    for (s, m) in scalar_cov.entries().iter().zip(map_cov.entries().iter()) {
+        assert_eq!(s.values, m.values);
+    }
 }

@@ -4326,14 +4326,17 @@ impl<'a> Evaluator<'a> {
         ) {
             return None;
         }
-        if let Err(error) = self.budget.charge_node(root_expr) {
-            return Some(Err(error));
+        let total_charges = std::iter::once(root_expr)
+            .chain(members.iter().map(|(member_expr, _)| *member_expr))
+            .fold(0_u64, |acc, node| {
+                acc.saturating_add(1).saturating_add(u64::from(node.parens))
+            });
+        if self.budget.expressions.saturating_add(total_charges) > self.budget.expression_max {
+            // Fall back to the ordinary evaluator when the chain would exceed the budget so
+            // charge ordering, coverage spans, and undefined causes match it identically.
+            return None;
         }
-        for (member_expr, _) in &members {
-            if let Err(error) = self.budget.charge_node(member_expr) {
-                return Some(Err(error));
-            }
-        }
+        self.budget.expressions = self.budget.expressions.saturating_add(total_charges);
         self.projected_member_reads = self.projected_member_reads.saturating_add(1);
         self.record_success(root_expr, values[0]);
         for ((member_expr, _), value) in members
