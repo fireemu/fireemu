@@ -59,6 +59,17 @@ fn catalog_edition_must_match_database_edition() {
 }
 
 #[test]
+fn catalog_edition_marker_must_start_the_id() {
+    let edition = FirestoreEdition::Enterprise;
+    let catalog = LimitCatalogId::try_new("other-firestore-enterprise-native-2026-08-27").unwrap();
+    assert_eq!(
+        DatabaseCapabilities::try_new(edition, FirestoreApiMode::Native, catalog.clone())
+            .unwrap_err(),
+        EditionError::CatalogEditionMismatch { edition, catalog }
+    );
+}
+
+#[test]
 fn edition_and_mode_have_stable_config_names() {
     assert_eq!(FirestoreEdition::Standard.as_config_str(), "standard");
     assert_eq!(FirestoreEdition::Enterprise.as_config_str(), "enterprise");

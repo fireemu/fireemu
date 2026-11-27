@@ -93,6 +93,13 @@ fn surrogate_pairs_still_decode_at_both_unicode_boundaries() {
 }
 
 #[test]
+fn a_high_surrogate_rejects_the_first_code_unit_after_the_low_range() {
+    let error = parse(r#""\uD800\uE000""#).unwrap_err();
+    assert_eq!(error.expected, "low surrogate");
+    assert_eq!(error.offset, 13);
+}
+
+#[test]
 fn incomplete_escapes_and_unpaired_surrogates_stay_errors() {
     for source in [
         r#""\u""#,

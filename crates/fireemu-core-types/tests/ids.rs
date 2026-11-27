@@ -30,8 +30,27 @@ fn project_id_rejects_empty_uppercase_and_edge_hyphens() {
 
 #[test]
 fn project_id_without_demo_prefix_is_valid_but_flagged() {
-    let id = ProjectId::try_new("my-prod-app").unwrap();
-    assert!(!id.has_demo_prefix());
+    for project in ["my-prod-app", "my-demo-app"] {
+        assert!(!ProjectId::try_new(project).unwrap().has_demo_prefix());
+    }
+}
+
+#[test]
+fn only_complete_dunder_affixes_reserve_document_and_collection_names() {
+    for (name, reserved) in [
+        ("___", false),
+        ("__ab__", true),
+        ("a__b__", false),
+        ("a__", false),
+        ("a__bcd", false),
+        ("abc", false),
+        ("__a", false),
+        ("__a__b", false),
+    ] {
+        let expected = reserved.then_some(IdSyntaxError::ReservedDunder);
+        assert_eq!(DocumentId::try_new(name).err(), expected, "{name}");
+        assert_eq!(CollectionId::try_new(name).err(), expected, "{name}");
+    }
 }
 
 #[test]
