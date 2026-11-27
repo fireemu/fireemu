@@ -43,6 +43,7 @@ struct BoundStartup {
     verbosity: Verbosity,
     import: Option<PathBuf>,
     export_on_exit: Option<PathBuf>,
+    write_missing_indexes: Option<PathBuf>,
     quiet: bool,
     clock: Arc<Mutex<VirtualClock>>,
     gateway: Gateway,
@@ -79,6 +80,7 @@ struct ServiceAssembly {
     verbosity: Verbosity,
     import: Option<PathBuf>,
     export_on_exit: Option<PathBuf>,
+    write_missing_indexes: Option<PathBuf>,
     quiet: bool,
     clock: Arc<Mutex<VirtualClock>>,
     gateway: Gateway,
@@ -346,6 +348,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         verbosity,
         import,
         export_on_exit,
+        write_missing_indexes,
         quiet,
         clock,
         gateway,
@@ -776,6 +779,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         verbosity,
         import,
         export_on_exit,
+        write_missing_indexes,
         quiet,
         clock,
         gateway,
@@ -1005,6 +1009,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         verbosity,
         import,
         export_on_exit,
+        write_missing_indexes,
         quiet,
         clock,
         gateway,
@@ -1238,6 +1243,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         only,
         quiet,
         export_on_exit,
+        write_missing_indexes,
         clock,
         backend,
         auth,
@@ -1267,6 +1273,7 @@ struct ReadySuite {
     only: Selection,
     quiet: bool,
     export_on_exit: Option<PathBuf>,
+    write_missing_indexes: Option<PathBuf>,
     clock: Arc<Mutex<VirtualClock>>,
     backend: Arc<LocalBackend>,
     auth: Arc<AuthState>,
@@ -1308,6 +1315,7 @@ async fn serve_suite(
         only,
         quiet,
         export_on_exit,
+        write_missing_indexes,
         clock,
         backend,
         auth,
@@ -1738,6 +1746,26 @@ async fn serve_suite(
         }
         _ => 0,
     };
+    if let Some(path) = &write_missing_indexes {
+        let reports = fireemu_adapter_grpc::gateway::missing_index_reports();
+        match merge_missing_indexes_file(path, &reports) {
+            Ok(added) => {
+                if !quiet && added > 0 {
+                    outln!(
+                        "wrote {added} missing Firestore index(es) to {}",
+                        path.display()
+                    );
+                }
+            }
+            Err(e) => {
+                errln!(
+                    "error: writing missing Firestore indexes to {} failed: {e}",
+                    path.display()
+                );
+                code = export_failure_exit_code(code);
+            }
+        }
+    }
     if let Some(dir) = &export_on_exit {
         use hub::ExportRunner as _;
         match exporter.export(dir, "exit") {
@@ -1801,6 +1829,91 @@ async fn serve_suite(
         flush();
     }
     outcome.map(|_| code)
+}
+
+/// Merges discovered missing Firestore composite indexes into `path` (`firestore.indexes.json`),
+/// preserving existing `indexes` and `fieldOverrides`, deduplicating entries, and writing
+/// atomically via a temporary file in the same directory. Returns the number of newly added
+/// indexes.
+fn merge_missing_indexes_file(
+    path: &std::path::Path,
+    reports: &[fireemu_adapter_grpc::gateway::MissingIndexReport],
+) -> Result<usize, String> {
+    let mut root: serde_json::Map<String, serde_json::Value> = if path.exists() {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
+        parsed
+            .as_object()
+            .cloned()
+            .ok_or_else(|| format!("{} must contain a JSON object", path.display()))?
+    } else {
+        let mut obj = serde_json::Map::new();
+        obj.insert("indexes".to_owned(), serde_json::Value::Array(Vec::new()));
+        obj.insert(
+            "fieldOverrides".to_owned(),
+            serde_json::Value::Array(Vec::new()),
+        );
+        obj
+    };
+
+    let indexes = root
+        .entry("indexes".to_owned())
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| format!("{}: \"indexes\" must be a JSON array", path.display()))?;
+
+    let mut seen: std::collections::BTreeSet<String> = indexes
+        .iter()
+        .filter_map(|v| serde_json::to_string(v).ok())
+        .collect();
+
+    let mut added = 0usize;
+    for report in reports {
+        let parsed: serde_json::Value = serde_json::from_str(&report.fragment)
+            .map_err(|e| format!("invalid missing-index fragment: {e}"))?;
+        if let Ok(key) = serde_json::to_string(&parsed) {
+            if seen.insert(key) {
+                indexes.push(parsed);
+                added += 1;
+            }
+        }
+    }
+
+    if added == 0 && path.exists() {
+        return Ok(0);
+    }
+
+    if !root.contains_key("fieldOverrides") {
+        root.insert(
+            "fieldOverrides".to_owned(),
+            serde_json::Value::Array(Vec::new()),
+        );
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create directory {}: {e}", parent.display()))?;
+        }
+    }
+    let mut formatted = serde_json::to_string_pretty(&serde_json::Value::Object(root))
+        .map_err(|e| format!("cannot serialize indexes JSON: {e}"))?;
+    formatted.push('\n');
+
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("firestore.indexes.json");
+    let tmp_path = path.with_file_name(format!(".{file_name}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp_path, formatted)
+        .map_err(|e| format!("cannot write {}: {e}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("cannot replace {}: {e}", path.display())
+    })?;
+    Ok(added)
 }
 
 /// The exit status of a run whose `--export-on-exit` failed: a command's own failure is kept,
@@ -2008,6 +2121,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
         verbosity,
         import,
         export_on_exit,
+        write_missing_indexes,
         ready_file,
         owner_stdin,
         config_origin,
@@ -2437,6 +2551,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
                 verbosity,
                 import,
                 export_on_exit,
+                write_missing_indexes,
                 quiet,
                 clock,
                 gateway,
@@ -4423,5 +4538,80 @@ mod tests {
             emulator.ends_with("\r\n\r\n{\n  \"error\" : \"bad request\"\n}\n"),
             "{emulator}"
         );
+    }
+
+    #[test]
+    fn merge_missing_indexes_file_preserves_existing_and_deduplicates() {
+        let dir =
+            std::env::temp_dir().join(format!("fireemu-merge-indexes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("firestore.indexes.json");
+        std::fs::write(
+            &path,
+            r#"{
+  "indexes": [
+    {
+      "collectionGroup": "orders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    { "collectionGroup": "logs", "fieldPath": "ttl", "ttl": true, "indexes": [] }
+  ]
+}
+"#,
+        )
+        .unwrap();
+        let duplicate = serde_json::json!({
+            "collectionGroup": "orders",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "status", "order": "ASCENDING" },
+                { "fieldPath": "createdAt", "order": "DESCENDING" }
+            ]
+        })
+        .to_string();
+        let fresh = serde_json::json!({
+            "collectionGroup": "orders",
+            "queryScope": "COLLECTION",
+            "fields": [
+                { "fieldPath": "userId", "order": "ASCENDING" },
+                { "fieldPath": "total", "order": "DESCENDING" }
+            ]
+        })
+        .to_string();
+        let reports = vec![
+            fireemu_adapter_grpc::gateway::MissingIndexReport {
+                database: "projects/demo/databases/(default)".to_owned(),
+                fragment: duplicate,
+                message: "missing".to_owned(),
+            },
+            fireemu_adapter_grpc::gateway::MissingIndexReport {
+                database: "projects/demo/databases/(default)".to_owned(),
+                fragment: fresh.clone(),
+                message: "missing".to_owned(),
+            },
+            fireemu_adapter_grpc::gateway::MissingIndexReport {
+                database: "projects/demo/databases/(default)".to_owned(),
+                fragment: fresh,
+                message: "missing".to_owned(),
+            },
+        ];
+        let added = super::merge_missing_indexes_file(&path, &reports).unwrap();
+        assert_eq!(added, 1);
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["indexes"].as_array().unwrap().len(), 2);
+        assert_eq!(written["fieldOverrides"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            super::merge_missing_indexes_file(&path, &reports).unwrap(),
+            0
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

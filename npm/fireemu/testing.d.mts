@@ -50,6 +50,7 @@ export interface TestWorldEndpoints {
   readonly tasks?: Endpoint;
   readonly pubsub?: Endpoint;
   readonly database?: Endpoint;
+  readonly appcheck?: Endpoint;
   readonly hosting?: Endpoint;
   readonly hub?: Endpoint;
   readonly logging?: Endpoint;
@@ -193,6 +194,56 @@ export interface TestWorldHostingSite {
   readonly url: string;
 }
 
+export interface ResetOptions {
+  /**
+   * `'restart'` (the default) retires the daemon process and starts a fresh generation with full
+   * process/file/connection isolation. `'state'` rewinds in-memory service state (and virtual
+   * clock) to the startup baseline snapshot without restarting the daemon.
+   */
+  readonly mode?: 'restart' | 'state';
+}
+
+export interface SnapshotSummary {
+  readonly name: string;
+  readonly clock?: string;
+  readonly retainedBytes?: number;
+  readonly [key: string]: unknown;
+}
+
+export interface SnapshotsListResponse {
+  readonly session?: string;
+  readonly snapshots: readonly SnapshotSummary[];
+  readonly retainedBytes?: number;
+  readonly [key: string]: unknown;
+}
+
+export interface MissingIndexEntry {
+  readonly project: string;
+  readonly database: string;
+  readonly index: Readonly<Record<string, unknown>>;
+  readonly refusal?: string;
+  readonly [key: string]: unknown;
+}
+
+export interface MissingIndexesResponse {
+  readonly count: number;
+  readonly missingIndexes: readonly MissingIndexEntry[];
+  readonly indexesJson: Readonly<Record<string, unknown>>;
+  readonly [key: string]: unknown;
+}
+
+export interface TestWorldSnapshots {
+  readonly list: () => Promise<SnapshotsListResponse>;
+  readonly create: (name: string) => Promise<Readonly<Record<string, unknown>>>;
+  readonly restore: (name: string) => Promise<TestWorld>;
+  readonly delete: (name: string) => Promise<Readonly<Record<string, unknown>>>;
+}
+
+export interface TestWorldFirestore {
+  readonly missingIndexes: () => Promise<MissingIndexesResponse>;
+  readonly clearMissingIndexes: () => Promise<Readonly<Record<string, unknown>>>;
+}
+
 /** Frozen world; generation-scoped getters and operations may reject or throw after disposal. */
 export interface TestWorld {
   readonly id: string;
@@ -207,10 +258,21 @@ export interface TestWorld {
   readonly endpoints: TestWorldEndpoints;
   readonly environment: Environment;
   readonly clock: TestWorldClock;
+  readonly snapshots: TestWorldSnapshots;
+  readonly firestore: TestWorldFirestore;
+  readonly resources: () => Promise<Readonly<Record<string, unknown>>>;
+  /** Capture a named in-memory checkpoint (auto-named when omitted) and return its name. */
+  readonly checkpoint: (name?: string) => Promise<string>;
+  /** Restore a previously captured checkpoint in memory without restarting the daemon. */
+  readonly restore: (name: string) => Promise<TestWorld>;
+  /** Delete a previously captured checkpoint to free session snapshot budget. */
+  readonly deleteCheckpoint: (name: string) => Promise<void>;
+  /** Rewind in-memory service state and virtual clock to the startup baseline snapshot. */
+  readonly resetState: () => Promise<TestWorld>;
   readonly snapshotStats: TestWorldSnapshotStats;
   readonly control: (method: string, path: string, body?: unknown) => Promise<unknown>;
   readonly run: (command: string, args?: readonly string[], options?: RunOptions) => Promise<RunResult>;
-  readonly reset: () => Promise<TestWorld>;
+  readonly reset: (options?: ResetOptions) => Promise<TestWorld>;
   readonly dispose: () => Promise<void>;
 }
 

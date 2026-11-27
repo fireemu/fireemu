@@ -26,6 +26,10 @@
     "control.d.mts",
     "testing.mjs",
     "testing.d.mts",
+    "vitest.mjs",
+    "vitest.d.mts",
+    "playwright.mjs",
+    "playwright.d.mts",
     "testing-snapshot.mjs",
     "testing-queue.mjs",
     "testing-clock.mjs",
@@ -49,6 +53,14 @@
     "./testing": {
       "types": "./testing.d.mts",
       "default": "./testing.mjs"
+    },
+    "./vitest": {
+      "types": "./vitest.d.mts",
+      "default": "./vitest.mjs"
+    },
+    "./playwright": {
+      "types": "./playwright.d.mts",
+      "default": "./playwright.mjs"
     },
     "./package.json": "./package.json",
     "./control": {

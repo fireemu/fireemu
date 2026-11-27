@@ -40,9 +40,11 @@ export function stripComments(text) {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+const SUBPATHS = ['testing', 'control', 'vitest', 'playwright'];
+
 test('the package exposes exactly the declared subpaths, each with a shipped declaration', () => {
-  assert.deepEqual(Object.keys(manifest.exports).sort(), ['./control', './package.json', './testing']);
-  for (const name of ['testing', 'control']) {
+  assert.deepEqual(Object.keys(manifest.exports).sort(), ['./control', './package.json', './playwright', './testing', './vitest']);
+  for (const name of SUBPATHS) {
     const entry = manifest.exports[`./${name}`];
     assert.equal(entry.types, `./${name}.d.mts`);
     assert.equal(entry.default, `./${name}.mjs`);
@@ -50,7 +52,7 @@ test('the package exposes exactly the declared subpaths, each with a shipped dec
   }
 });
 
-for (const name of ['testing', 'control']) {
+for (const name of SUBPATHS) {
   test(`fireemu/${name}: runtime value exports and declared value exports are the same set`, async () => {
     const runtime = await runtimeExports(name);
     assert(runtime.length > 0);

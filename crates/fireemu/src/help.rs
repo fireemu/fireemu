@@ -157,6 +157,12 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
         Value::Optional("[dir]"),
         "Export all state to this directory when the emulators stop; without a directory, the --import directory. Refused for the working directory or a parent of it, and unavailable on Windows. Default: no export.",
     ),
+    OptionSpec {
+        flags: &["--write-missing-indexes"],
+        value: Value::Optional("[file]"),
+        exec_only: true,
+        text: "Enable missing Firestore composite index reporting for this run and merge discovered indexes into this firestore.indexes.json file on exit (default: configured firestore.indexes or firestore.indexes.json). For exec only. Default: off.",
+    },
     opt(
         &["--plan"],
         Value::None,
@@ -633,7 +639,10 @@ mod tests {
         let exec = command_help(Topic::Exec);
         for flag in parser_flags() {
             assert!(exec.contains(&flag), "exec help lacks {flag}");
-            if flag != "--ui" {
+            let is_exec_only = DAEMON_OPTIONS
+                .iter()
+                .any(|spec| spec.exec_only && spec.flags.contains(&flag.as_str()));
+            if !is_exec_only {
                 assert!(up.contains(&flag), "up help lacks {flag}");
             }
         }

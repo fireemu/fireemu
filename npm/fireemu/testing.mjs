@@ -12,7 +12,7 @@ import { createWorldQueue, waitRequestTimeoutMs } from './testing-queue.mjs';
 import { createControlClient } from './control.mjs';
 import { advanceBody, toBody } from './testing-clock.mjs';
 
-const endpointVariables = {firestore:'FIRESTORE_EMULATOR_HOST',auth:'FIREBASE_AUTH_EMULATOR_HOST',storage:'FIREBASE_STORAGE_EMULATOR_HOST',functions:'FIREEMU_FUNCTIONS_HOST',eventarc:'CLOUD_EVENTARC_EMULATOR_HOST',tasks:'CLOUD_TASKS_EMULATOR_HOST',pubsub:'PUBSUB_EMULATOR_HOST',database:'FIREBASE_DATABASE_EMULATOR_HOST',hub:'FIREBASE_EMULATOR_HUB',logging:'FIREBASE_LOGGING_EMULATOR_HOST'};
+const endpointVariables = {firestore:'FIRESTORE_EMULATOR_HOST',auth:'FIREBASE_AUTH_EMULATOR_HOST',storage:'FIREBASE_STORAGE_EMULATOR_HOST',functions:'FIREEMU_FUNCTIONS_HOST',eventarc:'CLOUD_EVENTARC_EMULATOR_HOST',tasks:'CLOUD_TASKS_EMULATOR_HOST',pubsub:'PUBSUB_EMULATOR_HOST',database:'FIREBASE_DATABASE_EMULATOR_HOST',appcheck:'FIREEMU_APP_CHECK_EMULATOR_HOST',hub:'FIREBASE_EMULATOR_HUB',logging:'FIREBASE_LOGGING_EMULATOR_HOST'};
 const emulatorVariables = new Set([...Object.values(endpointVariables),'FIREBASE_CONFIG','NODE_PATH','FIREBASE_FIRESTORE_EMULATOR_ADDRESS','STORAGE_EMULATOR_HOST','FIREEMU_CONTROL_TOKEN','FIREEMU_CONTROL_URL','FIREEMU_APP_CHECK_EMULATOR_HOST','FIREEMU_APP_CHECK_JWKS_URL','FIREEMU_APP_CHECK_DEBUG_TOKEN_URL','FIREBASE_DATABASE_EMULATOR_HOST']);
 const emptyEnvironment=base=>Object.fromEntries(Object.entries(base).filter(([name])=>!emulatorVariables.has(name)));
 
@@ -115,7 +115,8 @@ export async function createTestWorld(options={}){
   if(services&&(!Array.isArray(services)||!services.length||services.some(name=>typeof name!=='string'||! /^(auth|firestore|storage|functions(?::[A-Za-z0-9_-]+)?|pubsub|database|appcheck|hosting)$/.test(name))))throw TypeError('services must name supported test-world services');
   const id=randomUUID();
   const directory=await mkdtemp(join(resolve(options.tempRoot??tmpdir()),'fireemu-world-'));
-  let snapshot,current,closing=false,disposed=false,generation=0;
+  let snapshot,current,closing=false,disposed=false,generation=0,checkpointSeq=0;
+  const BASELINE_SNAPSHOT='__fireemu_baseline__';
   const queue=createWorldQueue();
   const snapshotLog={initial:undefined,generations:[]};
   const clients=new Set();
@@ -177,6 +178,11 @@ export async function createTestWorld(options={}){
           active.endpoints=endpoints(descriptor,active.control);
           active.hostingSites=Object.freeze((descriptor.hostingSites??[]).map(site=>Object.freeze(site)));
           active.environment=Object.freeze({...descriptor.environment,NODE_PATH:prepared.nodePath,TMPDIR:temporary,TEMP:temporary,TMP:temporary,FIREEMU_TEST_WORLD_ID:id,FIREEMU_TEST_WORLD_GENERATION:String(next)});
+          active.hasBaseline=false;
+          try{
+            await requestFor(active,'POST','/v1/sessions/default/snapshots',{name:BASELINE_SNAPSHOT},AbortSignal.timeout(Math.min(5000,timeout)));
+            active.hasBaseline=true;
+          }catch{}
           generation=next;
           return;
         }catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError)&&error.name!=='TimeoutError'&&error.name!=='TypeError')throw error;}
@@ -216,6 +222,35 @@ export async function createTestWorld(options={}){
     });
     return settled;
   };
+  const resetState=()=>queue.exclusive(async()=>{
+    check();
+    if(current.hasBaseline){
+      await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(BASELINE_SNAPSHOT)}:restore`,{});
+    }else{
+      await requestFor(current,'POST','/v1/sessions/default:reset',{});
+    }
+    return world;
+  },Error('test world call cancelled: the world state was reset'));
+  const checkpoint=async name=>{
+    const resolved=name===undefined?`cp-${++checkpointSeq}`:String(name);
+    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('checkpoint name must be a non-empty non-reserved string');
+    await control('POST','/v1/sessions/default/snapshots',{name:resolved});
+    return resolved;
+  };
+  const restore=name=>{
+    const resolved=String(name??'');
+    if(!resolved)throw TypeError('checkpoint name must be a non-empty string');
+    return queue.exclusive(async()=>{
+      check();
+      await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}:restore`,{});
+      return world;
+    },Error('test world call cancelled: the world state was restored'));
+  };
+  const deleteCheckpoint=async name=>{
+    const resolved=String(name??'');
+    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('checkpoint name must be a non-empty non-reserved string');
+    await control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}`);
+  };
   const world={
     get generation(){return generation;},
     get uiUrl(){check();return current.descriptor.uiUrl??undefined;},
@@ -234,18 +269,38 @@ export async function createTestWorld(options={}){
       runDue:(budget=1000)=>control('POST','/v1/sessions/default/clock:runDue',{budget}),
       advanceAndSettle,
     }),
+    snapshots:Object.freeze({
+      list:()=>control('GET','/v1/sessions/default/snapshots'),
+      create:name=>control('POST','/v1/sessions/default/snapshots',{name}),
+      restore:name=>restore(name),
+      delete:name=>control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(name)}`),
+    }),
+    firestore:Object.freeze({
+      missingIndexes:()=>control('GET','/v1/sessions/default/firestore/missingIndexes'),
+      clearMissingIndexes:()=>control('DELETE','/v1/sessions/default/firestore/missingIndexes'),
+    }),
+    resources:()=>control('GET','/v1/sessions/default/resources'),
+    checkpoint,
+    restore,
+    deleteCheckpoint,
+    resetState,
     get snapshotStats(){return Object.freeze({initial:snapshotLog.initial,generations:Object.freeze([...snapshotLog.generations])});},
-    reset:()=>queue.exclusive(async()=>{
-      check();
-      await retire();
-      const next=generation+1,generationDirectory=join(directory,`generation-${next}`),budget=snapshotBudget(options,snapshotTimeout);
-      let prepared;
-      try{prepared=await prepareGeneration(snapshot,generationDirectory,budget.signal);budget.check();recordGeneration(next,prepared.stats);}
-      catch(error){const failure=snapshotFailure(error,budget.signal);if(prepared)try{await removeSnapshotTree(generationDirectory);}catch(cleanupError){retainCleanupError(failure,cleanupError);}throw failure;}
-      finally{budget.close();}
-      await start(prepared,generationDirectory);
-      return world;
-    },Error('test world call cancelled: the world was reset')),
+    reset:(resetOptions={})=>{
+      const mode=resetOptions?.mode??'restart';
+      if(mode==='state')return resetState();
+      if(mode!=='restart')throw TypeError('reset mode must be "restart" or "state"');
+      return queue.exclusive(async()=>{
+        check();
+        await retire();
+        const next=generation+1,generationDirectory=join(directory,`generation-${next}`),budget=snapshotBudget(options,snapshotTimeout);
+        let prepared;
+        try{prepared=await prepareGeneration(snapshot,generationDirectory,budget.signal);budget.check();recordGeneration(next,prepared.stats);}
+        catch(error){const failure=snapshotFailure(error,budget.signal);if(prepared)try{await removeSnapshotTree(generationDirectory);}catch(cleanupError){retainCleanupError(failure,cleanupError);}throw failure;}
+        finally{budget.close();}
+        await start(prepared,generationDirectory);
+        return world;
+      },Error('test world call cancelled: the world was reset'));
+    },
     dispose:()=>{closing=true;return queue.exclusive(async()=>{if(disposed)return;await retire();await removeSnapshotTree(directory);disposed=true;},Error('test world call cancelled: the world was disposed'));},
     async run(command,args=[],runOptions={}){
       await queue.settled();check();
@@ -270,6 +325,9 @@ export async function createTestWorld(options={}){
   };
   Object.defineProperty(world,'id',{value:id,enumerable:true});
   Object.defineProperty(world,'projectId',{get:()=>snapshot?.config.daemon.authProject,enumerable:true});
+  if(typeof Symbol.asyncDispose==='symbol'){
+    Object.defineProperty(world,Symbol.asyncDispose,{value:()=>world.dispose(),enumerable:false});
+  }
   const budget=snapshotBudget(options,snapshotTimeout),generationDirectory=join(directory,'generation-1');
   try{
     snapshot=await snapshotInputs(options,directory,budget.signal);

@@ -259,6 +259,9 @@ struct Options {
     import: Option<PathBuf>,
     /// The export directory to write at exit (`--export-on-exit`).
     export_on_exit: Option<PathBuf>,
+    /// Target `firestore.indexes.json` file to merge discovered missing indexes into at exit
+    /// (`exec --write-missing-indexes [file]`).
+    write_missing_indexes: Option<PathBuf>,
     /// Private endpoint descriptor for a supervised test world.
     ready_file: Option<PathBuf>,
     owner_stdin: bool,
@@ -1135,6 +1138,8 @@ struct RawOptions {
     import: Option<PathBuf>,
     /// `--export-on-exit [dir]`.
     export_on_exit: Option<ExportOnExit>,
+    /// `--write-missing-indexes [file]` (`exec` only).
+    write_missing_indexes: Option<WriteMissingIndexes>,
     /// `--plan`: resolve everything, print the plan and start nothing.
     plan: bool,
     /// `--json`: print the plan as JSON.
@@ -1143,6 +1148,15 @@ struct RawOptions {
     deny_inherited_env: bool,
     /// `--allow-inherited-emulator-env <NAME>`, repeatable.
     allow_inherited_env: Vec<String>,
+}
+
+/// What `--write-missing-indexes` named, before resolving against `firestore.indexes`.
+#[derive(Debug, Clone)]
+enum WriteMissingIndexes {
+    /// `--write-missing-indexes <file>`.
+    File(PathBuf),
+    /// `--write-missing-indexes` with no value: use configured `firestore.indexes` or `firestore.indexes.json`.
+    DefaultFile,
 }
 
 /// What `--export-on-exit` named, before it is resolved against `--import`.
@@ -1365,6 +1379,19 @@ fn parse_raw_options(args: &[String], context: OptionContext) -> Result<RawOptio
                     None => (ExportOnExit::ImportDirectory, 1),
                 };
                 raw.export_on_exit = Some(dir);
+                i += step;
+            }
+            "--write-missing-indexes" => {
+                if context != OptionContext::Exec {
+                    return Err(CliError::usage(
+                        "--write-missing-indexes is only valid with exec",
+                    ));
+                }
+                let (target, step) = match optional_value(args, i + 1) {
+                    Some(v) => (WriteMissingIndexes::File(PathBuf::from(v)), 2),
+                    None => (WriteMissingIndexes::DefaultFile, 1),
+                };
+                raw.write_missing_indexes = Some(target);
                 i += step;
             }
             other if context == OptionContext::Exec && !other.starts_with('-') => {
@@ -2103,6 +2130,17 @@ fn parse_options(
     // that is the working directory or one of its parents is refused there too, because an
     // export replaces what the directory holds.
     let export_on_exit = resolve_export_on_exit(raw.export_on_exit, raw.import.as_deref())?;
+    let write_missing_indexes = raw.write_missing_indexes.map(|target| {
+        cfg.firestore_missing_indexes = config::MissingIndexes::Report;
+        match target {
+            WriteMissingIndexes::File(path) => path,
+            WriteMissingIndexes::DefaultFile => cfg
+                .firestore_databases
+                .get(fireemu_core_types::ids::DatabaseId::DEFAULT)
+                .and_then(|files| files.indexes.as_deref())
+                .map_or_else(|| PathBuf::from("firestore.indexes.json"), PathBuf::from),
+        }
+    });
     if let Some(dir) = &raw.import {
         // A missing directory that `--export-on-exit` writes is the first run of a persisted
         // directory: the daemon starts it with no data (`import_export::nothing_to_import`).
@@ -2129,6 +2167,7 @@ fn parse_options(
             verbosity: raw.verbosity,
             import: raw.import,
             export_on_exit,
+            write_missing_indexes,
             ready_file: raw.ready_file,
             owner_stdin: raw.owner_stdin,
             config_origin,
