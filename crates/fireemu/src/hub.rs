@@ -629,7 +629,10 @@ async fn respond(
         }
         return Ok(json_response(StatusCode::NOT_FOUND, &json!({}), None));
     }
-    let browser = has_origin || req.headers().contains_key("sec-fetch-site");
+    let browser = has_origin
+        || fireemu_core_session::loopback::BROWSER_METADATA_HEADERS
+            .iter()
+            .any(|name| req.headers().contains_key(*name));
     if is_mutation(&method, &path, browser)
         && (!fireemu_adapter_http::control::token_matches(bearer(&req), &state.control_token)
             || (has_origin && (origin.is_none() || !fetch_metadata_allows(&req))))

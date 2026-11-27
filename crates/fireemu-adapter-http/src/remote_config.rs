@@ -530,6 +530,8 @@ pub struct Version {
     number: u64,
     store_id: u128,
     project_number: Option<u64>,
+    etag_generation: u64,
+    estimated_bytes: u64,
     template: Arc<ClientTemplate>,
     update_time: Option<LogicalInstant>,
     change: Change,
@@ -546,13 +548,20 @@ impl Version {
     /// project number has production's form, `etag-<project number>-<version>`
     /// (RC-OBSERVE-V2-3 seq 1, 2, 33, 58); the unpublished state, whose production value was not
     /// recorded, and a store without a project number keep an opaque store-scoped form.
+    /// After a snapshot restore or reset advances `etag_generation`, newly committed versions
+    /// append `-g<generation>` so discarded-timeline `ETags` cannot match rewritten versions.
     #[must_use]
     pub fn etag(&self) -> String {
-        match self.project_number {
+        let base = match self.project_number {
             Some(number) if self.change != Change::Initial => {
                 format!("etag-{number}-{}", self.number)
             }
             _ => self.store_etag(self.number),
+        };
+        if self.etag_generation == 0 {
+            base
+        } else {
+            format!("{base}-g{}", self.etag_generation)
         }
     }
 
@@ -677,15 +686,18 @@ impl RemoteConfigSnapshot {
     }
 }
 
-fn estimate_version_bytes(version: &Version) -> u64 {
-    let doc = serde_json::to_vec(&version.template.document)
+fn estimate_template_bytes(template: &ClientTemplate) -> u64 {
+    let doc = serde_json::to_vec(&template.document)
         .map_or(0, |bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX));
-    let desc = version
-        .template
+    let desc = template
         .description
         .as_deref()
         .map_or(0, |s| u64::try_from(s.len()).unwrap_or(u64::MAX));
     doc.saturating_add(desc).saturating_add(128)
+}
+
+fn estimate_version_bytes(version: &Version) -> u64 {
+    version.estimated_bytes
 }
 
 impl RemoteConfigStores {
@@ -698,11 +710,25 @@ impl RemoteConfigStores {
         }
     }
 
-    /// Captures both client and server template histories.
+    /// Captures both client and server template histories atomically under a fixed lock order.
     pub fn capture_snapshot(&self) -> Result<RemoteConfigSnapshot, String> {
+        let client = self
+            .client
+            .history
+            .lock()
+            .map_err(|_| "remote config client template store is poisoned".to_owned())?;
+        let server = self
+            .server
+            .history
+            .lock()
+            .map_err(|_| "remote config server template store is poisoned".to_owned())?;
         Ok(RemoteConfigSnapshot {
-            client: self.client.capture_snapshot()?,
-            server: self.server.capture_snapshot()?,
+            client: TemplateStoreSnapshot {
+                versions: client.versions.clone(),
+            },
+            server: TemplateStoreSnapshot {
+                versions: server.versions.clone(),
+            },
         })
     }
 
@@ -800,15 +826,19 @@ impl Default for TemplateStore {
     fn default() -> Self {
         let mut id = [0; 16];
         OsRng.fill_bytes(&mut id);
+        let template = Arc::new(ClientTemplate {
+            document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
+            description: None,
+            written_order: Vec::new(),
+        });
+        let estimated_bytes = estimate_template_bytes(&template);
         let initial = Version {
             number: 0,
             store_id: u128::from_be_bytes(id),
             project_number: None,
-            template: Arc::new(ClientTemplate {
-                document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
-                description: None,
-                written_order: Vec::new(),
-            }),
+            etag_generation: 0,
+            estimated_bytes,
+            template,
             update_time: None,
             change: Change::Initial,
         };
@@ -862,6 +892,8 @@ impl TemplateStore {
                 number: initial.number,
                 store_id: initial.store_id,
                 project_number,
+                etag_generation: initial.etag_generation,
+                estimated_bytes: initial.estimated_bytes,
                 template: initial.template.clone(),
                 update_time: initial.update_time,
                 change: initial.change,
@@ -928,21 +960,26 @@ impl TemplateStore {
 
     fn apply_reset(history: &mut History) {
         let current = head(&history.versions);
+        let next_generation = history.generation.saturating_add(1);
+        let template = Arc::new(ClientTemplate {
+            document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
+            description: None,
+            written_order: Vec::new(),
+        });
+        let estimated_bytes = estimate_template_bytes(&template);
         let initial = Version {
             number: 0,
             store_id: current.store_id,
             project_number: current.project_number,
-            template: Arc::new(ClientTemplate {
-                document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
-                description: None,
-                written_order: Vec::new(),
-            }),
+            etag_generation: next_generation,
+            estimated_bytes,
+            template,
             update_time: None,
             change: Change::Initial,
         };
         history.versions = VecDeque::from([Arc::new(initial)]);
         history.current_body = None;
-        history.generation = history.generation.saturating_add(1);
+        history.generation = next_generation;
     }
 
     /// Restores the retained version history from a previously captured snapshot.
@@ -1124,16 +1161,20 @@ impl TemplateStore {
         change: Change,
     ) -> Result<Arc<Version>, Error> {
         now.to_rfc3339().map_err(|_| Error::ClockOutOfRange)?;
+        let generation = history.generation;
         let versions = &mut history.versions;
         let current = head(versions);
         let number = current
             .number
             .checked_add(1)
             .ok_or(Error::VersionExhausted)?;
+        let estimated_bytes = estimate_template_bytes(&template);
         let version = Arc::new(Version {
             number,
             store_id: current.store_id,
             project_number: current.project_number,
+            etag_generation: generation,
+            estimated_bytes,
             template,
             update_time: Some(now),
             change,

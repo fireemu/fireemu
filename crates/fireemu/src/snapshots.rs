@@ -720,6 +720,14 @@ impl SnapshotHook for PubSub {
         "pubsub"
     }
     fn capture(&self, scope: &Scope) -> Result<SnapshotPart, TransitionFailure> {
+        let _dead_letter = self
+            .1
+            .lock_dead_letter_gate()
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
+        let _publication = self
+            .1
+            .lock_publication()
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
         let state = self
             .0
             .lock()
@@ -728,22 +736,39 @@ impl SnapshotHook for PubSub {
             state.capture_scope(|project| scope.owns_project(project)),
         ))
     }
-    fn validate(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
-        part.downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
+    fn validate(&self, scope: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
+        let snapshot = part
+            .downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
             .ok_or_else(|| wrong_shape(self.name()))?;
-        self.0
+        let state = self
+            .0
             .lock()
-            .map(|_| ())
-            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))
+            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
+        state
+            .validate_restore_scope(|project| scope.owns_project(project), snapshot)
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))
     }
     fn restore(&self, scope: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
         let snapshot = part
             .downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
             .ok_or_else(|| wrong_shape(self.name()))?;
+        let _dead_letter = self
+            .1
+            .lock_dead_letter_gate()
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
         let _publication = self
             .1
             .lock_publication()
             .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
+        {
+            let state = self
+                .0
+                .lock()
+                .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
+            state
+                .validate_restore_scope(|project| scope.owns_project(project), snapshot)
+                .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
+        }
         self.1
             .invalidate_push_workers_where(|project| scope.owns_project(project))
             .map_err(|reason| TransitionFailure::new(self.name(), reason))?;

@@ -581,10 +581,21 @@ fn manifest_declares_compile_time_code(contents: &str) -> bool {
         .get("lib")
         .and_then(toml::Value::as_table)
         .is_some_and(|lib| {
-            lib.get("proc-macro")
+            let bool_flag = lib
+                .get("proc-macro")
                 .or_else(|| lib.get("proc_macro"))
                 .and_then(toml::Value::as_bool)
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let crate_type_flag = lib
+                .get("crate-type")
+                .or_else(|| lib.get("crate_type"))
+                .and_then(toml::Value::as_array)
+                .is_some_and(|types| {
+                    types
+                        .iter()
+                        .any(|entry| entry.as_str() == Some("proc-macro"))
+                });
+            bool_flag || crate_type_flag
         });
     has_build || has_proc_macro
 }
@@ -1499,6 +1510,13 @@ proc-macro = true
 name = "example"
 [lib]
 proc_macro = true
+"#
+        ));
+        assert!(manifest_declares_compile_time_code(
+            r#"[package]
+name = "example"
+[lib]
+crate-type = ["proc-macro"]
 "#
         ));
         assert!(manifest_declares_compile_time_code("not valid toml = ["));

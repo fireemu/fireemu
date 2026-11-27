@@ -728,11 +728,14 @@ async fn client_stream_response(
     };
     let (initial_version, mut seen_generation) = stores.client.current_with_generation();
     let mut observed = initial_version.number();
-    // An already-stale client first catches up to the current version. From admission onward,
-    // versions are contiguous, so the cursor preserves even publications between two polls.
-    // When a snapshot restore or reset bumps the store generation, reset `sent` to follow
-    // publications on the new timeline even if its version number is lower than before.
-    let mut sent = last_known.max(observed.saturating_sub(1));
+    // An already-stale client first catches up to the current version. If a client reconnects
+    // with a `last_known` ahead of the current version (e.g. after a snapshot rewind or reset),
+    // treat it as stale relative to the current timeline so the active version is pushed.
+    let mut sent = if last_known > observed {
+        observed.saturating_sub(1)
+    } else {
+        last_known.max(observed.saturating_sub(1))
+    };
     let held = tokio::time::Instant::now() + STREAM_HOLD;
     while observed <= sent && tokio::time::Instant::now() < held {
         tokio::time::sleep(STREAM_POLL).await;

@@ -15,4 +15,4 @@ lake build
 lake exe corpus > ../../../crates/fireemu-core-app-check/tests/fixtures/lean-app-check-claims.corpus
 ```
 
-From the repository root, run `cargo nextest run -p fireemu-core-app-check --test app_check_claims_lean_corpus`. Issuance rows provide input times, TTLs, and expected claims. Admission rows give a mode, a preclassified credential, and its public decision. Configuration rows give the TTL and the expected validation result. The replay does not invoke Lean.
+From the repository root, run `cargo nextest run -p fireemu-core-app-check --test integration app_check_claims_lean_corpus`. Issuance rows provide input times, TTLs, and expected claims. Admission rows give a mode, a preclassified credential, and its public decision. Configuration rows give the TTL and the expected validation result. The replay does not invoke Lean.

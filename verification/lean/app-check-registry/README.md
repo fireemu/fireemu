@@ -13,4 +13,4 @@ lake build
 lake exe corpus > ../../../crates/fireemu-core-app-check/tests/fixtures/lean-app-check-registry.corpus
 ```
 
-From the repository root, run `cargo nextest run -p fireemu-core-app-check --test app_check_registry_lean_corpus`. Each history row provides capture and restore scopes, a mutation, initial static count, exact additions and mutations, and final dynamic record sequences. Epoch rows provide complete generation and claim-issuance observations.
+From the repository root, run `cargo nextest run -p fireemu-core-app-check --test integration app_check_registry_lean_corpus`. Each history row provides capture and restore scopes, a mutation, initial static count, exact additions and mutations, and final dynamic record sequences. Epoch rows provide complete generation and claim-issuance observations.

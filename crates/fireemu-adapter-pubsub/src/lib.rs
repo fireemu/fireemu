@@ -655,6 +655,14 @@ impl PubSubHandle {
         self.state.lock().expect("pubsub state lock")
     }
 
+    /// Acquires the dead-letter serialization gate. When combining with `lock_publication()` and
+    /// broker state locks, always acquire in order: dead-letter gate -> publication gate -> state.
+    pub fn lock_dead_letter_gate(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        self.dead_letter_gate
+            .lock()
+            .map_err(|_| "the Pub/Sub dead-letter gate is poisoned".to_owned())
+    }
+
     /// Locks the publication coordinator. Reset and snapshot restore paths use this same lock so
     /// a Functions reservation cannot be invalidated between admission and commit.
     ///

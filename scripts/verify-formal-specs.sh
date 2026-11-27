@@ -11,12 +11,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_TLA=1
 RUN_LEAN=1
+TLA_EXPLICIT=0
+LEAN_EXPLICIT=0
 QUICK=0
 
 for arg in "$@"; do
   case "$arg" in
-    --tla-only) RUN_LEAN=0 ;;
-    --lean-only) RUN_TLA=0 ;;
+    --tla-only) RUN_LEAN=0; TLA_EXPLICIT=1 ;;
+    --lean-only) RUN_TLA=0; LEAN_EXPLICIT=1 ;;
     --quick) QUICK=1 ;;
     -h|--help)
       sed -n '3,10p' "$0"
@@ -28,6 +30,11 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [[ "$TLA_EXPLICIT" -eq 1 && "$LEAN_EXPLICIT" -eq 1 ]]; then
+  echo "Error: --tla-only and --lean-only are mutually exclusive" >&2
+  exit 2
+fi
 
 if [[ "$RUN_TLA" -eq 1 ]]; then
   if command -v tla2tools >/dev/null 2>&1; then
@@ -41,7 +48,10 @@ if [[ "$RUN_TLA" -eq 1 ]]; then
       (cd "$ROOT/verification/tla/clock-mode" && tla2tools -workers "$WORKERS" -config ClockMode.cfg ClockMode.tla)
     fi
   else
-    echo "tla2tools not found on PATH; skipping TLA+ verification" >&2
+    echo "tla2tools not found on PATH" >&2
+    if [[ "$TLA_EXPLICIT" -eq 1 ]]; then
+      exit 127
+    fi
   fi
 fi
 
@@ -54,6 +64,9 @@ if [[ "$RUN_LEAN" -eq 1 ]]; then
       (cd "$dir" && lake build)
     done
   else
-    echo "lake not found on PATH; skipping Lean 4 verification" >&2
+    echo "lake not found on PATH" >&2
+    if [[ "$LEAN_EXPLICIT" -eq 1 ]]; then
+      exit 127
+    fi
   fi
 fi

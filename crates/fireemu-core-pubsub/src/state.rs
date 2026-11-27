@@ -784,6 +784,112 @@ impl PubSubState {
     /// Restores every Pub/Sub resource owned by projects accepted by `owns_project` from
     /// `snapshot`, rebuilding secondary indexes and snapshot accounting symmetrically while
     /// preserving out-of-scope subscriptions and waking delivery observers.
+    /// Validates that restoring `snapshot` for projects matching `owns_project` will neither
+    /// exceed broker-wide capacity limits nor orphan out-of-scope subscriptions onto deleted
+    /// topics (which would otherwise silently reattach if a same-named topic were recreated).
+    pub fn validate_restore_scope(
+        &self,
+        owns_project: impl Fn(&str) -> bool,
+        snapshot: &PubSubScopeSnapshot,
+    ) -> core::result::Result<(), String> {
+        let kept_topics = self
+            .topics
+            .values()
+            .filter(|entry| !owns_project(entry.name.project()))
+            .count();
+        let restored_topics = snapshot
+            .topics
+            .values()
+            .filter(|entry| owns_project(entry.name.project()))
+            .count();
+        if kept_topics.saturating_add(restored_topics) > MAX_TOPICS {
+            return Err(format!(
+                "restoring Pub/Sub snapshot would exceed the maximum of {MAX_TOPICS} topics"
+            ));
+        }
+
+        let kept_subscriptions = self
+            .subscriptions
+            .values()
+            .filter(|sub| !owns_project(sub.config().name.project()))
+            .count();
+        let restored_subscriptions = snapshot
+            .subscriptions
+            .values()
+            .filter(|sub| owns_project(sub.config().name.project()))
+            .count();
+        if kept_subscriptions.saturating_add(restored_subscriptions) > MAX_SUBSCRIPTIONS {
+            return Err(format!(
+                "restoring Pub/Sub snapshot would exceed the maximum of {MAX_SUBSCRIPTIONS} subscriptions"
+            ));
+        }
+
+        let kept_snapshots = self
+            .snapshots
+            .values()
+            .filter(|snap| !owns_project(&snap.owner_project))
+            .count();
+        let restored_snapshots = snapshot
+            .snapshots
+            .values()
+            .filter(|snap| owns_project(&snap.owner_project))
+            .count();
+        if kept_snapshots.saturating_add(restored_snapshots) > MAX_SNAPSHOTS {
+            return Err(format!(
+                "restoring Pub/Sub snapshot would exceed the maximum of {MAX_SNAPSHOTS} snapshots"
+            ));
+        }
+
+        let mut retained_bytes: usize = 0;
+        let mut seen_messages: BTreeSet<&str> = BTreeSet::new();
+        for snap in self
+            .snapshots
+            .values()
+            .filter(|snap| !owns_project(&snap.owner_project))
+            .chain(
+                snapshot
+                    .snapshots
+                    .values()
+                    .filter(|snap| owns_project(&snap.owner_project)),
+            )
+        {
+            retained_bytes = retained_bytes.saturating_add(Self::snapshot_owned_bytes(snap));
+            for msg in snap.captured_messages.iter() {
+                if seen_messages.insert(msg.message_id.as_str()) {
+                    retained_bytes =
+                        retained_bytes.saturating_add(Self::snapshot_shared_message_bytes(msg));
+                }
+            }
+            if retained_bytes > MAX_SNAPSHOT_RETAINED_BYTES {
+                return Err(format!(
+                    "restoring Pub/Sub snapshot would exceed the maximum of {MAX_SNAPSHOT_RETAINED_BYTES} retained snapshot bytes"
+                ));
+            }
+        }
+
+        for sub in self.subscriptions.values() {
+            if owns_project(sub.config().name.project()) {
+                continue;
+            }
+            let topic = &sub.config().topic;
+            if topic.is_deleted_sentinel() || !owns_project(topic.project()) {
+                continue;
+            }
+            let topic_key = topic.to_full();
+            if self.topics.contains_key(&topic_key) && !snapshot.topics.contains_key(&topic_key) {
+                return Err(format!(
+                    "cannot restore Pub/Sub scope: out-of-scope subscription {} references topic {topic_key} which does not exist in the snapshot",
+                    sub.config().name.to_full()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Replaces all topics, subscriptions, snapshots, policies, and pagination boundaries owned by
+    /// projects matching `owns_project` with those in `snapshot`, rebuilding secondary indexes and
+    /// snapshot accounting symmetrically while preserving out-of-scope subscriptions and waking
+    /// delivery observers.
     pub fn restore_scope(
         &mut self,
         owns_project: impl Fn(&str) -> bool,

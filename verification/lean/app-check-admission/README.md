@@ -15,4 +15,4 @@ lake build
 lake exe corpus > ../../../crates/fireemu-core-app-check/tests/fixtures/lean-app-check-admission.corpus
 ```
 
-From the repository root, run `cargo nextest run -p fireemu-core-app-check --test app_check_admission_lean_corpus`. Header rows contain the name, count, sample, and classification. UUID rows contain the variant and shape labels, literal input, and canonical text or refusal. All values are synthetic. The replay requires no Lean executable.
+From the repository root, run `cargo nextest run -p fireemu-core-app-check --test integration app_check_admission_lean_corpus`. Header rows contain the name, count, sample, and classification. UUID rows contain the variant and shape labels, literal input, and canonical text or refusal. All values are synthetic. The replay requires no Lean executable.
