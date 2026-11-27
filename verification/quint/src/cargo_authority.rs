@@ -175,47 +175,13 @@ fn authority_from_metadata(
         let node = nodes_by_raw_id
             .get(&raw_id)
             .ok_or_else(|| format!("cargo metadata has no node for {raw_id}"))?;
-        let mut features = string_array(node, "features")?;
-        features.sort();
-        let mut dependencies = authority_dependencies(node)?
-            .into_iter()
-            .map(|dependency| {
-                canonical_by_raw_id
-                    .get(&dependency)
-                    .cloned()
-                    .ok_or_else(|| format!("cargo metadata has no package for {dependency}"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        dependencies.sort();
-        dependencies.dedup();
-        let source = package["source"].as_str().map(str::to_owned);
-        let manifest = if source.is_none() {
-            Some(relative_manifest(repository_root, package)?)
-        } else {
-            None
-        };
-        let targets = package["targets"]
-            .as_array()
-            .ok_or_else(|| "cargo metadata package has no targets array".to_owned())?;
-        let mut proc_macro = false;
-        for target in targets {
-            let kinds = string_array(target, "kind")?;
-            if kinds.is_empty() {
-                return Err("cargo metadata target has no target kinds".to_owned());
-            }
-            proc_macro |= kinds.iter().any(|kind| kind == "proc-macro");
-        }
-        packages.push(AuthorityPackage {
-            id: canonical_by_raw_id[&raw_id].clone(),
-            name: string_field(package, "name")?.to_owned(),
-            version: string_field(package, "version")?.to_owned(),
-            source,
-            manifest,
-            build_script: build_script(repository_root, package)?,
-            proc_macro,
-            features,
-            dependencies,
-        });
+        packages.push(build_authority_package(
+            repository_root,
+            package,
+            node,
+            &raw_id,
+            &canonical_by_raw_id,
+        )?);
     }
     packages.sort_by(|left, right| left.id.cmp(&right.id));
 
@@ -224,6 +190,61 @@ fn authority_from_metadata(
         root_package: ROOT_PACKAGE.to_owned(),
         target: TARGET.to_owned(),
         packages,
+    })
+}
+
+fn build_authority_package(
+    repository_root: &Path,
+    package: &serde_json::Value,
+    node: &serde_json::Value,
+    raw_id: &str,
+    canonical_by_raw_id: &BTreeMap<String, String>,
+) -> Result<AuthorityPackage, String> {
+    let mut features = string_array(node, "features")?;
+    features.sort();
+    let mut dependencies = authority_dependencies(node)?
+        .into_iter()
+        .map(|dependency| {
+            canonical_by_raw_id
+                .get(&dependency)
+                .cloned()
+                .ok_or_else(|| format!("cargo metadata has no package for {dependency}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    dependencies.sort();
+    dependencies.dedup();
+    let source = package["source"].as_str().map(str::to_owned);
+    let manifest = if source.is_none() {
+        Some(relative_manifest(repository_root, package)?)
+    } else {
+        None
+    };
+    let targets = package["targets"]
+        .as_array()
+        .ok_or_else(|| "cargo metadata package has no targets array".to_owned())?;
+    let mut proc_macro = false;
+    for target in targets {
+        let kinds = string_array(target, "kind")?;
+        if kinds.is_empty() {
+            return Err("cargo metadata target has no target kinds".to_owned());
+        }
+        proc_macro |= kinds.iter().any(|kind| kind == "proc-macro");
+    }
+    let version = if source.is_none() {
+        "workspace".to_owned()
+    } else {
+        string_field(package, "version")?.to_owned()
+    };
+    Ok(AuthorityPackage {
+        id: canonical_by_raw_id[raw_id].clone(),
+        name: string_field(package, "name")?.to_owned(),
+        version,
+        source,
+        manifest,
+        build_script: build_script(repository_root, package)?,
+        proc_macro,
+        features,
+        dependencies,
     })
 }
 
@@ -279,7 +300,7 @@ fn canonical_id(repository_root: &Path, package: &serde_json::Value) -> Result<S
         return Ok(format!("{source}#{name}@{version}"));
     }
     let manifest = relative_manifest(repository_root, package)?;
-    Ok(format!("path+{manifest}#{name}@{version}"))
+    Ok(format!("path+{manifest}#{name}@workspace"))
 }
 
 fn relative_manifest(

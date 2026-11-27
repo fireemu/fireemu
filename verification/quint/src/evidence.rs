@@ -507,19 +507,15 @@ pub fn expected_bound_inputs(
         let directory = Path::new(manifest).parent().expect("validated manifest");
         let contents = fs::read_to_string(repository_root.join(manifest))
             .map_err(|error| format!("cannot read source closure manifest {manifest}: {error}"))?;
-        // Conservatively recognize key candidates, including quoted and dotted TOML keys.
-        // Escapes may conceal keys; ambiguous manifests cannot justify exclusions.
         if has_untrusted_proc_macro
             || package.build_script.is_some()
             || closure.contains(&directory.join("build.rs").to_string_lossy().into_owned())
-            || contents.contains('\\')
-            || contents
-                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
-                .any(|word| matches!(word, "build" | "proc-macro" | "proc_macro"))
+            || manifest_declares_compile_time_code(&contents)
         {
             return Ok(inputs.into_iter().collect());
         }
     }
+
     // Directory exclusions use package roots, not arbitrary directories named "tests" in src.
     inputs.retain(|input| {
         explicit_inputs.contains(input)
@@ -568,6 +564,29 @@ pub fn expected_bound_inputs(
         .into_iter()
         .filter(|input| !excluded.contains(input))
         .collect())
+}
+
+/// Returns `true` if `Cargo.toml` cannot be parsed cleanly or explicitly configures a build
+/// script (`package.build`) or proc-macro library (`lib.proc-macro` / `lib.proc_macro`).
+fn manifest_declares_compile_time_code(contents: &str) -> bool {
+    let Ok(parsed) = toml::from_str::<toml::Value>(contents) else {
+        return true;
+    };
+    let has_build = parsed
+        .get("package")
+        .and_then(toml::Value::as_table)
+        .and_then(|pkg| pkg.get("build"))
+        .is_some_and(|val| !matches!(val, toml::Value::Boolean(false)));
+    let has_proc_macro = parsed
+        .get("lib")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|lib| {
+            lib.get("proc-macro")
+                .or_else(|| lib.get("proc_macro"))
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false)
+        });
+    has_build || has_proc_macro
 }
 
 fn tokenize_source(source: &str) -> Option<Vec<(usize, &str)>> {
@@ -1450,6 +1469,39 @@ mod tests {
             digests["verification/quint/evidence/cargo-authority.json"],
             input_digest(CARGO_AUTHORITY_INPUT, b"{\"staged\":true}").unwrap()
         );
+    }
+
+    #[test]
+    fn manifest_compile_time_code_check_parses_toml_structurally() {
+        assert!(!manifest_declares_compile_time_code(
+            r#"[package]
+name = "example"
+# build = "build.rs"
+description = "proc-macro = true"
+build = false
+"#
+        ));
+        assert!(manifest_declares_compile_time_code(
+            r#"[package]
+name = "example"
+build = "custom_build.rs"
+"#
+        ));
+        assert!(manifest_declares_compile_time_code(
+            r#"[package]
+name = "example"
+[lib]
+proc-macro = true
+"#
+        ));
+        assert!(manifest_declares_compile_time_code(
+            r#"[package]
+name = "example"
+[lib]
+proc_macro = true
+"#
+        ));
+        assert!(manifest_declares_compile_time_code("not valid toml = ["));
     }
 
     struct OwnedTestDirectory {

@@ -1,6 +1,6 @@
 //! The debug-token exchange decision (specification section 10.1, scenarios 1, 2, 8 and 10).
 
-mod support;
+use super::support;
 
 use fireemu_core_app_check::exchange::{
     canonical_debug_token, exchange, ExchangeOutcome, ExchangeRequest,

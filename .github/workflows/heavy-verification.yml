@@ -307,6 +307,7 @@ jobs:
         with:
           ref: ${{ needs.plan.outputs.ref }}
           fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@v1
         with:

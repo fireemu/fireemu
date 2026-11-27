@@ -5,7 +5,7 @@
 //! never mask an epoch, signature, expiry, claim or app fault. `D2` (an unknown or disabled app)
 //! is refused under every policy.
 
-mod support;
+use super::support;
 
 use std::sync::{Arc, RwLock};
 

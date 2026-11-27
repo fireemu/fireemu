@@ -176,6 +176,7 @@ jobs:
         with:
           # The selftest verifies harness lineage, which needs the history.
           fetch-depth: 0
+          filter: blob:none
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable

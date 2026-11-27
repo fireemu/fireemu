@@ -65,6 +65,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+          filter: blob:none
       - name: Validate baseline source pin
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"

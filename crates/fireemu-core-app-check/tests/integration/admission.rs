@@ -4,7 +4,7 @@
 //! checked once here over the Cartesian product of mode and credential state, and the
 //! per-transport tests then only prove that each adapter reaches this decision and renders it.
 
-mod support;
+use super::support;
 
 use std::sync::{Arc, RwLock};
 

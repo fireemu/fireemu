@@ -5,7 +5,7 @@ use fireemu_core_app_check::{
     canonical_debug_token, classify_app_check_header, HeaderClassification,
 };
 
-const CORPUS: &str = include_str!("fixtures/lean-app-check-admission.corpus");
+const CORPUS: &str = include_str!("../fixtures/lean-app-check-admission.corpus");
 
 fn header_value(tag: &str) -> String {
     match tag {

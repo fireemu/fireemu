@@ -66,6 +66,14 @@ fn authority_is_path_independent_and_excludes_unrelated_workspace_packages() {
         authority
             .packages
             .iter()
+            .filter(|package| package.source.is_none())
+            .all(|package| package.version == "workspace" && package.id.ends_with("@workspace")),
+        "workspace packages must normalize their version to avoid release-bump evidence churn"
+    );
+    assert!(
+        authority
+            .packages
+            .iter()
             .all(|package| package.name != "proptest"),
         "dev-only dependencies must remain outside the authority"
     );
