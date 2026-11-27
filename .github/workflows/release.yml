@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0
@@ -146,7 +146,7 @@ jobs:
           tool: cargo-nextest@0.9.143
       # The Functions runtime tests load the pinned real firebase-functions SDK from the conformance
       # install (crates/fireemu-adapter-functions/tests/runtime.rs), as in ci.yml. No pnpm cache.
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0
@@ -321,7 +321,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0
@@ -388,7 +388,7 @@ jobs:
           persist-credentials: false
           # The replay reads historical commits and blobs inside a network namespace.
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       # The Functions runtime of the FUNCTIONS-HTTP fixture: the Node its production comparison

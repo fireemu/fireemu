@@ -81,7 +81,7 @@ jobs:
         with:
           ref: ${{ inputs.baseline_commit }}
           persist-credentials: false
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4.4.0
@@ -146,7 +146,7 @@ jobs:
             verify_binary bench-baseline "$BASELINE_COMMIT"
             cmp bench-bin/toolchain.txt bench-baseline/toolchain.txt
           fi
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: ${{ env.PNPM_VERSION }}
       - uses: actions/setup-node@v4.4.0
