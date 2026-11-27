@@ -326,7 +326,7 @@ jobs:
       # the same preparation as the nextest job.
       - name: fetch locked dependency graph for offline authority checks
         run: cargo fetch --locked
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0
@@ -477,7 +477,7 @@ jobs:
         run: cargo fetch --locked
       # Suites that run the real SDKs (the Functions runtime, eventarc_authentication) load them from
       # the pinned conformance install, as the ci.yml and release.yml test jobs do. No pnpm cache.
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0

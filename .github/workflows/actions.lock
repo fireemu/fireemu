@@ -10,7 +10,7 @@ workflows:
         - 'actions/setup-node@v4.4.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
     '.github/workflows/ci.yml':
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-go@v6.5.0'
@@ -19,13 +19,13 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v6.8.0'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
         - 'swatinem/rust-cache@v2.9.3'
         - 'taiki-e/install-action@v2.87.30'
     '.github/workflows/compatibility-inventory.yml':
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-node@v4.4.0'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
         - 'swatinem/rust-cache@v2.9.2'
     '.github/workflows/conformance.yml':
         - 'actions/checkout@v4.4.0'
@@ -35,12 +35,12 @@ workflows:
         - 'actions/upload-artifact@v7.0.2'
         - 'astral-sh/setup-uv@v6.8.0'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
     '.github/workflows/functions-sdk-discovery.yml':
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-node@v4.4.0'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
         - 'swatinem/rust-cache@v2.9.2'
     '.github/workflows/heavy-verification.yml':
         - 'actions/checkout@v4.4.0'
@@ -48,7 +48,7 @@ workflows:
         - 'actions/setup-node@v4.4.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
         - 'swatinem/rust-cache@v2.9.2'
         - 'taiki-e/install-action@v2.87.6'
     '.github/workflows/kani.yml':
@@ -59,13 +59,13 @@ workflows:
         - 'actions/deploy-pages@v4.0.5'
         - 'actions/setup-node@v4.4.0'
         - 'actions/upload-pages-artifact@v5.0.0'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
     '.github/workflows/quint.yml':
         - 'actions/checkout@v4.4.0'
         - 'actions/setup-java@v6.3.0'
         - 'actions/setup-node@v4.4.0'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
     '.github/workflows/release.yml':
         - 'actions/attest-build-provenance@v4.2.2'
         - 'actions/checkout@v4.4.0'
@@ -73,7 +73,7 @@ workflows:
         - 'actions/setup-node@v4.4.0'
         - 'actions/upload-artifact@v7.0.2'
         - 'dtolnay/rust-toolchain@v1'
-        - 'pnpm/action-setup@v4.3.0'
+        - 'pnpm/action-setup@v6.1.1'
         - 'taiki-e/install-action@v2.87.6'
     '.github/workflows/sdk-latest.yml':
         - 'actions/checkout@v4.4.0'
@@ -186,9 +186,9 @@ dependencies:
         commit: 'sha1-683b588c487a69d01f6c6ddf40f036ff682cc2c8'
         owner_id: 1940490
         repo_id: 260749683
-    'pnpm/action-setup@v4.3.0':
-        ref: 'v4.3.0'
-        commit: 'sha1-b906affcce14559ad1aafd4ab0e942779e9f58b1'
+    'pnpm/action-setup@v6.1.1':
+        ref: 'v6.1.1'
+        commit: 'sha1-73e46992e05b19abd31f2f3c20e0e7370d762115'
         owner_id: 21320719
         repo_id: 262289747
     'swatinem/rust-cache@v2.9.2':

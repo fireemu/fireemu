@@ -116,7 +116,7 @@ jobs:
           tool: cargo-nextest@0.9.143
       # The Functions runtime tests load the pinned real firebase-functions SDK from the conformance
       # install (crates/fireemu-adapter-functions/tests/runtime.rs, FE_SOURCE_SDK_ROOT overrides it).
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: "10.32.1"
       - name: the pinned real SDK for the Functions runtime tests
@@ -186,7 +186,7 @@ jobs:
           shared-key: pr-minimal
           workspaces: . -> target/minimal
           cache-bin: "false"
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: 10.32.1
       - uses: actions/setup-node@v4.4.0
@@ -253,7 +253,7 @@ jobs:
         run: cargo fetch --locked
       # The Functions runtime tests load the pinned real firebase-functions SDK from the conformance
       # install (crates/fireemu-adapter-functions/tests/runtime.rs); Windows runs the lib tests only.
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         if: runner.os == 'macOS'
         with:
           version: "10.32.1"
@@ -304,7 +304,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: "10.32.1"
       - uses: actions/setup-node@v4.4.0
@@ -516,7 +516,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: "10.32.1"
       - uses: actions/setup-node@v4.4.0
@@ -561,7 +561,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: pnpm/action-setup@v4.3.0
+      - uses: pnpm/action-setup@v6.1.1
         with:
           version: "10.32.1"
       - uses: actions/setup-node@v4.4.0
