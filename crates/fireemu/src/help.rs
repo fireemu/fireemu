@@ -159,9 +159,9 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
     ),
     OptionSpec {
         flags: &["--write-missing-indexes"],
-        value: Value::Optional("[file]"),
+        value: Value::None,
         exec_only: true,
-        text: "Enable missing Firestore composite index reporting for this run and merge discovered indexes into this firestore.indexes.json file on exit (default: configured firestore.indexes or firestore.indexes.json). For exec only. Default: off.",
+        text: "Enable missing Firestore composite index reporting for this run and merge discovered indexes into firestore.indexes.json on exit (use --write-missing-indexes=<file> for a custom path; defaults to configured firestore.indexes or firestore.indexes.json). For exec only. Default: off.",
     },
     opt(
         &["--plan"],

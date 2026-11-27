@@ -38,6 +38,7 @@ export const PYTHON_RUNNER_FILES = [
   "fireemu_runner/appcheck.py",
   "fireemu_runner/blocking.py",
   "fireemu_runner/bodies.py",
+  "fireemu_runner/clock.py",
   "fireemu_runner/diagnostics.py",
   "fireemu_runner/dispatch.py",
   "fireemu_runner/environment.py",

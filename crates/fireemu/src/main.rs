@@ -1387,12 +1387,23 @@ fn parse_raw_options(args: &[String], context: OptionContext) -> Result<RawOptio
                         "--write-missing-indexes is only valid with exec",
                     ));
                 }
-                let (target, step) = match optional_value(args, i + 1) {
-                    Some(v) => (WriteMissingIndexes::File(PathBuf::from(v)), 2),
-                    None => (WriteMissingIndexes::DefaultFile, 1),
-                };
-                raw.write_missing_indexes = Some(target);
-                i += step;
+                raw.write_missing_indexes = Some(WriteMissingIndexes::DefaultFile);
+                i += 1;
+            }
+            arg if arg.starts_with("--write-missing-indexes=") => {
+                if context != OptionContext::Exec {
+                    return Err(CliError::usage(
+                        "--write-missing-indexes is only valid with exec",
+                    ));
+                }
+                let path = &arg["--write-missing-indexes=".len()..];
+                if path.is_empty() {
+                    return Err(CliError::usage(
+                        "--write-missing-indexes=<file> requires a non-empty file path",
+                    ));
+                }
+                raw.write_missing_indexes = Some(WriteMissingIndexes::File(PathBuf::from(path)));
+                i += 1;
             }
             other if context == OptionContext::Exec && !other.starts_with('-') => {
                 if raw.positional_script.replace(other.to_owned()).is_some() {
@@ -2130,17 +2141,25 @@ fn parse_options(
     // that is the working directory or one of its parents is refused there too, because an
     // export replaces what the directory holds.
     let export_on_exit = resolve_export_on_exit(raw.export_on_exit, raw.import.as_deref())?;
-    let write_missing_indexes = raw.write_missing_indexes.map(|target| {
+    let write_missing_indexes = if let Some(target) = raw.write_missing_indexes {
+        if cfg.profile != config::CompatibilityProfile::Strict {
+            return Err(CliError::refused(
+                "--write-missing-indexes requires the strict profile (the emulator profile assumes all composite indexes)",
+            ));
+        }
         cfg.firestore_missing_indexes = config::MissingIndexes::Report;
-        match target {
+        Some(match target {
             WriteMissingIndexes::File(path) => path,
             WriteMissingIndexes::DefaultFile => cfg
                 .firestore_databases
                 .get(fireemu_core_types::ids::DatabaseId::DEFAULT)
                 .and_then(|files| files.indexes.as_deref())
+                .or(cfg.index_file.as_deref())
                 .map_or_else(|| PathBuf::from("firestore.indexes.json"), PathBuf::from),
-        }
-    });
+        })
+    } else {
+        None
+    };
     if let Some(dir) = &raw.import {
         // A missing directory that `--export-on-exit` writes is the first run of a persisted
         // directory: the daemon starts it with no data (`import_export::nothing_to_import`).

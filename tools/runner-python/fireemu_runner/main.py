@@ -7,6 +7,7 @@ import sys
 import traceback
 
 from . import appcheck, blocking
+from .clock import RuntimeClock, from_environment as clock_from_environment
 from .dispatch import Dispatcher
 from .environment import EnvironmentGate, load_local_secrets
 from .framing import FrameWriter, ProtocolError, read_frame
@@ -32,6 +33,28 @@ def load_codebase(source: str) -> dict:
     return serving.get_functions()
 
 
+def _start_debugpy_from_environment(env) -> int | None:
+    raw = env.get("FIREEMU_PYTHON_INSPECT_PORT")
+    if not raw:
+        return None
+    try:
+        requested_port = int(raw)
+    except ValueError:
+        sys.stderr.write(f"[functions] invalid FIREEMU_PYTHON_INSPECT_PORT value: {raw!r}\n")
+        return None
+    try:
+        import debugpy  # type: ignore[import-not-found]
+    except ImportError:
+        sys.stderr.write(
+            "[functions] debugpy is not installed in the Python codebase venv; "
+            "install debugpy to attach a Python debugger\n"
+        )
+        return None
+    _host, bound_port = debugpy.listen(("127.0.0.1", requested_port))
+    sys.stderr.write(f"[functions] debugpy listening on 127.0.0.1:{bound_port}\n")
+    return int(bound_port)
+
+
 def serve(
     functions: dict,
     codebase: str,
@@ -42,11 +65,14 @@ def serve(
     app_check_verified: bool = False,
     blocking_verified: bool = False,
     function: str | None = None,
+    runtime_clock: RuntimeClock | None = None,
+    inspector_port: int | None = None,
 ) -> int:
     """Says hello, then serves frames from `stdin` until `shutdown` or the end of the stream.
 
     With `function`, the runner is that function's instance: only it is announced and served.
     """
+    clock = runtime_clock if runtime_clock is not None else RuntimeClock({})
     manifest = build_manifest(functions, app_check_verified)
     if function is not None:
         if not any(spec["name"] == function for spec in manifest["functions"]):
@@ -59,22 +85,44 @@ def serve(
     port = None
     if any(spec["trigger"]["type"] in HTTP_TRIGGERS for spec in manifest["functions"]):
         server, port = start_server(functions, manifest, secret, gate, function is not None)
-    writer.write(
-        {
-            "type": "hello",
-            "runner": "python",
-            "codebase": codebase,
-            "version": platform.python_version(),
-            "httpPort": port,
-            "manifest": manifest,
-        }
-    )
+    hello = {
+        "type": "hello",
+        "runner": "python",
+        "codebase": codebase,
+        "version": platform.python_version(),
+        "httpPort": port,
+        "manifest": manifest,
+    }
+    if inspector_port is not None:
+        hello["inspectorPort"] = inspector_port
+    writer.write(hello)
     dispatcher = Dispatcher(functions, manifest, writer, gate, fixed_identity=function is not None)
     try:
         while True:
             message = read_frame(stdin)
             if message is None or message["type"] == "shutdown":
                 return 0
+            if message["type"] == "clock:set":
+                try:
+                    status = clock.update(message)
+                    writer.write(
+                        {
+                            "type": "result",
+                            "invocationId": message.get("invocationId"),
+                            "ok": True,
+                            "timers": status,
+                        }
+                    )
+                except Exception as error:
+                    writer.write(
+                        {
+                            "type": "result",
+                            "invocationId": message.get("invocationId"),
+                            "ok": False,
+                            "error": str(error),
+                        }
+                    )
+                continue
             if not dispatcher.reserve():
                 sys.stderr.write("[functions] too many active invocations\n")
                 return 2
@@ -103,6 +151,15 @@ def run(argv) -> int:
     except ValueError as error:
         sys.stderr.write(f"[functions] {error}\n")
         return 1
+    # Install virtual application clock (if requested via FIREEMU_CLOCK_JSON) and optional
+    # debugpy listener before importing user code.
+    try:
+        runtime_clock = clock_from_environment(os.environ)
+        runtime_clock.install()
+    except (ValueError, TypeError) as error:
+        sys.stderr.write(f"[functions] {error}\n")
+        return 1
+    inspector_port = _start_debugpy_from_environment(os.environ)
     # Before any user code runs, so the Admin SDK's App Check service is built against the emulator's keys.
     app_check_verified = appcheck.install_from_environment(os.environ)
     try:
@@ -116,7 +173,9 @@ def run(argv) -> int:
         traceback.print_exc()
         return 1
     # A dedicated runner (`--function`) names its function; otherwise the call is the one the daemon has always seen.
-    options = {} if args.function is None else {"function": args.function}
+    options: dict = {"runtime_clock": runtime_clock, "inspector_port": inspector_port}
+    if args.function is not None:
+        options["function"] = args.function
     if blocking_verified:
         return serve(functions, args.codebase, secret, sys.stdin.buffer, writer, gate, app_check_verified, blocking_verified=True, **options)
     return serve(functions, args.codebase, secret, sys.stdin.buffer, writer, gate, app_check_verified, **options)

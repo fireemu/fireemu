@@ -84,7 +84,11 @@ test('world.resetState, checkpoints, appcheck endpoint, and Symbol.asyncDispose 
     const baseClock = (await world.clock.get()).clock.clock;
     await world.clock.advance(10_000);
     const cp1 = await world.checkpoint();
-    assert.match(cp1, /^cp-\d+$/);
+    assert.match(cp1, /^cp-\d+-[0-9a-f]{8}$/);
+    assert.throws(() => world.snapshots.create('__fireemu_baseline__'), TypeError);
+    assert.throws(() => world.snapshots.delete('__fireemu_baseline__'), TypeError);
+    const listed = await world.snapshots.list();
+    assert.ok(!listed.snapshots.some(s => s.name === '__fireemu_baseline__'));
     const cp1Clock = (await world.clock.get()).clock.clock;
 
     await world.clock.advance(20_000);

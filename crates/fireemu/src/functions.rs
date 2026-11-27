@@ -5194,6 +5194,10 @@ async fn start_codebase(
     let mut clock_options = cfg.functions_clock.runner_options(clock_snapshot);
     clock_options["following"] = serde_json::json!(!cfg.clock_frozen());
     env.push(("FIREEMU_CLOCK_JSON".into(), clock_options.to_string()));
+    if python && (cfg.functions_inspect_port.is_some() || cfg.functions_inspect_dynamic) {
+        let port = cfg.functions_inspect_port.unwrap_or(0);
+        env.push(("FIREEMU_PYTHON_INSPECT_PORT".to_owned(), port.to_string()));
+    }
     if let Some(environment) = &python_environment {
         // What `activate` gives firebase-tools' Python commands: the environment first in PATH.
         env.extend(crate::python_functions::launch_environment(

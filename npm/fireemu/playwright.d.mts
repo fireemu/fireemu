@@ -22,11 +22,11 @@ export interface FireemuPlaywrightTestFixtures {
 }
 
 export interface FireemuPlaywrightFixtureDefinitions {
-  readonly fireemuWorld: readonly [
-    (fixtures: Readonly<Record<string, never>>, use: (value: TestWorld) => Promise<void>) => Promise<void>,
-    { readonly scope: 'worker' },
+  fireemuWorld: [
+    (fixtures: Record<string, never>, use: (value: TestWorld) => Promise<void>) => Promise<void>,
+    { scope: 'worker' },
   ];
-  readonly fireemu: (
+  fireemu: (
     fixtures: FireemuPlaywrightWorkerFixtures,
     use: (value: TestWorld) => Promise<void>,
   ) => Promise<void>;

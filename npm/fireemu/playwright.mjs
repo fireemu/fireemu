@@ -15,9 +15,9 @@ export function createFireemuFixtures(options = {}) {
   }
   const workerState = new WeakMap();
 
-  return Object.freeze({
+  return {
     fireemuWorld: [
-      async (_fixtures, use) => {
+      async ({}, use) => {
         const world = await createTestWorld(worldOptions);
         workerState.set(world, { used: false });
         try {
@@ -42,5 +42,5 @@ export function createFireemuFixtures(options = {}) {
       }
       await use(fireemuWorld);
     },
-  });
+  };
 }

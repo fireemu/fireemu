@@ -179,10 +179,13 @@ export async function createTestWorld(options={}){
           active.hostingSites=Object.freeze((descriptor.hostingSites??[]).map(site=>Object.freeze(site)));
           active.environment=Object.freeze({...descriptor.environment,NODE_PATH:prepared.nodePath,TMPDIR:temporary,TEMP:temporary,TMP:temporary,FIREEMU_TEST_WORLD_ID:id,FIREEMU_TEST_WORLD_GENERATION:String(next)});
           active.hasBaseline=false;
+          active.baselineError=undefined;
           try{
             await requestFor(active,'POST','/v1/sessions/default/snapshots',{name:BASELINE_SNAPSHOT},AbortSignal.timeout(Math.min(5000,timeout)));
             active.hasBaseline=true;
-          }catch{}
+          }catch(err){
+            active.baselineError=err;
+          }
           generation=next;
           return;
         }catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError)&&error.name!=='TimeoutError'&&error.name!=='TypeError')throw error;}
@@ -222,24 +225,26 @@ export async function createTestWorld(options={}){
     });
     return settled;
   };
+  const assertUserSnapshotName=name=>{
+    const resolved=String(name??'');
+    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('snapshot/checkpoint name must be a non-empty non-reserved string');
+    return resolved;
+  };
   const resetState=()=>queue.exclusive(async()=>{
     check();
-    if(current.hasBaseline){
-      await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(BASELINE_SNAPSHOT)}:restore`,{});
-    }else{
-      await requestFor(current,'POST','/v1/sessions/default:reset',{});
+    if(!current.hasBaseline){
+      throw Error(`test world cannot reset state: startup baseline snapshot was not captured${current.baselineError?.message?` (${current.baselineError.message})`:''}`,{cause:current.baselineError});
     }
+    await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(BASELINE_SNAPSHOT)}:restore`,{});
     return world;
   },Error('test world call cancelled: the world state was reset'));
   const checkpoint=async name=>{
-    const resolved=name===undefined?`cp-${++checkpointSeq}`:String(name);
-    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('checkpoint name must be a non-empty non-reserved string');
+    const resolved=name===undefined?`cp-${++checkpointSeq}-${randomUUID().slice(0,8)}`:assertUserSnapshotName(name);
     await control('POST','/v1/sessions/default/snapshots',{name:resolved});
     return resolved;
   };
   const restore=name=>{
-    const resolved=String(name??'');
-    if(!resolved)throw TypeError('checkpoint name must be a non-empty string');
+    const resolved=assertUserSnapshotName(name);
     return queue.exclusive(async()=>{
       check();
       await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}:restore`,{});
@@ -247,8 +252,7 @@ export async function createTestWorld(options={}){
     },Error('test world call cancelled: the world state was restored'));
   };
   const deleteCheckpoint=async name=>{
-    const resolved=String(name??'');
-    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('checkpoint name must be a non-empty non-reserved string');
+    const resolved=assertUserSnapshotName(name);
     await control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}`);
   };
   const world={
@@ -270,10 +274,16 @@ export async function createTestWorld(options={}){
       advanceAndSettle,
     }),
     snapshots:Object.freeze({
-      list:()=>control('GET','/v1/sessions/default/snapshots'),
-      create:name=>control('POST','/v1/sessions/default/snapshots',{name}),
+      list:async()=>{
+        const res=await control('GET','/v1/sessions/default/snapshots');
+        if(res&&typeof res==='object'&&Array.isArray(res.snapshots)){
+          return {...res,snapshots:res.snapshots.filter(entry=>entry?.name!==BASELINE_SNAPSHOT)};
+        }
+        return res;
+      },
+      create:name=>control('POST','/v1/sessions/default/snapshots',{name:assertUserSnapshotName(name)}),
       restore:name=>restore(name),
-      delete:name=>control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(name)}`),
+      delete:name=>control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(assertUserSnapshotName(name))}`),
     }),
     firestore:Object.freeze({
       missingIndexes:()=>control('GET','/v1/sessions/default/firestore/missingIndexes'),

@@ -1748,21 +1748,38 @@ async fn serve_suite(
     };
     if let Some(path) = &write_missing_indexes {
         let reports = fireemu_adapter_grpc::gateway::missing_index_reports();
-        match merge_missing_indexes_file(path, &reports) {
-            Ok(added) => {
-                if !quiet && added > 0 {
-                    outln!(
-                        "wrote {added} missing Firestore index(es) to {}",
+        let dropped = fireemu_adapter_grpc::gateway::missing_index_dropped(None);
+        if dropped > 0 {
+            errln!(
+                "warning: {dropped} missing Firestore index report(s) were dropped because the per-run report limit was exceeded"
+            );
+        }
+        let distinct_databases: std::collections::BTreeSet<&str> =
+            reports.iter().map(|r| r.database.as_str()).collect();
+        if distinct_databases.len() > 1 {
+            errln!(
+                "error: --write-missing-indexes cannot merge missing indexes from multiple databases ({}) into a single file {}",
+                distinct_databases.into_iter().collect::<Vec<_>>().join(", "),
+                path.display()
+            );
+            code = export_failure_exit_code(code);
+        } else {
+            match merge_missing_indexes_file(path, &reports) {
+                Ok(added) => {
+                    if !quiet && added > 0 {
+                        outln!(
+                            "wrote {added} missing Firestore index(es) to {}",
+                            path.display()
+                        );
+                    }
+                }
+                Err(e) => {
+                    errln!(
+                        "error: writing missing Firestore indexes to {} failed: {e}",
                         path.display()
                     );
+                    code = export_failure_exit_code(code);
                 }
-            }
-            Err(e) => {
-                errln!(
-                    "error: writing missing Firestore indexes to {} failed: {e}",
-                    path.display()
-                );
-                code = export_failure_exit_code(code);
             }
         }
     }
