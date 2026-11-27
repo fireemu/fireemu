@@ -782,21 +782,75 @@ impl PubSubState {
     }
 
     /// Restores every Pub/Sub resource owned by projects accepted by `owns_project` from
-    /// `snapshot`, rebuilding secondary indexes and waking delivery observers.
+    /// `snapshot`, rebuilding secondary indexes and snapshot accounting symmetrically while
+    /// preserving out-of-scope subscriptions and waking delivery observers.
     pub fn restore_scope(
         &mut self,
         owns_project: impl Fn(&str) -> bool,
         snapshot: &PubSubScopeSnapshot,
     ) {
+        fn project_of(name: &str) -> &str {
+            name.split('/').nth(1).unwrap_or("")
+        }
         let _changed = self.delivery_change();
-        self.clear_projects_where(&owns_project);
 
+        // Remove only entries currently owned by this scope without mutating out-of-scope
+        // subscriptions that may reference a restored topic.
+        self.topics
+            .retain(|_, entry| !owns_project(entry.name.project()));
+        self.subscriptions
+            .retain(|_, sub| !owns_project(sub.config().name.project()));
+        self.function_subscriptions
+            .retain(|name| !owns_project(project_of(name)));
+        self.snapshots
+            .retain(|_, snap| !owns_project(&snap.owner_project));
+        self.resource_policies
+            .retain(|k, _| !owns_project(project_of(k)));
+        self.issued_page_boundaries
+            .retain(|context, _| !owns_project(project_of(context)));
+
+        // Re-insert only entries still owned by this scope at restore time.
         for (k, v) in &snapshot.topics {
-            self.topics.insert(k.clone(), v.clone());
+            if owns_project(v.name.project()) {
+                self.topics.insert(k.clone(), v.clone());
+            }
         }
         for (k, v) in &snapshot.subscriptions {
-            let topic_key = v.config().topic.to_full();
-            if !v.config().push_config.push_endpoint.is_empty() {
+            if owns_project(v.config().name.project()) {
+                self.subscriptions.insert(k.clone(), v.clone());
+            }
+        }
+        for name in &snapshot.function_subscriptions {
+            if owns_project(project_of(name)) {
+                self.function_subscriptions.insert(name.clone());
+            }
+        }
+        for (k, v) in &snapshot.snapshots {
+            if owns_project(&v.owner_project) {
+                self.snapshots.insert(k.clone(), v.clone());
+            }
+        }
+        for (k, v) in &snapshot.resource_policies {
+            if owns_project(project_of(k)) {
+                self.resource_policies.insert(k.clone(), v.clone());
+            }
+        }
+        for (k, v) in &snapshot.issued_page_boundaries {
+            if owns_project(project_of(k)) {
+                self.issued_page_boundaries.insert(k.clone(), v.clone());
+            }
+        }
+
+        // Rebuild subscription topic indexes from live attached subscriptions.
+        self.topic_subs.clear();
+        self.topic_push_subs.clear();
+        for (k, sub) in &self.subscriptions {
+            let topic = &sub.config().topic;
+            if topic.is_deleted_sentinel() {
+                continue;
+            }
+            let topic_key = topic.to_full();
+            if !sub.config().push_config.push_endpoint.is_empty() {
                 self.topic_push_subs
                     .entry(topic_key.clone())
                     .or_default()
@@ -806,17 +860,23 @@ impl PubSubState {
                 .entry(topic_key)
                 .or_default()
                 .insert(k.clone());
-            self.subscriptions.insert(k.clone(), v.clone());
         }
-        for name in &snapshot.function_subscriptions {
-            self.function_subscriptions.insert(name.clone());
-        }
-        for (k, v) in &snapshot.snapshots {
+
+        // Rebuild snapshot indexes and retained-byte accounting symmetrically with
+        // `create_snapshot` / `remove_snapshot`.
+        self.topic_snapshots.clear();
+        self.snapshot_message_refs.clear();
+        self.snapshot_retained_bytes = 0;
+        self.next_snapshot_expiry = None;
+        for (k, snap) in &self.snapshots {
             self.topic_snapshots
-                .entry((v.topic.to_full(), v.topic_incarnation))
+                .entry((snap.topic.to_full(), snap.topic_incarnation))
                 .or_default()
                 .insert(k.clone());
-            for msg in v.captured_messages.iter() {
+            self.snapshot_retained_bytes = self
+                .snapshot_retained_bytes
+                .saturating_add(Self::snapshot_owned_bytes(snap));
+            for msg in snap.captured_messages.iter() {
                 let refs = self
                     .snapshot_message_refs
                     .entry(msg.message_id.clone())
@@ -824,22 +884,30 @@ impl PubSubState {
                 if *refs == 0 {
                     self.snapshot_retained_bytes = self
                         .snapshot_retained_bytes
-                        .saturating_add(msg.message.data.len());
+                        .saturating_add(Self::snapshot_shared_message_bytes(msg));
                 }
                 *refs += 1;
             }
             self.next_snapshot_expiry = Some(match self.next_snapshot_expiry {
-                Some(current) => current.min(v.expire_at),
-                None => v.expire_at,
+                Some(current) => current.min(snap.expire_at),
+                None => snap.expire_at,
             });
-            self.snapshots.insert(k.clone(), v.clone());
         }
-        for (k, v) in &snapshot.resource_policies {
-            self.resource_policies.insert(k.clone(), v.clone());
-        }
-        for (k, v) in &snapshot.issued_page_boundaries {
-            self.issued_page_boundaries.insert(k.clone(), v.clone());
-        }
+    }
+
+    /// Every push subscription across all topics, for rescheduling push workers after restore.
+    #[must_use]
+    pub fn all_push_subscriptions(&self) -> Vec<(SubscriptionName, String)> {
+        self.subscriptions
+            .values()
+            .filter(|sub| !sub.config().push_config.push_endpoint.is_empty())
+            .map(|sub| {
+                (
+                    sub.config().name.clone(),
+                    sub.config().push_config.push_endpoint.clone(),
+                )
+            })
+            .collect()
     }
 
     // --- Topics -----------------------------------------------------------------------------

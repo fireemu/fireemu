@@ -726,14 +726,25 @@ async fn client_stream_response(
             .map(http_body_util::Either::Left);
         }
     };
-    let mut observed = stores.client.current().number();
+    let (initial_version, mut seen_generation) = stores.client.current_with_generation();
+    let mut observed = initial_version.number();
     // An already-stale client first catches up to the current version. From admission onward,
     // versions are contiguous, so the cursor preserves even publications between two polls.
+    // When a snapshot restore or reset bumps the store generation, reset `sent` to follow
+    // publications on the new timeline even if its version number is lower than before.
     let mut sent = last_known.max(observed.saturating_sub(1));
     let held = tokio::time::Instant::now() + STREAM_HOLD;
     while observed <= sent && tokio::time::Instant::now() < held {
         tokio::time::sleep(STREAM_POLL).await;
-        observed = stores.client.current().number();
+        let (current, generation) = stores.client.current_with_generation();
+        observed = current.number();
+        if generation != seen_generation {
+            seen_generation = generation;
+            sent = observed.saturating_sub(1);
+            if observed > 0 {
+                break;
+            }
+        }
     }
     let (frames, receiver) = tokio::sync::mpsc::channel::<Bytes>(16);
     tokio::spawn(async move {
@@ -752,7 +763,12 @@ async fn client_stream_response(
                 (sent, opened) = (version, true);
             }
             tokio::time::sleep(STREAM_POLL).await;
-            observed = stores.client.current().number();
+            let (current, generation) = stores.client.current_with_generation();
+            observed = current.number();
+            if generation != seen_generation {
+                seen_generation = generation;
+                sent = observed.saturating_sub(1);
+            }
         }
     });
     with_cors(Response::builder().status(StatusCode::OK), origin)

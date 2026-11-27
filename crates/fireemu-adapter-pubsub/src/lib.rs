@@ -1323,6 +1323,38 @@ impl PubSubHandle {
         Ok(())
     }
 
+    /// Re-enqueues every valid push subscription owned by matching projects after a snapshot
+    /// restore, waking the push dispatcher so restored backlogs redeliver without a new publish.
+    pub fn reschedule_push_workers_where(
+        &self,
+        matches: impl Fn(&str) -> bool,
+    ) -> Result<(), String> {
+        let subscriptions: Vec<(fireemu_core_pubsub::SubscriptionName, String)> = {
+            let state = self
+                .state
+                .lock()
+                .map_err(|_| "the Pub/Sub state is poisoned".to_owned())?;
+            state
+                .all_push_subscriptions()
+                .into_iter()
+                .filter(|(name, _)| matches(name.project()))
+                .collect()
+        };
+        let now = self.now();
+        let mut dispatch = self
+            .push_dispatch
+            .lock()
+            .map_err(|_| "the Pub/Sub push dispatcher is poisoned".to_owned())?;
+        for (subscription, endpoint) in subscriptions {
+            if push::validate_endpoint(&endpoint).is_ok() {
+                dispatch.enqueue(subscription, now);
+            }
+        }
+        drop(dispatch);
+        self.push_ready_notify.notify_one();
+        Ok(())
+    }
+
     /// Starts at most one bounded push worker per subscription. Pull and push share the same
     /// core delivery state, so a successful push acknowledges the same record a pull would see.
     fn schedule_push(&self, topic: &fireemu_core_pubsub::TopicName) {

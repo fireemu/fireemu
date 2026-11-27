@@ -706,17 +706,38 @@ impl RemoteConfigStores {
         })
     }
 
-    /// Restores both client and server template histories from `snapshot`.
+    /// Restores both client and server template histories atomically under a fixed lock order.
     pub fn restore_snapshot(&self, snapshot: &RemoteConfigSnapshot) -> Result<(), String> {
-        self.client.restore_snapshot(&snapshot.client)?;
-        self.server.restore_snapshot(&snapshot.server)?;
+        let mut client = self
+            .client
+            .history
+            .lock()
+            .map_err(|_| "remote config client template store is poisoned".to_owned())?;
+        let mut server = self
+            .server
+            .history
+            .lock()
+            .map_err(|_| "remote config server template store is poisoned".to_owned())?;
+        TemplateStore::apply_snapshot(&mut client, &snapshot.client);
+        TemplateStore::apply_snapshot(&mut server, &snapshot.server);
         Ok(())
     }
 
-    /// Resets both namespaces to their empty initial version-0 state.
+    /// Resets both namespaces to their empty initial version-0 state atomically under a fixed
+    /// lock order so a poisoned server lock never leaves the client half-reset.
     pub fn reset(&self) -> Result<(), String> {
-        self.client.reset()?;
-        self.server.reset()?;
+        let mut client = self
+            .client
+            .history
+            .lock()
+            .map_err(|_| "remote config client template store is poisoned".to_owned())?;
+        let mut server = self
+            .server
+            .history
+            .lock()
+            .map_err(|_| "remote config server template store is poisoned".to_owned())?;
+        TemplateStore::apply_reset(&mut client);
+        TemplateStore::apply_reset(&mut server);
         Ok(())
     }
 
@@ -770,6 +791,7 @@ type VersionReserver = dyn Fn(&Version) -> Result<Box<dyn FnOnce() + Send>, Erro
 struct History {
     versions: VecDeque<Arc<Version>>,
     current_body: Option<Bytes>,
+    generation: u64,
 }
 
 const MAX_CACHED_TEMPLATE_BYTES: usize = 1024 * 1024;
@@ -794,6 +816,7 @@ impl Default for TemplateStore {
             history: Mutex::new(History {
                 versions: VecDeque::from([Arc::new(initial)]),
                 current_body: None,
+                generation: 0,
             }),
             reserver: None,
         }
@@ -889,25 +912,21 @@ impl TemplateStore {
         })
     }
 
-    /// Restores the retained version history from a previously captured snapshot.
-    ///
-    /// Invalidates the cached serialized body so subsequent reads reflect the restored head.
-    pub fn restore_snapshot(&self, snapshot: &TemplateStoreSnapshot) -> Result<(), String> {
-        let mut history = self
-            .history
-            .lock()
-            .map_err(|_| "remote config template store is poisoned".to_owned())?;
-        history.versions.clone_from(&snapshot.versions);
-        history.current_body = None;
-        Ok(())
+    /// The current version together with the store's monotonic history generation (bumped on
+    /// snapshot restore and reset so realtime streams detect rewinds).
+    #[must_use]
+    pub fn current_with_generation(&self) -> (Arc<Version>, u64) {
+        let history = self.history.lock().expect("template store lock");
+        (head(&history.versions).clone(), history.generation)
     }
 
-    /// Resets the store to an empty initial version-0 template, preserving project number.
-    pub fn reset(&self) -> Result<(), String> {
-        let mut history = self
-            .history
-            .lock()
-            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+    fn apply_snapshot(history: &mut History, snapshot: &TemplateStoreSnapshot) {
+        history.versions.clone_from(&snapshot.versions);
+        history.current_body = None;
+        history.generation = history.generation.saturating_add(1);
+    }
+
+    fn apply_reset(history: &mut History) {
         let current = head(&history.versions);
         let initial = Version {
             number: 0,
@@ -923,6 +942,29 @@ impl TemplateStore {
         };
         history.versions = VecDeque::from([Arc::new(initial)]);
         history.current_body = None;
+        history.generation = history.generation.saturating_add(1);
+    }
+
+    /// Restores the retained version history from a previously captured snapshot.
+    ///
+    /// Invalidates the cached serialized body and advances history generation so realtime
+    /// streams detect version rewinds.
+    pub fn restore_snapshot(&self, snapshot: &TemplateStoreSnapshot) -> Result<(), String> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        Self::apply_snapshot(&mut history, snapshot);
+        Ok(())
+    }
+
+    /// Resets the store to an empty initial version-0 template, preserving project number.
+    pub fn reset(&self) -> Result<(), String> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        Self::apply_reset(&mut history);
         Ok(())
     }
 

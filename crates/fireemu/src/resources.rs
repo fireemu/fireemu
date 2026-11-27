@@ -79,8 +79,7 @@ impl ResourceHook for RealtimeDatabase {
             .map_err(|_| TransitionFailure::new("database", "the Realtime Database is poisoned"))?;
         Ok(database.resources(
             |namespace| {
-                let project = namespace.strip_suffix("-default-rtdb").unwrap_or(namespace);
-                scope.owns_project(project)
+                scope.owns_project(fireemu_adapter_database::namespace::project_of(namespace))
             },
             budget,
         ))

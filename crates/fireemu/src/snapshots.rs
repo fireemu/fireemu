@@ -744,11 +744,19 @@ impl SnapshotHook for PubSub {
             .1
             .lock_publication()
             .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
-        state.restore_scope(|project| scope.owns_project(project), snapshot);
+        self.1
+            .invalidate_push_workers_where(|project| scope.owns_project(project))
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
+        {
+            let mut state = self
+                .0
+                .lock()
+                .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
+            state.restore_scope(|project| scope.owns_project(project), snapshot);
+        }
+        self.1
+            .reschedule_push_workers_where(|project| scope.owns_project(project))
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
         Ok(())
     }
     fn retained_bytes(&self, part: &SnapshotPart) -> u64 {
