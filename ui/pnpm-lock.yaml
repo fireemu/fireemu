@@ -48,8 +48,8 @@ importers:
         specifier: ^4.3.3
         version: 4.3.3
       targeted-mutation:
-        specifier: 0.7.0
-        version: 0.7.0
+        specifier: 0.9.0
+        version: 0.9.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -692,27 +692,32 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@targeted-mutation/tmt-darwin-arm64@0.7.0':
-    resolution: {integrity: sha512-Ql55k+poW04LLrt6yJdYWfKwZO6BBgVX/r/xD5kWNhPOoSXYOsVx2/JKLiaW+AKpKQdG4g5QjQSwWrZZrd5P8A==}
+  '@targeted-mutation/tmt-darwin-arm64@0.9.0':
+    resolution: {integrity: sha512-6N0vWvRpNrh000yu/ulxfYIl4IN8a4gUZsYh4Hp+/mfLs5jUGgkmN8yWweh35qrkmf4W60FBNAB2LzjMqVP9FA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@targeted-mutation/tmt-darwin-x64@0.7.0':
-    resolution: {integrity: sha512-WVFAG564EMrh6+IZHGxLaj8/Kh8/5c/qcd5A0B6zfEG7JJqoYIV9fwPfa+erlA5DmtR3HrFoPQUZct5G0UQ3zw==}
+  '@targeted-mutation/tmt-darwin-x64@0.9.0':
+    resolution: {integrity: sha512-KiE8rjec4FHmW510mEuLrnYYZz00oLhtxPEBYUViupl3gof0HEfVL/mS9QCmNBMQv06FPKU+cXknc3AC4DlJYQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@targeted-mutation/tmt-linux-arm64@0.7.0':
-    resolution: {integrity: sha512-xGMJKu5K6fs8SB98wgBQBcX6RJrAcb31xRzSQTS6wZW0HB4ceXrFM6J+Ug4lmppdgsLYNsD//4XWsZj4aP3Ksg==}
+  '@targeted-mutation/tmt-linux-arm64@0.9.0':
+    resolution: {integrity: sha512-MllfZzk86E+veaE89AreS4N2RruoB3mRpWtLns0gKQG7KddUq6wE0Pg8dtsMYhadHrNoYrRFulsi/yFrMdBLuQ==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@targeted-mutation/tmt-linux-x64@0.7.0':
-    resolution: {integrity: sha512-SEnAsEOHFR/Hkk1CBYqeR3A8L3o8n3wiKC5k1MpTPZK5uYQd39lFFXwEz1PHcHDXJaRYZuxqP48VLsdqdUAPAA==}
+  '@targeted-mutation/tmt-linux-x64@0.9.0':
+    resolution: {integrity: sha512-OeohJ4ialB28X8lseDdUMgvfUujyLacglgNmbg5MQlf2eNwg8bhd6M3R7E2BAIpRNqDcGy5bK8lfunSDvNtbrA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
+
+  '@targeted-mutation/tmt-win32-x64@0.9.0':
+    resolution: {integrity: sha512-uLjtuWMmLvWh6SkiHJBvjnuBhhApNUOhPbfBwkgkqQjy+CaxVyGVhCecClbSC1CjKFD3znZ+mwlNr75Tgoz/cQ==}
+    cpu: [x64]
+    os: [win32]
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -1389,8 +1394,8 @@ packages:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
 
-  targeted-mutation@0.7.0:
-    resolution: {integrity: sha512-kszJYyUr2nYdS3oAz8peWBFImvPI3CH8vZmAK6LCePdx0QJFecnnbZZF7aNTwDCeGIebxhmPm21Km1Vpsasolg==}
+  targeted-mutation@0.9.0:
+    resolution: {integrity: sha512-cJcZ0qT8GJ9Hm8LioNvWMP6HOGv7HICIjo1FFG12CFllacbKRFtWkdL0SfGKnSAXAqEVdySP9gFmmk/9/y1pnw==}
     engines: {node: ^22.18.0 || >=24.11.0}
     hasBin: true
 
@@ -2018,16 +2023,19 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.3.5(@types/node@26.4.0)(jiti@2.7.0)
 
-  '@targeted-mutation/tmt-darwin-arm64@0.7.0':
+  '@targeted-mutation/tmt-darwin-arm64@0.9.0':
     optional: true
 
-  '@targeted-mutation/tmt-darwin-x64@0.7.0':
+  '@targeted-mutation/tmt-darwin-x64@0.9.0':
     optional: true
 
-  '@targeted-mutation/tmt-linux-arm64@0.7.0':
+  '@targeted-mutation/tmt-linux-arm64@0.9.0':
     optional: true
 
-  '@targeted-mutation/tmt-linux-x64@0.7.0':
+  '@targeted-mutation/tmt-linux-x64@0.9.0':
+    optional: true
+
+  '@targeted-mutation/tmt-win32-x64@0.9.0':
     optional: true
 
   '@testing-library/dom@10.4.1':
@@ -2607,14 +2615,15 @@ snapshots:
 
   tapable@2.3.3: {}
 
-  targeted-mutation@0.7.0:
+  targeted-mutation@0.9.0:
     dependencies:
       typescript: 6.0.3
     optionalDependencies:
-      '@targeted-mutation/tmt-darwin-arm64': 0.7.0
-      '@targeted-mutation/tmt-darwin-x64': 0.7.0
-      '@targeted-mutation/tmt-linux-arm64': 0.7.0
-      '@targeted-mutation/tmt-linux-x64': 0.7.0
+      '@targeted-mutation/tmt-darwin-arm64': 0.9.0
+      '@targeted-mutation/tmt-darwin-x64': 0.9.0
+      '@targeted-mutation/tmt-linux-arm64': 0.9.0
+      '@targeted-mutation/tmt-linux-x64': 0.9.0
+      '@targeted-mutation/tmt-win32-x64': 0.9.0
 
   tinybench@2.9.0: {}
 

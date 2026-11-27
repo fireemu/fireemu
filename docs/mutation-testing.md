@@ -5,7 +5,7 @@
 Install the version used by the workspace campaign runner:
 
 ```bash
-cargo install targeted-mutation --version '=0.11.0' --locked
+cargo install targeted-mutation --version '=0.14.0' --locked
 ```
 
 Run mutation tests from an independent, credential-free checkout in a loopback-only sandbox. On a Fireemu development machine, use the local mutation sandbox and run its guard before executing mutants. Give direct invocations their own work directory. TMT sets both Cargo output directories inside it. Keep the paths outside the source checkout so reports and caches stay out of later scans.
@@ -108,4 +108,4 @@ pnpm -C ui mutation -- --since "$(git merge-base origin/main HEAD)" --undo-chang
 pnpm -C ui mutation -- src/lib/rtdbTree.ts --test src/lib/rtdbTree.test.ts --mutators full
 ```
 
-The UI pins `targeted-mutation` 0.7.0 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
+The UI pins `targeted-mutation` 0.9.0 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.

@@ -100,7 +100,7 @@ class CampaignTest(unittest.TestCase):
             if args[1] == "metadata":
                 return subprocess.CompletedProcess(args, 0, json.dumps(METADATA))
             if args == ["cargo", "tmt", "--version"]:
-                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.11.0\n")
+                return subprocess.CompletedProcess(args, 0, "cargo-tmt 0.14.0\n")
             package = args[args.index("--package") + 1]
             launched.append(package)
             self.assertEqual(kwargs["env"]["PROPTEST_RNG_SEED"], seed or "0")
@@ -158,7 +158,7 @@ class CampaignTest(unittest.TestCase):
                 self.assertEqual(code, expected_code)
                 self.assertEqual(launched, PACKAGES)
                 summary = json.loads((output / "summary.json").read_text())
-                self.assertEqual(summary["tool_version"], "0.11.0")
+                self.assertEqual(summary["tool_version"], "0.14.0")
                 self.assertEqual(summary["since"], "review-base" if scope else None)
                 for result in summary["packages"]:
                     _, report, status = OUTCOMES[outcomes[result["package"]]]
@@ -245,7 +245,7 @@ class CampaignTest(unittest.TestCase):
             self.assertEqual(summary["packages"][1]["status"], "no-gaps")
 
     def test_missing_or_wrong_tool_is_an_execution_failure(self):
-        for tool in [FileNotFoundError("cargo"), subprocess.CompletedProcess([], 0, "cargo-tmt 0.10.3")]:
+        for tool in [FileNotFoundError("cargo"), subprocess.CompletedProcess([], 0, "cargo-tmt 0.11.0")]:
             with self.subTest(tool=tool), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "results"
                 with (
