@@ -2,8 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-// Mutation testing for the UI's pure logic and core API helpers via `targeted-mutation`.
-// Pages that need a live daemon are covered by Playwright, not here.
+// Default to Vitest and the UI's shared logic and core API helpers.
 const uiRoot = fileURLToPath(new URL("../", import.meta.url));
 process.chdir(uiRoot);
 
@@ -49,7 +48,7 @@ if (!hasOption("--test") && !hasOption("--runner")) {
   }
 }
 if (!hasOption("--copy-exclude")) {
-  args.push("--copy-exclude", "dist", "--copy-exclude", "test-results", "--copy-exclude", "e2e");
+  args.push("--copy-exclude", "dist", "--copy-exclude", "test-results");
 }
 if (!hasOption("--timeout")) {
   args.push("--timeout", "180");

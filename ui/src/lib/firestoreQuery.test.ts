@@ -151,6 +151,46 @@ describe("typed server queries", () => {
     for (const path of ["", "a/doc", "a//b"]) expect(build({}, path).isErr()).toBe(true);
   });
 
+  it.each([
+    [1, 0, 0],
+    [1000, 20, 20],
+    [1001, 0, 0],
+    [1000, 21, 20],
+    [1000, 20, 21],
+    [1000, 0, 20],
+    [1, 20, 20],
+    [1001, 21, 20],
+    [1001, 0, 21],
+    [1000, 20, 0],
+    [1, 21, 0],
+    [1001, 20, 21],
+    [1, 21, 21],
+  ])("checks limit %i with %i conditions and %i order fields", (limit, filters, orders) => {
+    const result = build({
+      limit: String(limit),
+      filters: Array.from({ length: filters }, (_, index) => ({
+        field: `f${index}`,
+        op: "EQUAL",
+        type: "integer",
+        text: "1",
+      })),
+      orders: Array.from({ length: orders }, (_, index) => ({
+        field: `o${index}`,
+        direction: "ASCENDING",
+      })),
+    });
+    if (limit === 1001 || filters === 21 || orders === 21) {
+      expect(result.isErr()).toBe(true);
+      return;
+    }
+    const query = result._unsafeUnwrap().body.structuredQuery;
+    expect(query.limit).toBe(limit);
+    if (filters === 0) expect(query.where).toBeUndefined();
+    else expect(query.where).toHaveProperty("compositeFilter.filters.length", filters);
+    if (orders === 0) expect(query.orderBy).toBeUndefined();
+    else expect(query.orderBy).toHaveLength(orders);
+  });
+
   it("round-trips versioned share drafts and rejects malformed, oversized and unknown input", () => {
     const draft = {
       ...defaultQuery(),

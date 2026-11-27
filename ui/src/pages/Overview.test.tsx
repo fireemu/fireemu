@@ -89,11 +89,13 @@ describe("Overview", () => {
     const frozen = render(() => <Overview />);
     await waitFor(() => expect(frozen.getAllByText("Loaded").length).toBeGreaterThan(0));
     expect(frozen.getByTestId("overview-clock-mode").textContent).toContain("frozen");
+    expect(frozen.getByTestId("overview-clock-mode").dataset.tone).toBe("paused");
     cleanup();
     appState.setConfig({ ...appState.config(), clockMode: "realtime" });
     const live = render(() => <Overview />);
     await waitFor(() => expect(live.getAllByText("Loaded").length).toBeGreaterThan(0));
     expect(live.getByTestId("overview-clock-mode").textContent).toContain("real time");
+    expect(live.getByTestId("overview-clock-mode").dataset.tone).toBe("neutral");
   });
 
   it("shows the project, the services, the rules, the sessions and the SDK environment", async () => {

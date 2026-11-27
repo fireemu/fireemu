@@ -109,3 +109,5 @@ pnpm -C ui mutation -- src/lib/rtdbTree.ts --test src/lib/rtdbTree.test.ts --mut
 ```
 
 The UI pins `targeted-mutation` 0.9.0 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
+
+For targeted Playwright analysis, supply a Playwright config with a managed `webServer` that serves the UI from TMT's temporary source copy. The ordinary Playwright config uses the daemon's prebuilt UI assets. For mutation runs, serve the copied sources through Vite, forward `/ui/api` to the local daemon, and provide the runtime bootstrap that the daemon normally injects. Select the relevant spec with `--test` and pass `--runner playwright --mutators targeted` to `pnpm -C ui mutation`.

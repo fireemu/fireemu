@@ -11,7 +11,7 @@ import {
   stopOwnedProcess,
 } from "./processTarget";
 
-const supervisor = resolve(process.cwd(), "../ui/e2e/bin/process-supervisor");
+const supervisor = resolve(process.cwd(), "e2e/bin/process-supervisor");
 
 const spawnOwnedNode = (script: string): OwnedProcess =>
   spawnOwnedProcess(process.execPath, ["-e", script], process.platform, supervisor);

@@ -16,7 +16,7 @@ use fireemu_core_app_check::limits::{
     MAX_OBSERVED_PROJECTS, MAX_OBSERVED_PROJECT_ID_BYTES, MAX_RETAINED_OBSERVATIONS_PER_PROJECT,
 };
 use fireemu_core_app_check::observe::CredentialCategory;
-use fireemu_core_app_check::registry::AppCheckRegistry;
+use fireemu_core_app_check::registry::{AppCheckRegistry, AppRegistration};
 use fireemu_core_app_check::verify::{AppCheckFailure, BaselineMode};
 use fireemu_core_types::time::LogicalInstant;
 
@@ -228,6 +228,29 @@ fn every_classified_request_records_one_secret_free_observation() {
         !rendered.contains(&token),
         "an observation never carries the raw token"
     );
+}
+
+#[test]
+fn project_selection_returns_each_accepted_project_once() {
+    let mut registry = fixture_registry();
+    for (project, number) in [("demo-app", "1234567890"), ("demo-other", "9876543210")] {
+        registry
+            .register_app(AppRegistration {
+                project_id: project.to_owned(),
+                project_number: number.to_owned(),
+                app_id: format!("1:{number}:web:second-test-app"),
+                enabled: true,
+                debug_token_digests: vec![],
+            })
+            .expect("a second app can register in the same project");
+    }
+    let gate = gate(registry);
+    assert_eq!(gate.projects(|_| true), ["demo-app", "demo-other"]);
+    assert_eq!(
+        gate.projects(|project| project == "demo-other"),
+        ["demo-other"]
+    );
+    assert!(gate.projects(|_| false).is_empty());
 }
 
 /// `AC-LIFE-001`: an epoch rotation invalidates every token issued before it, and it touches

@@ -143,4 +143,39 @@ describe("session-scoped missing index reports", () => {
       message: "FAILED_PRECONDITION : report mode is disabled",
     });
   });
+
+  const entry = {
+    project: "demo-app",
+    database: "named-db",
+    name: "projects/demo-app/databases/named-db",
+    index: {},
+    message: "index A",
+  };
+  const report = { missingIndexes: [entry], indexesJson: {}, truncated: false, dropped: 0 };
+
+  it("accepts zero dropped entries and preserves the report for the selected database", async () => {
+    reply(report);
+    expect((await loadMissingIndexes("default", root))._unsafeUnwrap()).toEqual(report);
+  });
+
+  it.each([-1, 0.5, "0"])("rejects a malformed dropped count %j", async (dropped) => {
+    reply({ ...report, dropped });
+    expect((await loadMissingIndexes("default", root))._unsafeUnwrapErr()).toEqual({
+      status: 0,
+      code: "INVALID_RESPONSE",
+      message: expect.stringContaining("invalid missing-index report"),
+    });
+  });
+
+  it.each(["project", "database", "name", "message"])(
+    "rejects a non-string entry %s",
+    async (key) => {
+      reply({ ...report, missingIndexes: [{ ...entry, [key]: 42 }] });
+      expect((await loadMissingIndexes("default", root))._unsafeUnwrapErr()).toEqual({
+        status: 0,
+        code: "INVALID_RESPONSE",
+        message: expect.stringContaining("invalid missing-index entry"),
+      });
+    },
+  );
 });
