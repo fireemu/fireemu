@@ -96,7 +96,10 @@ impl PeakDrift {
     }
 
     fn observe_max(&self, candidate: i128) -> i128 {
-        if candidate >= 0 && candidate < i128::from(Self::OVERFLOW_SENTINEL) {
+        if candidate <= 0 {
+            return self.get();
+        }
+        if candidate < i128::from(Self::OVERFLOW_SENTINEL) {
             #[allow(clippy::cast_possible_truncation)]
             let c = candidate as i64;
             let current = self.fast.load(std::sync::atomic::Ordering::Acquire);
@@ -110,17 +113,19 @@ impl PeakDrift {
                 }
             }
         }
+        // Transition atomically to overflow mode under the mutex: `swap` claims the latest
+        // lock-free value so no concurrent `fetch_max` update can be lost during handoff.
         let mut overflow = self.overflow.lock().expect("peak drift lock");
-        let current = overflow.unwrap_or_else(|| {
-            let v = self.fast.load(std::sync::atomic::Ordering::Acquire);
-            i128::from(v)
-        });
+        let prev = self
+            .fast
+            .swap(Self::OVERFLOW_SENTINEL, std::sync::atomic::Ordering::AcqRel);
+        let current = match (*overflow, prev) {
+            (Some(v), _) => v,
+            (None, Self::OVERFLOW_SENTINEL) => i128::from(Self::OVERFLOW_SENTINEL),
+            (None, v) => i128::from(v),
+        };
         let next = current.max(candidate);
         *overflow = Some(next);
-        self.fast.store(
-            Self::OVERFLOW_SENTINEL,
-            std::sync::atomic::Ordering::Release,
-        );
         next
     }
 }
@@ -443,22 +448,37 @@ impl VirtualClock {
     }
 
     /// Nanoseconds the clock has run since its last move (zero for a frozen clock).
-    fn drift_nanos(&self, reading: Option<i128>) -> i128 {
+    fn drift_nanos(&self, reading: Option<i128>, record_peak: bool) -> i128 {
         self.follow.as_ref().map_or(0, |follow| {
             let reading = reading.unwrap_or_else(|| (follow.source)());
-            follow.peak.observe_max(reading - follow.at)
+            let candidate = reading - follow.at;
+            if record_peak {
+                follow.peak.observe_max(candidate)
+            } else {
+                candidate.max(follow.peak.get())
+            }
         })
     }
 
     /// One reading of the running time, taken once per operation so that what an operation
     /// checks, counts and publishes all come from the same sample of the source.
     fn sample(&self) -> Sample {
-        self.sample_at(None)
+        self.sample_with_record(None, true)
     }
 
     /// [`Self::sample`] at a given reading of the source, or a fresh one.
     fn sample_at(&self, reading: Option<i128>) -> Sample {
-        let drift = self.drift_nanos(reading);
+        self.sample_with_record(reading, true)
+    }
+
+    /// Read-only sample that does not mutate `Follow::peak`, used by previews so concurrent
+    /// `snapshot()` calls never lose a higher observed peak.
+    fn sample_peek(&self) -> Sample {
+        self.sample_with_record(None, false)
+    }
+
+    fn sample_with_record(&self, reading: Option<i128>, record_peak: bool) -> Sample {
+        let drift = self.drift_nanos(reading, record_peak);
         let mut instant = if drift == 0 {
             self.now
         } else {
@@ -555,12 +575,7 @@ impl VirtualClock {
         &self,
         plan: impl FnOnce(LogicalInstant) -> Result<(LogicalInstant, bool), E>,
     ) -> Result<(Sample, LogicalInstant, bool), MoveFromSampleError<E>> {
-        let peak = self.follow.as_ref().map(|follow| follow.peak.get());
-        let sample = self.sample();
-        // Sampling normally remembers elapsed drift. Keep the original peak until publication.
-        if let (Some(follow), Some(peak)) = (&self.follow, peak) {
-            follow.peak.set(peak);
-        }
+        let sample = self.sample_peek();
         let (target, allow_backwards) = plan(sample.instant).map_err(MoveFromSampleError::Plan)?;
         let rewinds = target < sample.instant;
         if rewinds && !allow_backwards {

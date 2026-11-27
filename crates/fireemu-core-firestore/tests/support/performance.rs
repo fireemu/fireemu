@@ -153,8 +153,10 @@ fn transaction_conflicted_short_circuits_when_version_unchanged_and_detects_conc
         CollectionId::try_new("items").unwrap(),
     ));
     let _ = state.run_query_in_transaction(&tx, &query).unwrap();
-    // No intervening commit: read_version == self.version short-circuits cleanly.
+    // No intervening commit: read_version == self.version short-circuits with 0 query re-evals.
+    TRANSACTION_CONFLICT_QUERY_REEVALS.with(|c| c.set(0));
     assert!(!state.transaction_conflicted(&tx).unwrap());
+    assert_eq!(TRANSACTION_CONFLICT_QUERY_REEVALS.with(std::cell::Cell::get), 0);
 
     // An unrelated commit advances self.version without invalidating the `items` query.
     let unrelated = DocumentPath::parse(

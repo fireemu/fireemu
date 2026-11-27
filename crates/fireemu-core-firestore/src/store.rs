@@ -954,6 +954,9 @@ struct TransactionQueryObservation {
     consumption: Consumption,
     /// Only a completed stream has enough rows to compare with a fresh execution at commit.
     complete: bool,
+    /// True only when the entire query observation was captured atomically in one single-page
+    /// execution; multi-page/manually appended executions always re-verify at commit.
+    single_page: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4548,6 +4551,7 @@ impl FirestoreState {
                         .observation
                         .push_parts(&row.path, row.version);
                 }
+                t.queries[index].single_page = false;
                 if complete {
                     t.queries[index].complete = true;
                 }
@@ -4559,6 +4563,7 @@ impl FirestoreState {
                     observation,
                     consumption,
                     complete,
+                    single_page: complete,
                 });
             }
         }
@@ -5299,9 +5304,15 @@ impl FirestoreState {
     fn transaction_conflicted(&self, id: &TransactionId) -> Result<bool, FirestoreError> {
         let transaction = self.transaction(id)?;
         // Every mutating path (`commit`, `import_documents`) advances `self.version`.
-        // When no write has committed since `transaction.read_version`, neither `read_set`
+        // When no write has committed since `transaction.read_version` and every completed
+        // query observation was captured atomically in a single execution, neither `read_set`
         // nor any completed query observation can have changed.
-        if transaction.read_version == self.version {
+        if transaction.read_version == self.version
+            && transaction
+                .queries
+                .iter()
+                .all(|entry| !entry.complete || entry.single_page)
+        {
             return Ok(false);
         }
         for (path, observed) in &transaction.read_set {
@@ -5310,6 +5321,8 @@ impl FirestoreState {
             }
         }
         for entry in transaction.queries.iter().filter(|entry| entry.complete) {
+            #[cfg(test)]
+            TRANSACTION_CONFLICT_QUERY_REEVALS.with(|c| c.set(c.get() + 1));
             let mut current = QueryObservation::default();
             if entry.query.find_nearest.is_some() {
                 let (documents, _) = self.run_find_nearest_with_stats(&entry.query, None)?;
@@ -10126,6 +10139,7 @@ thread_local! {
     static CANDIDATE_NORMALIZATION_CACHE_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static PAIRED_COSINE_LANES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static RETENTION_PROJECTION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TRANSACTION_CONFLICT_QUERY_REEVALS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
