@@ -176,6 +176,7 @@ impl<T: Borrow<DeliveryObservers>> Drop for DeliveryChange<T> {
 pub struct PubSubScopeSnapshot {
     topics: BTreeMap<String, TopicEntry>,
     subscriptions: BTreeMap<String, SubscriptionState>,
+    external_topic_incarnations: BTreeMap<String, u64>,
     function_subscriptions: BTreeSet<String>,
     snapshots: BTreeMap<String, Snapshot>,
     resource_policies: BTreeMap<String, crate::iam::PolicyState>,
@@ -189,6 +190,11 @@ impl PubSubScopeSnapshot {
         let mut total = 0_u64;
         for key in self.topics.keys() {
             total = total.saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX) + 64);
+        }
+        for key in self.external_topic_incarnations.keys() {
+            total = total.saturating_add(
+                u64::try_from(PubSubState::owned_string_bytes(key)).unwrap_or(u64::MAX),
+            );
         }
         for (name, sub) in &self.subscriptions {
             let (_, unacked_bytes, acked_bytes) = sub.retention_accounting();
@@ -741,6 +747,23 @@ impl PubSubState {
         fn project_of(name: &str) -> &str {
             name.split('/').nth(1).unwrap_or("")
         }
+        let subscriptions: BTreeMap<_, _> = self
+            .subscriptions
+            .iter()
+            .filter(|(_, sub)| owns_project(sub.config().name.project()))
+            .map(|(key, sub)| (key.clone(), sub.clone()))
+            .collect();
+        let external_topic_incarnations = subscriptions
+            .values()
+            .filter_map(|sub| {
+                let topic = &sub.config().topic;
+                if topic.is_deleted_sentinel() || owns_project(topic.project()) {
+                    return None;
+                }
+                let key = topic.to_full();
+                self.topics.get(&key).map(|entry| (key, entry.incarnation))
+            })
+            .collect();
         PubSubScopeSnapshot {
             topics: self
                 .topics
@@ -748,12 +771,8 @@ impl PubSubState {
                 .filter(|(_, entry)| owns_project(entry.name.project()))
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
-            subscriptions: self
-                .subscriptions
-                .iter()
-                .filter(|(_, sub)| owns_project(sub.config().name.project()))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            subscriptions,
+            external_topic_incarnations,
             function_subscriptions: self
                 .function_subscriptions
                 .iter()
@@ -781,12 +800,8 @@ impl PubSubState {
         }
     }
 
-    /// Restores every Pub/Sub resource owned by projects accepted by `owns_project` from
-    /// `snapshot`, rebuilding secondary indexes and snapshot accounting symmetrically while
-    /// preserving out-of-scope subscriptions and waking delivery observers.
-    /// Validates that restoring `snapshot` for projects matching `owns_project` will neither
-    /// exceed broker-wide capacity limits nor orphan out-of-scope subscriptions onto deleted
-    /// topics (which would otherwise silently reattach if a same-named topic were recreated).
+    /// Validates broker-wide capacity and preserves the topic identity of any attached
+    /// subscription whose project and topic project are on opposite sides of the restore.
     pub fn validate_restore_scope(
         &self,
         owns_project: impl Fn(&str) -> bool,
@@ -867,19 +882,53 @@ impl PubSubState {
             }
         }
 
+        self.validate_scope_attachments(&owns_project, snapshot)
+    }
+
+    fn validate_scope_attachments(
+        &self,
+        owns_project: &impl Fn(&str) -> bool,
+        snapshot: &PubSubScopeSnapshot,
+    ) -> core::result::Result<(), String> {
         for sub in self.subscriptions.values() {
-            if owns_project(sub.config().name.project()) {
+            let config = sub.config();
+            if owns_project(config.name.project())
+                || config.topic.is_deleted_sentinel()
+                || !owns_project(config.topic.project())
+            {
                 continue;
             }
-            let topic = &sub.config().topic;
-            if topic.is_deleted_sentinel() || !owns_project(topic.project()) {
-                continue;
-            }
-            let topic_key = topic.to_full();
-            if self.topics.contains_key(&topic_key) && !snapshot.topics.contains_key(&topic_key) {
+            let key = config.topic.to_full();
+            let same_topic = self
+                .topics
+                .get(&key)
+                .zip(snapshot.topics.get(&key))
+                .is_some_and(|(live, saved)| live.incarnation == saved.incarnation);
+            if !same_topic {
                 return Err(format!(
-                    "cannot restore Pub/Sub scope: out-of-scope subscription {} references topic {topic_key} which does not exist in the snapshot",
-                    sub.config().name.to_full()
+                    "cannot restore Pub/Sub scope: retained subscription {} would lose its topic incarnation at {key}",
+                    config.name.to_full()
+                ));
+            }
+        }
+        for sub in snapshot.subscriptions.values() {
+            let config = sub.config();
+            if !owns_project(config.name.project())
+                || config.topic.is_deleted_sentinel()
+                || owns_project(config.topic.project())
+            {
+                continue;
+            }
+            let key = config.topic.to_full();
+            let same_topic = snapshot
+                .external_topic_incarnations
+                .get(&key)
+                .zip(self.topics.get(&key))
+                .is_some_and(|(saved, live)| *saved == live.incarnation);
+            if !same_topic {
+                return Err(format!(
+                    "cannot restore Pub/Sub scope: captured subscription {} has no matching topic incarnation at {key}",
+                    config.name.to_full()
                 ));
             }
         }
@@ -3913,6 +3962,96 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn scoped_restore_preserves_cross_project_topic_incarnations() {
+        let subscription_project = "consumer";
+        let subscription = SubscriptionName::new(subscription_project, "orders-sub").unwrap();
+        for topic_project in [subscription_project, "publisher"] {
+            for scope in ["subscription", "topic", "both"] {
+                if topic_project == subscription_project && scope != "both" {
+                    continue;
+                }
+                let owns = |project: &str| match scope {
+                    "subscription" => project == subscription_project,
+                    "topic" => project == topic_project,
+                    _ => project == subscription_project || project == topic_project,
+                };
+                for history in ["unchanged", "deleted", "recreated"] {
+                    let case = (topic_project, scope, history);
+                    let mut state = PubSubState::new(42);
+                    let topic = topic(topic_project, "orders");
+                    let topic_key = topic.to_full();
+                    let mut config = sub_cfg(
+                        subscription_project,
+                        "orders-sub",
+                        "orders",
+                        Filter::always(),
+                    );
+                    config.topic = topic.clone();
+                    state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
+                    state.create_subscription(config.clone()).unwrap();
+                    let old_incarnation = state.topics[&topic_key].incarnation;
+                    let snapshot = state.capture_scope(owns);
+
+                    if history != "unchanged" {
+                        state.delete_topic(&topic).unwrap();
+                    }
+                    if history == "recreated" {
+                        state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
+                        state.delete_subscription(&subscription).unwrap();
+                        if scope != "subscription" {
+                            state.create_subscription(config.clone()).unwrap();
+                        }
+                    }
+                    let before = state.reported_topic(&subscription);
+                    let result = state.validate_restore_scope(owns, &snapshot);
+                    let refused = (scope == "subscription" && history != "unchanged")
+                        || (scope == "topic" && history == "recreated");
+                    if refused {
+                        let error = result
+                            .err()
+                            .unwrap_or_else(|| panic!("should refuse {case:?}"));
+                        assert!(error.contains(&topic_key), "{case:?}: {error}");
+                        assert!(error.contains(&subscription.to_full()), "{case:?}: {error}");
+                        assert_eq!(state.reported_topic(&subscription), before, "{case:?}");
+                    } else {
+                        result.unwrap_or_else(|error| panic!("{case:?}: {error}"));
+                        state.restore_scope(owns, &snapshot);
+                        assert_eq!(
+                            state.topics[&topic_key].incarnation, old_incarnation,
+                            "{case:?}"
+                        );
+                        let expected = if scope == "topic" && history == "deleted" {
+                            DELETED_TOPIC
+                        } else {
+                            &topic_key
+                        };
+                        assert_eq!(
+                            state.reported_topic(&subscription).as_deref(),
+                            Some(expected),
+                            "{case:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn restoring_topic_scope_refuses_to_remove_a_new_topic_with_a_retained_subscription() {
+        let mut state = PubSubState::new(42);
+        let topic = topic("publisher", "orders");
+        let owns = |project: &str| project == "publisher";
+        let snapshot = state.capture_scope(owns);
+        state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
+        let mut config = sub_cfg("consumer", "orders-sub", "orders", Filter::always());
+        config.topic = topic.clone();
+        state.create_subscription(config).unwrap();
+        let error = state.validate_restore_scope(owns, &snapshot).unwrap_err();
+        assert!(error.contains(&topic.to_full()), "{error}");
+        assert!(state.topic_exists(&topic));
     }
 
     #[test]
