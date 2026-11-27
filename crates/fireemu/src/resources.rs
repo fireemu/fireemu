@@ -61,6 +61,58 @@ impl ResourceHook for Functions {
     }
 }
 
+/// The session's Realtime Database namespaces, estimated tree bytes, and active listeners.
+pub struct RealtimeDatabase(pub Arc<Mutex<fireemu_adapter_database::rest::Database>>);
+
+impl ResourceHook for RealtimeDatabase {
+    fn name(&self) -> &'static str {
+        "database"
+    }
+    fn collect(
+        &self,
+        scope: &Scope,
+        budget: RootBudget,
+    ) -> Result<ServiceResources, TransitionFailure> {
+        let database = self
+            .0
+            .lock()
+            .map_err(|_| TransitionFailure::new("database", "the Realtime Database is poisoned"))?;
+        Ok(database.resources(
+            |namespace| {
+                let project = namespace.strip_suffix("-default-rtdb").unwrap_or(namespace);
+                scope.owns_project(project)
+            },
+            budget,
+        ))
+    }
+}
+
+/// The default session's Remote Config client and server template histories.
+pub struct RemoteConfig(pub Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>);
+
+impl ResourceHook for RemoteConfig {
+    fn name(&self) -> &'static str {
+        "remote_config"
+    }
+    fn collect(
+        &self,
+        scope: &Scope,
+        budget: RootBudget,
+    ) -> Result<ServiceResources, TransitionFailure> {
+        if !scope.is_default() {
+            return Ok(ServiceResources {
+                service: "remote_config".to_owned(),
+                gauges: Vec::new(),
+                refusals: Vec::new(),
+                roots: budget.bound(Vec::new()),
+            });
+        }
+        self.0
+            .resources(budget)
+            .map_err(|reason| TransitionFailure::new("remote_config", reason))
+    }
+}
+
 /// The session's Pub/Sub topics, subscriptions and snapshots.
 pub struct PubSub(pub Arc<Mutex<fireemu_core_pubsub::PubSubState>>);
 
@@ -426,5 +478,33 @@ mod tests {
             .expect("a project session reports the service with no process gauge");
         assert!(report.gauges.is_empty());
         assert!(report.refusals.is_empty());
+    }
+
+    #[test]
+    fn realtime_database_and_remote_config_report_resource_gauges() {
+        use std::sync::{Arc, Mutex};
+        let db = Arc::new(Mutex::new(fireemu_adapter_database::rest::Database::new(
+            fireemu_adapter_database::rest::RestOptions::default(),
+            7,
+        )));
+        let report = super::RealtimeDatabase(db)
+            .collect(&Scope::AllExcept(BTreeSet::new()), RootBudget::DEFAULT)
+            .expect("database resources");
+        assert_eq!(report.service, "database");
+        assert!(report.gauges.iter().any(|g| g.id == "namespaces"));
+        assert!(report.gauges.iter().any(|g| g.id == "retained.bytes"));
+
+        let rc = Arc::new(fireemu_adapter_http::remote_config::RemoteConfigStores::default());
+        let rc_report = super::RemoteConfig(rc.clone())
+            .collect(&Scope::AllExcept(BTreeSet::new()), RootBudget::DEFAULT)
+            .expect("remote config resources");
+        assert_eq!(rc_report.service, "remote_config");
+        assert!(rc_report.gauges.iter().any(|g| g.id == "client.versions"));
+        assert!(rc_report.gauges.iter().any(|g| g.id == "server.versions"));
+
+        let project_report = super::RemoteConfig(rc)
+            .collect(&Scope::Project("demo-b".to_owned()), RootBudget::DEFAULT)
+            .expect("project scope remote config");
+        assert!(project_report.gauges.is_empty());
     }
 }

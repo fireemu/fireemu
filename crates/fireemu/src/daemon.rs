@@ -102,6 +102,7 @@ struct ServiceAssembly {
     auth_operation_gate: Arc<Mutex<()>>,
     storage: Arc<fireemu_adapter_http::storage::StorageState>,
     control: Arc<fireemu_adapter_http::control::ControlState>,
+    remote_config: Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>,
     pubsub: fireemu_adapter_pubsub::PubSubHandle,
     realtime_database: Arc<Mutex<fireemu_adapter_database::rest::Database>>,
 }
@@ -723,7 +724,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
     // Shared by the Firestore enforcer, whose end-user Listen streams hold it, and the control
     // route that fires it.
     let listen_expiry = fireemu_adapter_grpc::rules::ListenExpiry::default();
-    let control = Arc::new(control_state(
+    let mut control = control_state(
         &cfg,
         &clock,
         &rules,
@@ -747,7 +748,23 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         only.firestore
             && cfg.index_policy()
                 == fireemu_core_firestore::index::IndexValidationPolicy::ProductionReport,
-    ));
+    );
+    let remote_config = fireemu_adapter_http::server::remote_config_stores(&control);
+    control
+        .snapshot_hooks
+        .push(Arc::new(crate::snapshots::RemoteConfig(
+            remote_config.clone(),
+        )));
+    control
+        .resource_hooks
+        .push(Arc::new(crate::resources::RemoteConfig(
+            remote_config.clone(),
+        )));
+    let remote_config_for_reset = remote_config.clone();
+    control
+        .reset_hooks
+        .push(Arc::new(move || remote_config_for_reset.reset()));
+    let control = Arc::new(control);
     Ok(ServiceAssembly {
         listen_expiry,
         denial_log,
@@ -794,6 +811,7 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         auth_operation_gate,
         storage,
         control,
+        remote_config,
         pubsub: pubsub_handle,
         realtime_database,
     })
@@ -1009,6 +1027,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         auth_operation_gate,
         storage,
         control,
+        remote_config,
         pubsub,
         realtime_database,
     } = assembly;
@@ -1224,6 +1243,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         auth,
         storage,
         control,
+        remote_config,
         app_check,
         functions_runtime,
         exporter,
@@ -1252,6 +1272,7 @@ struct ReadySuite {
     auth: Arc<AuthState>,
     storage: Arc<fireemu_adapter_http::storage::StorageState>,
     control: Arc<fireemu_adapter_http::control::ControlState>,
+    remote_config: Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>,
     app_check: Option<Arc<fireemu_adapter_http::app_check::AppCheckState>>,
     functions_runtime: Option<Arc<fireemu_adapter_functions::runtime::FunctionsRuntime>>,
     log_bus: fireemu_adapter_logging::LogBus,
@@ -1292,6 +1313,7 @@ async fn serve_suite(
         auth,
         storage,
         control,
+        remote_config,
         app_check,
         functions_runtime,
         exporter,
@@ -1350,7 +1372,6 @@ async fn serve_suite(
             )
         );
     }
-    let remote_config = fireemu_adapter_http::server::remote_config_stores(&control);
     spawn_server!(
         "HTTP",
         fireemu_adapter_http::server::serve_with_control_and_remote_config(

@@ -427,6 +427,77 @@ impl std::fmt::Debug for Waker {
 }
 
 impl Database {
+    /// Reports retained namespaces, estimated tree bytes, and active SSE/realtime listeners
+    /// for runtime resource diagnostics (`GET /v1/sessions/{s}/resources`).
+    #[must_use]
+    pub fn resources(
+        &self,
+        owns_namespace: impl Fn(&str) -> bool,
+        budget: fireemu_core_types::resources::RootBudget,
+    ) -> fireemu_core_types::resources::ServiceResources {
+        use fireemu_core_types::resources::{
+            Gauge, Measure, RetentionRoot, ServiceResources, Unit,
+        };
+        let mut namespace_count = 0_u64;
+        let mut retained_bytes = 0_u64;
+        for (name, namespace) in &self.namespaces {
+            if !owns_namespace(name) {
+                continue;
+            }
+            namespace_count = namespace_count.saturating_add(1);
+            retained_bytes = retained_bytes
+                .saturating_add(namespace.tree.retained_bytes())
+                .saturating_add(u64::try_from(name.len()).unwrap_or(u64::MAX));
+        }
+        let mut roots = Vec::new();
+        let mut sse_count = 0_u64;
+        for (id, sub) in &self.subscriptions {
+            if !owns_namespace(&sub.namespace) {
+                continue;
+            }
+            sse_count = sse_count.saturating_add(1);
+            roots.push(RetentionRoot {
+                kind: "sse_subscription".to_owned(),
+                id: format!("{}:{id}", sub.namespace),
+                count: 1,
+                bytes: 0,
+                outstanding: true,
+            });
+        }
+        let mut listen_count = 0_u64;
+        for (id, listen) in &self.listens {
+            if !owns_namespace(&listen.namespace) {
+                continue;
+            }
+            listen_count = listen_count.saturating_add(1);
+            roots.push(RetentionRoot {
+                kind: "realtime_listen".to_owned(),
+                id: format!("{}:{id}", listen.namespace),
+                count: 1,
+                bytes: 0,
+                outstanding: true,
+            });
+        }
+        ServiceResources {
+            service: "database".to_owned(),
+            gauges: vec![
+                Gauge::logical("namespaces", Unit::Count, namespace_count, None),
+                Gauge {
+                    id: "retained.bytes".to_owned(),
+                    measure: Measure::Estimate,
+                    unit: Unit::Bytes,
+                    current: retained_bytes,
+                    limit: None,
+                    reclaimable: 0,
+                },
+                Gauge::logical("sse.subscriptions", Unit::Count, sse_count, None),
+                Gauge::logical("realtime.listens", Unit::Count, listen_count, None),
+            ],
+            refusals: Vec::new(),
+            roots: budget.bound(roots),
+        }
+    }
+
     /// An empty database; push ids draw their randomness from `seed`.
     pub fn new(options: RestOptions, seed: u64) -> Self {
         Self {

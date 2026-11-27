@@ -4432,6 +4432,7 @@ fn control_state(
         Arc::new(snapshots::FieldConfig(backend.clone())),
         Arc::new(snapshots::Storage(storage.clone())),
         Arc::new(snapshots::RealtimeDatabase(realtime_database.clone())),
+        Arc::new(snapshots::PubSub(pubsub.clone(), pubsub_handle.clone())),
         Arc::new(snapshots::Auth(registry.clone())),
         Arc::new(snapshots::Faults(faults.clone(), cfg.auth_project.clone())),
         Arc::new(snapshots::TextIndexes(
@@ -4478,6 +4479,7 @@ fn control_state(
         Arc::new(resources::Storage(storage.clone())),
         Arc::new(resources::Auth(registry.clone())),
         Arc::new(resources::PubSub(pubsub.clone())),
+        Arc::new(resources::RealtimeDatabase(realtime_database.clone())),
         Arc::new(resources::Process),
     ];
     if let Some(runtime) = functions {

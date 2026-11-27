@@ -644,6 +644,50 @@ pub struct RemoteConfigStores {
     pub server: TemplateStore,
 }
 
+/// Captured snapshot of one [`TemplateStore`].
+#[derive(Debug, Clone)]
+pub struct TemplateStoreSnapshot {
+    versions: VecDeque<Arc<Version>>,
+}
+
+impl TemplateStoreSnapshot {
+    /// A cheap, saturating estimate of the heap bytes retained by this snapshot.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        self.versions.iter().fold(0_u64, |acc, version| {
+            acc.saturating_add(estimate_version_bytes(version))
+        })
+    }
+}
+
+/// Captured snapshot of both client and server Remote Config namespaces.
+#[derive(Debug, Clone)]
+pub struct RemoteConfigSnapshot {
+    client: TemplateStoreSnapshot,
+    server: TemplateStoreSnapshot,
+}
+
+impl RemoteConfigSnapshot {
+    /// A cheap, saturating estimate of the heap bytes retained by this snapshot.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        self.client
+            .retained_bytes()
+            .saturating_add(self.server.retained_bytes())
+    }
+}
+
+fn estimate_version_bytes(version: &Version) -> u64 {
+    let doc = serde_json::to_vec(&version.template.document)
+        .map_or(0, |bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+    let desc = version
+        .template
+        .description
+        .as_deref()
+        .map_or(0, |s| u64::try_from(s.len()).unwrap_or(u64::MAX));
+    doc.saturating_add(desc).saturating_add(128)
+}
+
 impl RemoteConfigStores {
     /// Selects the history for the requested namespace.
     #[must_use]
@@ -652,6 +696,66 @@ impl RemoteConfigStores {
             Namespace::Client => &self.client,
             Namespace::Server => &self.server,
         }
+    }
+
+    /// Captures both client and server template histories.
+    pub fn capture_snapshot(&self) -> Result<RemoteConfigSnapshot, String> {
+        Ok(RemoteConfigSnapshot {
+            client: self.client.capture_snapshot()?,
+            server: self.server.capture_snapshot()?,
+        })
+    }
+
+    /// Restores both client and server template histories from `snapshot`.
+    pub fn restore_snapshot(&self, snapshot: &RemoteConfigSnapshot) -> Result<(), String> {
+        self.client.restore_snapshot(&snapshot.client)?;
+        self.server.restore_snapshot(&snapshot.server)?;
+        Ok(())
+    }
+
+    /// Resets both namespaces to their empty initial version-0 state.
+    pub fn reset(&self) -> Result<(), String> {
+        self.client.reset()?;
+        self.server.reset()?;
+        Ok(())
+    }
+
+    /// Reports retained versions and estimated bytes for runtime resource diagnostics.
+    pub fn resources(
+        &self,
+        budget: fireemu_core_types::resources::RootBudget,
+    ) -> Result<fireemu_core_types::resources::ServiceResources, String> {
+        use fireemu_core_types::resources::{Gauge, Measure, ServiceResources, Unit};
+        let (client_versions, client_bytes) = self.client.accounting()?;
+        let (server_versions, server_bytes) = self.server.accounting()?;
+        let max_versions = u64::try_from(MAX_RETAINED_VERSIONS).unwrap_or(u64::MAX);
+        Ok(ServiceResources {
+            service: "remote_config".to_owned(),
+            gauges: vec![
+                Gauge::logical(
+                    "client.versions",
+                    Unit::Count,
+                    client_versions,
+                    Some(max_versions),
+                ),
+                Gauge::logical(
+                    "server.versions",
+                    Unit::Count,
+                    server_versions,
+                    Some(max_versions),
+                ),
+                Gauge {
+                    id: "retained.bytes".to_owned(),
+                    measure: Measure::Estimate,
+                    unit: Unit::Bytes,
+                    current: client_bytes.saturating_add(server_bytes),
+                    limit: None,
+                    reclaimable: 0,
+                },
+            ],
+            refusals: Vec::new(),
+            roots: budget.bound(Vec::new()),
+        })
     }
 }
 
@@ -772,6 +876,67 @@ impl TemplateStore {
             .filter(|version| version.number > 0)
             .cloned()
             .collect()
+    }
+
+    /// Captures the retained version history for an in-memory session snapshot.
+    pub fn capture_snapshot(&self) -> Result<TemplateStoreSnapshot, String> {
+        let history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        Ok(TemplateStoreSnapshot {
+            versions: history.versions.clone(),
+        })
+    }
+
+    /// Restores the retained version history from a previously captured snapshot.
+    ///
+    /// Invalidates the cached serialized body so subsequent reads reflect the restored head.
+    pub fn restore_snapshot(&self, snapshot: &TemplateStoreSnapshot) -> Result<(), String> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        history.versions.clone_from(&snapshot.versions);
+        history.current_body = None;
+        Ok(())
+    }
+
+    /// Resets the store to an empty initial version-0 template, preserving project number.
+    pub fn reset(&self) -> Result<(), String> {
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        let current = head(&history.versions);
+        let initial = Version {
+            number: 0,
+            store_id: current.store_id,
+            project_number: current.project_number,
+            template: Arc::new(ClientTemplate {
+                document: json!({"conditions": [], "parameters": {}, "parameterGroups": {}}),
+                description: None,
+                written_order: Vec::new(),
+            }),
+            update_time: None,
+            change: Change::Initial,
+        };
+        history.versions = VecDeque::from([Arc::new(initial)]);
+        history.current_body = None;
+        Ok(())
+    }
+
+    /// Published version count (excluding empty version 0) and estimated retained bytes.
+    fn accounting(&self) -> Result<(u64, u64), String> {
+        let history = self
+            .history
+            .lock()
+            .map_err(|_| "remote config template store is poisoned".to_owned())?;
+        let published_count = history.versions.iter().filter(|v| v.number > 0).count();
+        let bytes = history.versions.iter().fold(0_u64, |acc, version| {
+            acc.saturating_add(estimate_version_bytes(version))
+        });
+        Ok((u64::try_from(published_count).unwrap_or(u64::MAX), bytes))
     }
 
     /// One page of the retained published versions that `keep` admits, newest first, starting at

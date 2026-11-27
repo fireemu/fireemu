@@ -706,6 +706,98 @@ impl Functions {
     }
 }
 
+/// The session's Pub/Sub topics, subscriptions, undelivered messages, and snapshots.
+///
+/// Acquires the Pub/Sub publication gate during restore so commits cannot race with the
+/// restored broker state, and wakes active `StreamingPull`/push workers via `delivery_change()`.
+pub struct PubSub(
+    pub Arc<Mutex<fireemu_core_pubsub::PubSubState>>,
+    pub fireemu_adapter_pubsub::PubSubHandle,
+);
+
+impl SnapshotHook for PubSub {
+    fn name(&self) -> &'static str {
+        "pubsub"
+    }
+    fn capture(&self, scope: &Scope) -> Result<SnapshotPart, TransitionFailure> {
+        let state = self
+            .0
+            .lock()
+            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
+        Ok(Arc::new(
+            state.capture_scope(|project| scope.owns_project(project)),
+        ))
+    }
+    fn validate(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
+        part.downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
+            .ok_or_else(|| wrong_shape(self.name()))?;
+        self.0
+            .lock()
+            .map(|_| ())
+            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))
+    }
+    fn restore(&self, scope: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
+        let snapshot = part
+            .downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
+            .ok_or_else(|| wrong_shape(self.name()))?;
+        let _publication = self
+            .1
+            .lock_publication()
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
+        state.restore_scope(|project| scope.owns_project(project), snapshot);
+        Ok(())
+    }
+    fn retained_bytes(&self, part: &SnapshotPart) -> u64 {
+        part.downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
+            .map_or(
+                0,
+                fireemu_core_pubsub::state::PubSubScopeSnapshot::retained_bytes,
+            )
+    }
+}
+
+/// The default session's Remote Config client and server template histories.
+pub struct RemoteConfig(pub Arc<fireemu_adapter_http::remote_config::RemoteConfigStores>);
+
+impl SnapshotHook for RemoteConfig {
+    fn name(&self) -> &'static str {
+        "remote_config"
+    }
+    fn shared(&self) -> bool {
+        true
+    }
+    fn capture(&self, _: &Scope) -> Result<SnapshotPart, TransitionFailure> {
+        self.0
+            .capture_snapshot()
+            .map(|snapshot| Arc::new(snapshot) as SnapshotPart)
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))
+    }
+    fn validate(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
+        part.downcast_ref::<fireemu_adapter_http::remote_config::RemoteConfigSnapshot>()
+            .map(|_| ())
+            .ok_or_else(|| wrong_shape(self.name()))
+    }
+    fn restore(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
+        let snapshot = part
+            .downcast_ref::<fireemu_adapter_http::remote_config::RemoteConfigSnapshot>()
+            .ok_or_else(|| wrong_shape(self.name()))?;
+        self.0
+            .restore_snapshot(snapshot)
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))
+    }
+    fn retained_bytes(&self, part: &SnapshotPart) -> u64 {
+        part.downcast_ref::<fireemu_adapter_http::remote_config::RemoteConfigSnapshot>()
+            .map_or(
+                0,
+                fireemu_adapter_http::remote_config::RemoteConfigSnapshot::retained_bytes,
+            )
+    }
+}
+
 impl SnapshotHook for Functions {
     fn name(&self) -> &'static str {
         "functions"
@@ -2869,5 +2961,110 @@ mod tests {
         );
         drop((part, hook, process));
         let _ = std::fs::remove_dir(&root);
+    }
+
+    #[test]
+    fn pubsub_and_remote_config_snapshots_capture_and_restore_scoped_state() {
+        use fireemu_adapter_http::remote_config::WriteMode;
+        use fireemu_core_pubsub::name::{SubscriptionName, TopicName};
+        use fireemu_core_pubsub::subscription::SubscriptionConfig;
+        use fireemu_core_session::clock::VirtualClock;
+        use std::sync::Mutex;
+
+        let pubsub_state = Arc::new(Mutex::new(fireemu_core_pubsub::PubSubState::new(7)));
+        let pubsub_handle = fireemu_adapter_pubsub::PubSubHandle::new(
+            pubsub_state.clone(),
+            Arc::new(Mutex::new(VirtualClock::new(AT))),
+            None,
+        );
+        let pubsub_hook = super::PubSub(pubsub_state.clone(), pubsub_handle);
+
+        let topic_a = TopicName::parse("projects/demo-a/topics/orders").unwrap();
+        let topic_b = TopicName::parse("projects/demo-b/topics/other").unwrap();
+        let sub_a = SubscriptionName::parse("projects/demo-a/subscriptions/sub-orders").unwrap();
+        {
+            let mut state = pubsub_state.lock().unwrap();
+            state
+                .create_topic(topic_a.clone(), std::collections::BTreeMap::new())
+                .unwrap();
+            state
+                .create_topic(topic_b.clone(), std::collections::BTreeMap::new())
+                .unwrap();
+            state
+                .create_subscription(SubscriptionConfig {
+                    name: sub_a.clone(),
+                    topic: topic_a.clone(),
+                    ack_deadline_seconds: 10,
+                    labels: std::collections::BTreeMap::new(),
+                    expiration_policy: None,
+                    retain_acked_messages: false,
+                    message_retention_duration: None,
+                    enable_message_ordering: false,
+                    filter: fireemu_core_pubsub::filter::Filter::always(),
+                    dead_letter_policy: None,
+                    retry_policy: None,
+                    push_config: fireemu_core_pubsub::subscription::PushConfig::default(),
+                })
+                .unwrap();
+        }
+        let scope_a = Scope::Project("demo-a".to_owned());
+        let part = pubsub_hook.capture(&scope_a).expect("capture pubsub");
+        assert!(pubsub_hook.retained_bytes(&part) > 0);
+        pubsub_hook.validate(&scope_a, &part).expect("validate");
+
+        // Mutate both projects after snapshot: only demo-a must rewind on restore.
+        let extra_a = TopicName::parse("projects/demo-a/topics/after").unwrap();
+        let extra_b = TopicName::parse("projects/demo-b/topics/after-b").unwrap();
+        {
+            let mut state = pubsub_state.lock().unwrap();
+            state
+                .create_topic(extra_a.clone(), std::collections::BTreeMap::new())
+                .unwrap();
+            state
+                .create_topic(extra_b.clone(), std::collections::BTreeMap::new())
+                .unwrap();
+        }
+        pubsub_hook.restore(&scope_a, &part).expect("restore");
+        {
+            let state = pubsub_state.lock().unwrap();
+            assert!(state.topic_exists(&topic_a));
+            assert!(state.subscription_config(&sub_a).is_ok());
+            assert!(!state.topic_exists(&extra_a));
+            assert!(state.topic_exists(&topic_b));
+            assert!(state.topic_exists(&extra_b));
+        }
+
+        // Remote Config snapshot captures and restores both client and server histories.
+        let rc = Arc::new(fireemu_adapter_http::remote_config::RemoteConfigStores::default());
+        let rc_hook = super::RemoteConfig(rc.clone());
+        let default_scope = Scope::AllExcept(BTreeSet::new());
+        let _ = rc
+            .client
+            .write(
+                WriteMode::Publish,
+                Some("*"),
+                serde_json::json!({"parameters": {"flag": {"defaultValue": {"value": "v1"}}}}),
+                AT,
+            )
+            .unwrap();
+        assert_eq!(rc.client.current().number(), 1);
+        let rc_part = rc_hook.capture(&default_scope).expect("capture rc");
+        assert!(rc_hook.retained_bytes(&rc_part) > 0);
+        let _ = rc
+            .client
+            .write(
+                WriteMode::Publish,
+                Some("*"),
+                serde_json::json!({"parameters": {"flag": {"defaultValue": {"value": "v2"}}}}),
+                AT,
+            )
+            .unwrap();
+        assert_eq!(rc.client.current().number(), 2);
+        rc_hook
+            .restore(&default_scope, &rc_part)
+            .expect("restore rc");
+        assert_eq!(rc.client.current().number(), 1);
+        rc.reset().expect("reset rc");
+        assert_eq!(rc.client.current().number(), 0);
     }
 }

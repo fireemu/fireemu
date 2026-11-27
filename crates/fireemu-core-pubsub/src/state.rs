@@ -162,6 +162,53 @@ impl<T: Borrow<DeliveryObservers>> Drop for DeliveryChange<T> {
     }
 }
 
+/// Captured Pub/Sub state for one session scope, used by in-memory session snapshots.
+///
+/// Restoration contract:
+/// - Restoring replaces all topics, subscriptions, snapshots, IAM policies, function-subscription
+///   markers, and strict page boundaries owned by the scope.
+/// - Monotonic counters (`topic_counter`, `message_counter`, `snapshot_counter`,
+///   `policy_incarnation`) never move backwards, preventing identifier collisions with work
+///   prepared before the restore.
+/// - Delivery observers are notified on restore so active `StreamingPull` and push workers wake
+///   and resynchronize against the restored subscriptions.
+#[derive(Debug, Clone)]
+pub struct PubSubScopeSnapshot {
+    topics: BTreeMap<String, TopicEntry>,
+    subscriptions: BTreeMap<String, SubscriptionState>,
+    function_subscriptions: BTreeSet<String>,
+    snapshots: BTreeMap<String, Snapshot>,
+    resource_policies: BTreeMap<String, crate::iam::PolicyState>,
+    issued_page_boundaries: IssuedPageBoundaries,
+}
+
+impl PubSubScopeSnapshot {
+    /// A cheap, saturating estimate of the heap bytes retained by this snapshot.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        let mut total = 0_u64;
+        for key in self.topics.keys() {
+            total = total.saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX) + 64);
+        }
+        for (name, sub) in &self.subscriptions {
+            let (_, unacked_bytes, acked_bytes) = sub.retention_accounting();
+            total = total
+                .saturating_add(u64::try_from(name.len()).unwrap_or(u64::MAX))
+                .saturating_add(unacked_bytes)
+                .saturating_add(acked_bytes)
+                .saturating_add(128);
+        }
+        for (name, snap) in &self.snapshots {
+            total = total.saturating_add(u64::try_from(name.len()).unwrap_or(u64::MAX) + 64);
+            for msg in snap.captured_messages.iter() {
+                total =
+                    total.saturating_add(u64::try_from(msg.message.data.len()).unwrap_or(u64::MAX));
+            }
+        }
+        total
+    }
+}
+
 /// The whole Pub/Sub state for one daemon (all projects share one registry; names are
 /// project-qualified so projects never collide).
 #[derive(Debug)]
@@ -685,6 +732,113 @@ impl PubSubState {
         );
         for project in projects.into_iter().filter(|project| matches(project)) {
             self.clear_project(&project);
+        }
+    }
+
+    /// Captures every Pub/Sub resource owned by projects accepted by `owns_project`.
+    #[must_use]
+    pub fn capture_scope(&self, owns_project: impl Fn(&str) -> bool) -> PubSubScopeSnapshot {
+        fn project_of(name: &str) -> &str {
+            name.split('/').nth(1).unwrap_or("")
+        }
+        PubSubScopeSnapshot {
+            topics: self
+                .topics
+                .iter()
+                .filter(|(_, entry)| owns_project(entry.name.project()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            subscriptions: self
+                .subscriptions
+                .iter()
+                .filter(|(_, sub)| owns_project(sub.config().name.project()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            function_subscriptions: self
+                .function_subscriptions
+                .iter()
+                .filter(|name| owns_project(project_of(name)))
+                .cloned()
+                .collect(),
+            snapshots: self
+                .snapshots
+                .iter()
+                .filter(|(_, snap)| owns_project(&snap.owner_project))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            resource_policies: self
+                .resource_policies
+                .iter()
+                .filter(|(k, _)| owns_project(project_of(k)))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            issued_page_boundaries: self
+                .issued_page_boundaries
+                .iter()
+                .filter(|(context, _)| owns_project(project_of(context)))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        }
+    }
+
+    /// Restores every Pub/Sub resource owned by projects accepted by `owns_project` from
+    /// `snapshot`, rebuilding secondary indexes and waking delivery observers.
+    pub fn restore_scope(
+        &mut self,
+        owns_project: impl Fn(&str) -> bool,
+        snapshot: &PubSubScopeSnapshot,
+    ) {
+        let _changed = self.delivery_change();
+        self.clear_projects_where(&owns_project);
+
+        for (k, v) in &snapshot.topics {
+            self.topics.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &snapshot.subscriptions {
+            let topic_key = v.config().topic.to_full();
+            if !v.config().push_config.push_endpoint.is_empty() {
+                self.topic_push_subs
+                    .entry(topic_key.clone())
+                    .or_default()
+                    .insert(k.clone());
+            }
+            self.topic_subs
+                .entry(topic_key)
+                .or_default()
+                .insert(k.clone());
+            self.subscriptions.insert(k.clone(), v.clone());
+        }
+        for name in &snapshot.function_subscriptions {
+            self.function_subscriptions.insert(name.clone());
+        }
+        for (k, v) in &snapshot.snapshots {
+            self.topic_snapshots
+                .entry((v.topic.to_full(), v.topic_incarnation))
+                .or_default()
+                .insert(k.clone());
+            for msg in v.captured_messages.iter() {
+                let refs = self
+                    .snapshot_message_refs
+                    .entry(msg.message_id.clone())
+                    .or_insert(0);
+                if *refs == 0 {
+                    self.snapshot_retained_bytes = self
+                        .snapshot_retained_bytes
+                        .saturating_add(msg.message.data.len());
+                }
+                *refs += 1;
+            }
+            self.next_snapshot_expiry = Some(match self.next_snapshot_expiry {
+                Some(current) => current.min(v.expire_at),
+                None => v.expire_at,
+            });
+            self.snapshots.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &snapshot.resource_policies {
+            self.resource_policies.insert(k.clone(), v.clone());
+        }
+        for (k, v) in &snapshot.issued_page_boundaries {
+            self.issued_page_boundaries.insert(k.clone(), v.clone());
         }
     }
 

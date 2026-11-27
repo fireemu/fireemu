@@ -22,7 +22,7 @@ pub struct ResourcePolicy {
     pub etag: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct PolicyState {
     incarnation: u32,
     revision: u64,
