@@ -30,6 +30,9 @@ class RuntimeClockTests(unittest.TestCase):
             self.assertEqual(time.time_ns(), base_sec * 1_000_000_000)
             self.assertAlmostEqual(time.time(), float(base_sec), places=6)
             now = datetime.datetime.now(datetime.timezone.utc)
+            self.assertIsInstance(now, datetime.datetime)
+            self.assertIsInstance(datetime.datetime.utcnow(), datetime.datetime)
+            self.assertIsInstance(datetime.date.today(), datetime.date)
             self.assertEqual((now.year, now.month, now.day), (2026, 6, 1))
 
             # Advance by 1 day via clock:set frame

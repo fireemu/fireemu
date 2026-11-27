@@ -88,6 +88,7 @@ def serve(
     hello = {
         "type": "hello",
         "runner": "python",
+        "clock": {"version": 1, "date": True, "timers": False},
         "codebase": codebase,
         "version": platform.python_version(),
         "httpPort": port,

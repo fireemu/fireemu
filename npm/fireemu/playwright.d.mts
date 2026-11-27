@@ -23,7 +23,7 @@ export interface FireemuPlaywrightTestFixtures {
 
 export interface FireemuPlaywrightFixtureDefinitions {
   fireemuWorld: [
-    (fixtures: Record<string, never>, use: (value: TestWorld) => Promise<void>) => Promise<void>,
+    (fixtures: Record<string, unknown>, use: (value: TestWorld) => Promise<void>) => Promise<void>,
     { scope: 'worker' },
   ];
   fireemu: (

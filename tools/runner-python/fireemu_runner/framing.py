@@ -110,6 +110,10 @@ def _decode_message(payload: bytes) -> dict:
         raise ProtocolError("message object")
     if message.get("type") == "shutdown":
         return message
+    if message.get("type") == "clock:set":
+        if not _text(message.get("invocationId")):
+            raise ProtocolError("clock:set invocationId")
+        return message
     if (
         message.get("type") != "invoke"
         or not _text(message.get("invocationId"))

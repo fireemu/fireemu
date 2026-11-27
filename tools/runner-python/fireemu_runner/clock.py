@@ -113,12 +113,12 @@ class RuntimeClock:
             @classmethod
             def now(cls, tz=None):
                 ts = clock.current_instant_nanos() / _NANOS_PER_SEC
-                return _REAL_DATETIME.fromtimestamp(ts, tz=tz)
+                return cls.fromtimestamp(ts, tz=tz)
 
             @classmethod
             def utcnow(cls):
                 ts = clock.current_instant_nanos() / _NANOS_PER_SEC
-                return _REAL_DATETIME.fromtimestamp(ts, tz=_datetime_mod.timezone.utc).replace(tzinfo=None)
+                return cls.fromtimestamp(ts, tz=_datetime_mod.timezone.utc).replace(tzinfo=None)
 
             @classmethod
             def today(cls):
@@ -128,7 +128,7 @@ class RuntimeClock:
             @classmethod
             def today(cls):
                 dt = _VirtualDatetime.now()
-                return _REAL_DATE(dt.year, dt.month, dt.day)
+                return cls(dt.year, dt.month, dt.day)
 
         _time_mod.time_ns = _virtual_time_ns
         _time_mod.time = _virtual_time

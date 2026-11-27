@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -41,6 +42,14 @@ class Endpoint:
     host: str
     port: int
     url: str
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "redirects are refused for control requests", headers, fp)
+
+
+_CONTROL_OPENER = urllib.request.build_opener(_NoRedirectHandler)
 
 
 def _parse_endpoint(raw: str) -> Endpoint:
@@ -110,8 +119,11 @@ class TestWorld:
         self._cwd = str(cwd) if cwd is not None else None
         self._dir = Path(tempfile.mkdtemp(prefix="fireemu-py-world-"))
         self._proc: subprocess.Popen[bytes] | None = None
+        self._stderr_file: Any = None
+        self._stderr_path = self._dir / "daemon.stderr.log"
         self._disposed = False
         self._has_baseline = False
+        self._baseline_error: Exception | None = None
         self._checkpoint_seq = 0
         self.descriptor: dict[str, Any] = {}
         self.endpoints: dict[str, Endpoint] = {}
@@ -159,20 +171,20 @@ class TestWorld:
         ]
         if "hosting" in self._services:
             args.extend(["--hosting-port", "0"])
-        self._proc = subprocess.Popen(
-            args,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=self._cwd,
-        )
-        deadline = time.monotonic() + self._startup_timeout_s
         try:
+            self._stderr_file = open(self._stderr_path, "wb")
+            self._proc = subprocess.Popen(
+                args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=self._stderr_file,
+                cwd=self._cwd,
+            )
+            deadline = time.monotonic() + self._startup_timeout_s
             while time.monotonic() < deadline:
                 if self._proc.poll() is not None:
-                    stderr = (self._proc.stderr.read() if self._proc.stderr else b"").decode(
-                        "utf-8", errors="replace"
-                    )
+                    self._stderr_file.flush()
+                    stderr = self._stderr_path.read_text(encoding="utf-8", errors="replace")
                     raise RuntimeError(f"fireemu exited before becoming ready: {stderr}")
                 if ready_file.is_file():
                     try:
@@ -191,8 +203,9 @@ class TestWorld:
                                 {"name": _BASELINE_SNAPSHOT},
                             )
                             self._has_baseline = True
-                        except Exception:
+                        except Exception as err:
                             self._has_baseline = False
+                            self._baseline_error = err
                         return
                 time.sleep(0.01)
             raise TimeoutError("fireemu test world startup timed out")
@@ -216,15 +229,21 @@ class TestWorld:
     def control(self, method: str, path: str, body: Any = None) -> Any:
         if self._disposed:
             raise RuntimeError("TestWorld is disposed")
+        if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+            raise ValueError(f"control path must be a relative path starting with '/': {path!r}")
         base = self.descriptor["controlUrl"].rstrip("/")
-        url = f"{base}{path}"
+        base_parsed = urllib.parse.urlparse(base)
+        url = urllib.parse.urljoin(base + "/", path.lstrip("/"))
+        target_parsed = urllib.parse.urlparse(url)
+        if (target_parsed.scheme, target_parsed.netloc) != (base_parsed.scheme, base_parsed.netloc):
+            raise ValueError(f"control path resolves outside control origin: {path!r}")
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Authorization": f"Bearer {self.descriptor['controlToken']}"}
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
         try:
-            with urllib.request.urlopen(req, timeout=self._request_timeout_s) as resp:
+            with _CONTROL_OPENER.open(req, timeout=self._request_timeout_s) as resp:
                 raw = resp.read()
                 return json.loads(raw.decode("utf-8")) if raw else None
         except urllib.error.HTTPError as err:
@@ -232,17 +251,19 @@ class TestWorld:
             raise RuntimeError(f"fireemu control {method} {path} failed ({err.code}): {payload}") from err
 
     def reset_state(self) -> TestWorld:
-        if self._has_baseline:
-            encoded = urllib.parse.quote(_BASELINE_SNAPSHOT, safe="")
-            self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {})
-        else:
-            self.control("POST", "/v1/sessions/default:reset", {})
+        if not self._has_baseline:
+            detail = f" ({self._baseline_error})" if self._baseline_error is not None else ""
+            raise RuntimeError(
+                f"TestWorld cannot reset_state: startup baseline snapshot was not captured{detail}"
+            ) from self._baseline_error
+        encoded = urllib.parse.quote(_BASELINE_SNAPSHOT, safe="")
+        self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {})
         return self
 
     def checkpoint(self, name: str | None = None) -> str:
         if name is None:
             self._checkpoint_seq += 1
-            resolved = f"cp-{self._checkpoint_seq}"
+            resolved = f"cp-{self._checkpoint_seq}-{uuid.uuid4().hex[:8]}"
         else:
             resolved = str(name)
         if not resolved or resolved == _BASELINE_SNAPSHOT:
@@ -282,12 +303,12 @@ class TestWorld:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5.0)
-            for stream in (proc.stdout, proc.stderr):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+            if self._stderr_file is not None:
+                try:
+                    self._stderr_file.close()
+                except OSError:
+                    pass
+                self._stderr_file = None
         shutil.rmtree(self._dir, ignore_errors=True)
 
     def __enter__(self) -> TestWorld:

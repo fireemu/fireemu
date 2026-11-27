@@ -1756,9 +1756,15 @@ async fn serve_suite(
         }
         let distinct_databases: std::collections::BTreeSet<&str> =
             reports.iter().map(|r| r.database.as_str()).collect();
-        if distinct_databases.len() > 1 {
+        let has_named_db = distinct_databases
+            .iter()
+            .any(|db| !db.ends_with("/databases/(default)"));
+        if distinct_databases.len() > 1
+            || (has_named_db
+                && path.file_name().and_then(|n| n.to_str()) == Some("firestore.indexes.json"))
+        {
             errln!(
-                "error: --write-missing-indexes cannot merge missing indexes from multiple databases ({}) into a single file {}",
+                "error: --write-missing-indexes cannot merge missing indexes from database(s) ({}) into {}; pass an explicit per-database file path via --write-missing-indexes=<file>",
                 distinct_databases.into_iter().collect::<Vec<_>>().join(", "),
                 path.display()
             );

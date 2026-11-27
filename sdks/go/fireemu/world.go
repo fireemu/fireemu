@@ -6,6 +6,8 @@ package fireemu
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,10 +63,12 @@ type World struct {
 	controlURL   string
 	controlToken string
 	client       *http.Client
-	cmd          *exec.Cmd
-	stdin        io.WriteCloser
-	dir          string
-	hasBaseline  bool
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	exited        chan error
+	dir           string
+	hasBaseline   bool
+	baselineError error
 
 	mu            sync.Mutex
 	closed        bool
@@ -172,15 +176,21 @@ func New(opts Options) (*World, error) {
 		return nil, err
 	}
 
+	exited := make(chan error, 1)
 	w := &World{
 		ProjectID: projectID,
-		client:    &http.Client{Timeout: reqTimeout},
-		cmd:       cmd,
-		stdin:     stdin,
-		dir:       dir,
+		client: &http.Client{
+			Timeout: reqTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return errors.New("redirects are refused for control requests")
+			},
+		},
+		cmd:    cmd,
+		stdin:  stdin,
+		exited: exited,
+		dir:    dir,
 	}
 
-	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 
 	deadline := time.Now().Add(startupTimeout)
@@ -205,6 +215,8 @@ func New(opts Options) (*World, error) {
 				}
 				if _, err := w.Control("POST", "/v1/sessions/default/snapshots", map[string]any{"name": baselineSnapshot}); err == nil {
 					w.hasBaseline = true
+				} else {
+					w.baselineError = err
 				}
 				return w, nil
 			}
@@ -249,6 +261,20 @@ func (w *World) Control(method, path string, body any) (map[string]any, error) {
 	if closed {
 		return nil, errors.New("fireemu world is closed")
 	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
+		return nil, fmt.Errorf("control path must be a relative path starting with '/': %q", path)
+	}
+	baseURL, err := url.Parse(w.controlURL)
+	if err != nil {
+		return nil, err
+	}
+	targetURL, err := baseURL.Parse(path)
+	if err != nil {
+		return nil, err
+	}
+	if targetURL.Scheme != baseURL.Scheme || targetURL.Host != baseURL.Host {
+		return nil, fmt.Errorf("control path resolves outside control origin: %q", path)
+	}
 	var reader io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -257,7 +283,7 @@ func (w *World) Control(method, path string, body any) (map[string]any, error) {
 		}
 		reader = bytes.NewReader(encoded)
 	}
-	req, err := http.NewRequest(method, w.controlURL+path, reader)
+	req, err := http.NewRequest(method, targetURL.String(), reader)
 	if err != nil {
 		return nil, err
 	}
@@ -289,20 +315,24 @@ func (w *World) Control(method, path string, body any) (map[string]any, error) {
 
 // ResetState rewinds in-memory emulator state and virtual clock to the startup baseline.
 func (w *World) ResetState() error {
-	if w.hasBaseline {
-		_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(baselineSnapshot)+":restore", map[string]any{})
-		return err
+	if !w.hasBaseline {
+		if w.baselineError != nil {
+			return fmt.Errorf("fireemu World cannot ResetState: startup baseline snapshot was not captured: %w", w.baselineError)
+		}
+		return errors.New("fireemu World cannot ResetState: startup baseline snapshot was not captured")
 	}
-	_, err := w.Control("POST", "/v1/sessions/default:reset", map[string]any{})
+	_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(baselineSnapshot)+":restore", map[string]any{})
 	return err
 }
 
 // Checkpoint captures a named in-memory snapshot (auto-named when empty) and returns its name.
 func (w *World) Checkpoint(name string) (string, error) {
 	if name == "" {
+		var suffix [4]byte
+		_, _ = rand.Read(suffix[:])
 		w.mu.Lock()
 		w.checkpointSeq++
-		name = fmt.Sprintf("cp-%d", w.checkpointSeq)
+		name = fmt.Sprintf("cp-%d-%s", w.checkpointSeq, hex.EncodeToString(suffix[:]))
 		w.mu.Unlock()
 	}
 	if name == baselineSnapshot {
@@ -357,15 +387,11 @@ func (w *World) Close() error {
 	}
 	if w.cmd != nil && w.cmd.Process != nil {
 		_ = w.cmd.Process.Signal(os.Interrupt)
-		done := make(chan struct{})
-		go func() {
-			_, _ = w.cmd.Process.Wait()
-			close(done)
-		}()
 		select {
-		case <-done:
+		case <-w.exited:
 		case <-time.After(5 * time.Second):
 			_ = w.cmd.Process.Kill()
+			<-w.exited
 		}
 	}
 	return os.RemoveAll(w.dir)
