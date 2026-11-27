@@ -48,7 +48,7 @@ export function useTestWorld(options = {}, hooks) {
       } else {
         await instance.reset({ mode: 'restart' });
       }
-    }, startupTimeoutMs ?? 60_000);
+    }, Math.max(startupTimeoutMs ?? 60_000, worldOptions.requestTimeoutMs ?? 80_000));
   }
 
   lifecycle.afterAll(async () => {

@@ -101,7 +101,7 @@ class TestWorld:
         project_id: str = "demo-fireemu",
         services: Sequence[str] = ("auth", "firestore", "storage"),
         startup_timeout_s: float = 30.0,
-        request_timeout_s: float = 15.0,
+        request_timeout_s: float = 80.0,
         extra_args: Sequence[str] = (),
         cwd: str | Path | None = None,
     ) -> None:
@@ -257,7 +257,7 @@ class TestWorld:
                 f"TestWorld cannot reset_state: startup baseline snapshot was not captured{detail}"
             ) from self._baseline_error
         encoded = urllib.parse.quote(_BASELINE_SNAPSHOT, safe="")
-        self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {})
+        self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {"waitForFunctions": True})
         return self
 
     def checkpoint(self, name: str | None = None) -> str:
@@ -275,7 +275,7 @@ class TestWorld:
         if not name:
             raise ValueError("checkpoint name must be non-empty")
         encoded = urllib.parse.quote(name, safe="")
-        self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {})
+        self.control("POST", f"/v1/sessions/default/snapshots/{encoded}:restore", {"waitForFunctions": True})
         return self
 
     def delete_checkpoint(self, name: str) -> None:

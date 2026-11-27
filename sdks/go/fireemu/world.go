@@ -60,9 +60,9 @@ type World struct {
 	Endpoints   map[string]Endpoint
 	Environment map[string]string
 
-	controlURL   string
-	controlToken string
-	client       *http.Client
+	controlURL    string
+	controlToken  string
+	client        *http.Client
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
 	exited        chan error
@@ -126,7 +126,7 @@ func New(opts Options) (*World, error) {
 	}
 	reqTimeout := opts.RequestTimeout
 	if reqTimeout <= 0 {
-		reqTimeout = 15 * time.Second
+		reqTimeout = 80 * time.Second
 	}
 
 	dir, err := os.MkdirTemp("", "fireemu-go-world-*")
@@ -321,7 +321,7 @@ func (w *World) ResetState() error {
 		}
 		return errors.New("fireemu World cannot ResetState: startup baseline snapshot was not captured")
 	}
-	_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(baselineSnapshot)+":restore", map[string]any{})
+	_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(baselineSnapshot)+":restore", map[string]any{"waitForFunctions": true})
 	return err
 }
 
@@ -349,7 +349,7 @@ func (w *World) Restore(name string) error {
 	if name == "" {
 		return errors.New("checkpoint name must be non-empty")
 	}
-	_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(name)+":restore", map[string]any{})
+	_, err := w.Control("POST", "/v1/sessions/default/snapshots/"+url.PathEscape(name)+":restore", map[string]any{"waitForFunctions": true})
 	return err
 }
 

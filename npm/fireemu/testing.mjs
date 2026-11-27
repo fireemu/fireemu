@@ -231,7 +231,8 @@ export async function createTestWorld(options={}){
     return resolved;
   };
   const restoreSnapshot=name=>requestFor(
-    current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(name)}:restore`,{},AbortSignal.timeout(15_000),
+    current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(name)}:restore`,{waitForFunctions:true},
+    AbortSignal.timeout(options.requestTimeoutMs??80_000),
   );
   const resetState=()=>queue.exclusive(async()=>{
     check();

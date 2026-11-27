@@ -856,7 +856,10 @@ pub async fn handle_async(
         };
     }
     let restoring = path.contains("/snapshots/") && path.ends_with(":restore");
-    if restoring && path.starts_with("/v1/sessions/default/snapshots/") {
+    if restoring
+        && path.starts_with("/v1/sessions/default/snapshots/")
+        && body.get("waitForFunctions").and_then(Value::as_bool) == Some(true)
+    {
         if let Err(cause) = functions.await_restored_runners().await {
             return error(503, &format!("FUNCTIONS_NOT_READY : {cause}"));
         }

@@ -140,7 +140,7 @@ Python Storage and Eventarc handlers parse the event `time` with a fractional-se
 
 ### Debugger
 
-Starting in Fireemu v0.69.0, install [debugpy](https://github.com/microsoft/debugpy) into the codebase virtual environment, then run `fireemu up --inspect-functions`. Attach the debugger to `127.0.0.1` at the port printed by Fireemu. For one codebase with codebase isolation, `--inspect-functions 5678` keeps the port fixed. After reload, reconnect to the replacement runner. With multiple codebases or function isolation, use dynamic ports.
+Starting in Fireemu v0.69.0, install [debugpy](https://github.com/microsoft/debugpy) into the codebase virtual environment, then run `fireemu up --inspect-functions`. Attach the debugger to `127.0.0.1` at the port printed by Fireemu. For one codebase with codebase isolation, `--inspect-functions 5678` keeps the port fixed. After reload, reconnect to the replacement runner. Fireemu loads the updated code once to validate it and again with debugpy after releasing the port. With multiple codebases or function isolation, use dynamic ports.
 
 ### App Check
 

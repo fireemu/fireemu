@@ -213,7 +213,7 @@ Each world owns one daemon, OS-assigned service ports, a control token, private 
 
 ### In-memory reset and checkpoints
 
-Fireemu v0.69.0 adds `world.resetState()` and `world.reset({ mode: 'state' })`. They restore the startup session snapshot while keeping the daemon generation and its endpoints. `world.reset()` uses restart mode, which also recreates the generation files from the authored inputs captured at startup. Use `checkpoint(name?)`, `restore(name)`, and `deleteCheckpoint(name)` to manage additional in-memory restore points. The baseline counts against the session snapshot budget. Wait for idle work before capturing a checkpoint.
+Fireemu v0.69.0 adds `world.resetState()` and `world.reset({ mode: 'state' })`. They restore the startup session snapshot while keeping the daemon generation and its endpoints. `world.reset()` uses restart mode, which also recreates the generation files from the authored inputs captured at startup. Use `checkpoint(name?)`, `restore(name)`, and `deleteCheckpoint(name)` to manage additional in-memory restore points. The baseline counts against the session snapshot budget. Wait for idle work before capturing a checkpoint. Reset and restore wait for previously started Functions runners. Their default request deadline is 80 seconds, and `requestTimeoutMs` overrides it.
 
 The Fireemu package provides `fireemu/vitest` and `fireemu/playwright`. The Vitest integration uses a suite-level world and requires sequential tests when automatic resets are enabled. The Playwright integration exposes a worker world and a test fixture that resets it. Both integrations default to state reset. The [test worlds guide](https://fireemu.github.io/fireemu/guides/test-worlds/#fixtures-for-vitest-and-playwright) includes example setup.
 

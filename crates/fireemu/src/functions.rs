@@ -2204,13 +2204,45 @@ async fn supervise_codebase_reloads(
         else {
             continue;
         };
+        let python =
+            crate::python_functions::codebase_language(&codebase) == RuntimeLanguage::Python;
         let fixed_port = cfg.functions_inspect_port.filter(|port| {
-            crate::python_functions::codebase_language(&codebase) != RuntimeLanguage::Python
+            !python
                 || runtime.current_runners().iter().any(|(name, runner)| {
                     name == &codebase.codebase && runner.hello().inspector_port == Some(*port)
                 })
         });
         let fixed_inspector = fixed_port.is_some();
+        let mut staged = codebase.clone();
+        staged.source = snapshot.to_string_lossy().into_owned();
+        if python && fixed_inspector {
+            // Validate the immutable source while the known-good runner still owns the port.
+            // An import failure must not retire that runner. The validated source is started
+            // again with the debugger after the port handoff.
+            let mut validation = cfg.clone();
+            validation.functions_inspect_port = None;
+            match start_codebase(
+                &validation,
+                &staged,
+                &hosts,
+                &secret,
+                callable_trusted_protocol,
+                &resources.node_probe_cache,
+                runtime.clock_snapshot(),
+            )
+            .await
+            {
+                Ok(candidate) => candidate.runner.shutdown().await,
+                Err(reason) => {
+                    errln!(
+                        "warning: functions[{}]: reload failed; keeping the last-known-good generation: {reason}",
+                        codebase.codebase
+                    );
+                    discard_reload_snapshot(snapshot, &codebase.codebase).await;
+                    continue;
+                }
+            }
+        }
         let _restart_guard = if let Some(port) = fixed_port {
             match prepare_fixed_inspector_reload(&runtime, &codebase.codebase, port).await {
                 Ok(guard) => Some(guard),
@@ -2223,8 +2255,6 @@ async fn supervise_codebase_reloads(
         } else {
             None
         };
-        let mut staged = codebase.clone();
-        staged.source = snapshot.to_string_lossy().into_owned();
         match start_codebase_units(
             &cfg,
             &staged,
@@ -7984,9 +8014,9 @@ impl FunctionsHook for Hook {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         Box::pin(async {
-            tokio::time::timeout(Duration::from_secs(8), async {
+            tokio::time::timeout(Duration::from_secs(65), async {
                 while !self.0.runner_alive() {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    tokio::time::sleep(Duration::from_millis(25)).await;
                 }
             })
             .await

@@ -2520,7 +2520,6 @@ async fn a_duplicated_browser_or_authorization_header_still_keeps_the_request_or
         "Sec-Fetch-Dest: empty\r\nSec-Fetch-Dest: empty\r\n",
         "Cookie: a=1\r\nCookie: b=2\r\n",
         "Referer: http://127.0.0.1:5173/\r\nReferer: http://127.0.0.1:5173/\r\n",
-        "Origin: http://127.0.0.1:5173\r\nOrigin: http://127.0.0.1:5173\r\n",
         "Authorization: Firebase a\r\nAuthorization: Firebase b\r\n",
         "Authorization: Bearer a\r\nAuthorization: Firebase b\r\n",
     ] {
@@ -2534,6 +2533,20 @@ async fn a_duplicated_browser_or_authorization_header_still_keeps_the_request_or
             "{extra:?}: {response}"
         );
     }
+    let duplicate_origin = raw(
+        addr,
+        &request("Origin: http://127.0.0.1:5173\r\nOrigin: http://127.0.0.1:5173\r\n"),
+    )
+    .await;
+    assert!(
+        duplicate_origin.starts_with("HTTP/1.1 403"),
+        "{duplicate_origin}"
+    );
+    assert!(
+        duplicate_origin.contains("forbidden origin"),
+        "{duplicate_origin}"
+    );
+
     // A header that is not evidence may repeat, and the single header is still a process.
     for extra in [
         "X-Goog-Hash: crc32c=AAAAAA==\r\nX-Goog-Hash: md5=1B2M2Y8AsgTpgAmY7PhCfg==\r\n",
