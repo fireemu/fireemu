@@ -121,6 +121,86 @@ fn cosine_normalizes_the_query_once_per_execution() {
     }
 }
 
+#[test]
+fn transaction_conflicted_short_circuits_when_version_unchanged_and_detects_concurrent_write() {
+    let mut state = FirestoreState::default();
+    let now = LogicalInstant::from_unix_seconds(10);
+    let path = DocumentPath::parse(
+        &ProjectId::try_new("demo-app").unwrap(),
+        &DatabaseId::default_database(),
+        "items/a",
+    )
+    .unwrap();
+    state
+        .commit(
+            &[Write {
+                op: WriteOp::Set {
+                    path: path.clone(),
+                    fields: BTreeMap::from([("v".to_owned(), Value::Integer(1))]),
+                    update_mask: None,
+                },
+                precondition: None,
+                transforms: vec![],
+            }],
+            None,
+            now,
+        )
+        .unwrap();
+
+    let tx = state.begin_transaction(false, now).unwrap();
+    let query = Query::new(QueryScope::collection(
+        None,
+        CollectionId::try_new("items").unwrap(),
+    ));
+    let _ = state.run_query_in_transaction(&tx, &query).unwrap();
+    // No intervening commit: read_version == self.version short-circuits cleanly.
+    assert!(!state.transaction_conflicted(&tx).unwrap());
+
+    // An unrelated commit advances self.version without invalidating the `items` query.
+    let unrelated = DocumentPath::parse(
+        &ProjectId::try_new("demo-app").unwrap(),
+        &DatabaseId::default_database(),
+        "other/x",
+    )
+    .unwrap();
+    state
+        .commit(
+            &[Write {
+                op: WriteOp::Set {
+                    path: unrelated,
+                    fields: BTreeMap::from([("v".to_owned(), Value::Integer(1))]),
+                    update_mask: None,
+                },
+                precondition: None,
+                transforms: vec![],
+            }],
+            None,
+            LogicalInstant::from_unix_seconds(11),
+        )
+        .unwrap();
+    assert!(!state.transaction_conflicted(&tx).unwrap());
+
+    // An import into `items` advances self.version and invalidates the query observation.
+    let path_b = DocumentPath::parse(
+        &ProjectId::try_new("demo-app").unwrap(),
+        &DatabaseId::default_database(),
+        "items/b",
+    )
+    .unwrap();
+    state
+        .import_documents(
+            vec![ImportedDocument {
+                path: path_b,
+                fields: BTreeMap::from([("v".to_owned(), Value::Integer(2))]),
+                create_time: None,
+                update_time: None,
+            }],
+            LogicalInstant::from_unix_seconds(12),
+        )
+        .unwrap();
+    assert!(state.transaction_conflicted(&tx).unwrap());
+}
+
 proptest::proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(128))]
     #[test]

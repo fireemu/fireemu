@@ -5248,8 +5248,9 @@ impl FirestoreState {
         own: Option<&TransactionId>,
     ) -> Vec<TransactionId> {
         let grouped = std::cell::OnceCell::new();
-        self.transactions
+        self.active_read_write_transactions
             .iter()
+            .filter_map(|id| self.transactions.get(id).map(|holder| (id, holder)))
             .filter(|(id, holder)| {
                 holder.state == TransactionState::Active
                     && !holder.read_only
@@ -5297,6 +5298,12 @@ impl FirestoreState {
 
     fn transaction_conflicted(&self, id: &TransactionId) -> Result<bool, FirestoreError> {
         let transaction = self.transaction(id)?;
+        // Every mutating path (`commit`, `import_documents`) advances `self.version`.
+        // When no write has committed since `transaction.read_version`, neither `read_set`
+        // nor any completed query observation can have changed.
+        if transaction.read_version == self.version {
+            return Ok(false);
+        }
         for (path, observed) in &transaction.read_set {
             if self.get(path).map(|document| document.version) != *observed {
                 return Ok(true);

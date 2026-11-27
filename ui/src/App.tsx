@@ -164,8 +164,18 @@ export const App: Component<RouteSectionProps> = (props) => {
   );
   onMount(() => {
     void appState.refreshClock();
-    const timer = window.setInterval(() => void appState.refreshClock(), 5000);
-    onCleanup(() => window.clearInterval(timer));
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void appState.refreshClock();
+    }, 5000);
+    const onVisibility = () => {
+      if (!document.hidden) void appState.refreshClock();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    onCleanup(() => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    });
   });
   const connectionTone = (): Tone => {
     switch (appState.connected()) {

@@ -39,6 +39,98 @@ pub struct WallReading {
     reading: i128,
 }
 
+/// Thread-safe monotonic high-water drift tracker (`i128` precision, lock-free fast path).
+///
+/// Replaces `Cell<i128>` so `VirtualClock` is `Send + Sync` without sacrificing full `i128`
+/// nanosecond range.
+struct PeakDrift {
+    fast: std::sync::atomic::AtomicI64,
+    overflow: std::sync::Mutex<Option<i128>>,
+}
+
+impl PeakDrift {
+    const OVERFLOW_SENTINEL: i64 = i64::MAX;
+
+    const fn new(initial: i128) -> Self {
+        if initial >= 0 && initial < Self::OVERFLOW_SENTINEL as i128 {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = initial as i64;
+            Self {
+                fast: std::sync::atomic::AtomicI64::new(v),
+                overflow: std::sync::Mutex::new(None),
+            }
+        } else {
+            Self {
+                fast: std::sync::atomic::AtomicI64::new(Self::OVERFLOW_SENTINEL),
+                overflow: std::sync::Mutex::new(Some(initial)),
+            }
+        }
+    }
+
+    fn get(&self) -> i128 {
+        let v = self.fast.load(std::sync::atomic::Ordering::Acquire);
+        if v != Self::OVERFLOW_SENTINEL {
+            return i128::from(v);
+        }
+        self.overflow
+            .lock()
+            .expect("peak drift lock")
+            .unwrap_or(i128::from(Self::OVERFLOW_SENTINEL))
+    }
+
+    fn set(&self, value: i128) {
+        if value >= 0 && value < i128::from(Self::OVERFLOW_SENTINEL) {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = value as i64;
+            let mut overflow = self.overflow.lock().expect("peak drift lock");
+            *overflow = None;
+            self.fast.store(v, std::sync::atomic::Ordering::Release);
+        } else {
+            let mut overflow = self.overflow.lock().expect("peak drift lock");
+            *overflow = Some(value);
+            self.fast.store(
+                Self::OVERFLOW_SENTINEL,
+                std::sync::atomic::Ordering::Release,
+            );
+        }
+    }
+
+    fn observe_max(&self, candidate: i128) -> i128 {
+        if candidate >= 0 && candidate < i128::from(Self::OVERFLOW_SENTINEL) {
+            #[allow(clippy::cast_possible_truncation)]
+            let c = candidate as i64;
+            let current = self.fast.load(std::sync::atomic::Ordering::Acquire);
+            if current != Self::OVERFLOW_SENTINEL {
+                if c <= current {
+                    return i128::from(current);
+                }
+                let prev = self.fast.fetch_max(c, std::sync::atomic::Ordering::AcqRel);
+                if prev != Self::OVERFLOW_SENTINEL {
+                    return i128::from(prev.max(c));
+                }
+            }
+        }
+        let mut overflow = self.overflow.lock().expect("peak drift lock");
+        let current = overflow.unwrap_or_else(|| {
+            let v = self.fast.load(std::sync::atomic::Ordering::Acquire);
+            i128::from(v)
+        });
+        let next = current.max(candidate);
+        *overflow = Some(next);
+        self.fast.store(
+            Self::OVERFLOW_SENTINEL,
+            std::sync::atomic::Ordering::Release,
+        );
+        next
+    }
+}
+
+impl Clone for PeakDrift {
+    fn clone(&self) -> Self {
+        Self::new(self.get())
+    }
+}
+
 /// What a clock that follows real time counts: a source and its reading at the last move.
 #[derive(Clone)]
 struct Follow {
@@ -46,7 +138,7 @@ struct Follow {
     at: i128,
     /// The most drift any read has reported since the last move, so that a source that steps
     /// back holds the clock where it was instead of taking it back.
-    peak: std::cell::Cell<i128>,
+    peak: PeakDrift,
 }
 
 /// One published clock state; elapsed time counts forward movement only.
@@ -209,7 +301,7 @@ impl VirtualClock {
         clock.follow = Some(Follow {
             source,
             at: reading,
-            peak: std::cell::Cell::new(0),
+            peak: PeakDrift::new(0),
         });
         clock
     }
@@ -327,7 +419,7 @@ impl VirtualClock {
             self.follow = Some(Follow {
                 source,
                 at,
-                peak: std::cell::Cell::new(0),
+                peak: PeakDrift::new(0),
             });
         }
         if instant < sample.instant {
@@ -354,9 +446,7 @@ impl VirtualClock {
     fn drift_nanos(&self, reading: Option<i128>) -> i128 {
         self.follow.as_ref().map_or(0, |follow| {
             let reading = reading.unwrap_or_else(|| (follow.source)());
-            let drift = (reading - follow.at).max(follow.peak.get());
-            follow.peak.set(drift);
-            drift
+            follow.peak.observe_max(reading - follow.at)
         })
     }
 
@@ -665,5 +755,21 @@ mod tests {
             .try_set_allow_backwards(LogicalInstant::UNIX_EPOCH)
             .unwrap();
         clock.advance(LogicalDuration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn virtual_clock_is_send_and_sync_and_peak_drift_handles_overflow() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<VirtualClock>();
+
+        let peak = PeakDrift::new(0);
+        assert_eq!(peak.observe_max(42), 42);
+        assert_eq!(peak.observe_max(10), 42);
+        let huge = i128::from(i64::MAX) + 12345;
+        assert_eq!(peak.observe_max(huge), huge);
+        assert_eq!(peak.get(), huge);
+        assert_eq!(peak.observe_max(huge - 1), huge);
+        peak.set(7);
+        assert_eq!(peak.get(), 7);
     }
 }

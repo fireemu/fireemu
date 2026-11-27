@@ -1154,8 +1154,18 @@ const Functions: Component = () => {
     });
   });
   onMount(() => {
-    const timer = window.setInterval(() => void refetchStatus(), 3000);
-    onCleanup(() => window.clearInterval(timer));
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void refetchStatus();
+    }, 3000);
+    const onVisibility = () => {
+      if (!document.hidden) void refetchStatus();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    onCleanup(() => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    });
   });
 
   const o = () => lastOverview();
