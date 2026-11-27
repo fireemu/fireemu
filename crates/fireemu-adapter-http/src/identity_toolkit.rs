@@ -1592,6 +1592,9 @@ pub struct RequestHeaders {
     /// Trusted transport peer address. The HTTP server populates this from `peer_addr`; callers
     /// of the in-process handler may leave it absent and receive the loopback test default.
     pub peer_ip: Option<String>,
+    /// Whether the HTTP transport observed browser metadata headers (`Origin`, `Sec-Fetch-Site`,
+    /// `Sec-Fetch-Dest`, `Referer`, `Cookie`), including non-UTF-8 instances.
+    pub browser_metadata: bool,
 }
 
 /// The exact credential the emulator's Admin SDK surface requires. It is the privileged
@@ -17902,6 +17905,7 @@ mod body_tenant_selector_tests {
             host: Some("127.0.0.1:9099".to_owned()),
             app_check: Vec::new(),
             peer_ip: None,
+            browser_metadata: false,
         };
         let configured = handle_with(
             &state,
@@ -18050,6 +18054,7 @@ mod body_tenant_selector_tests {
             host: Some("127.0.0.1:9099".to_owned()),
             app_check: Vec::new(),
             peer_ip: None,
+            browser_metadata: false,
         };
         let query = "key=fake-api-key";
         let at = LogicalInstant::from_unix_seconds(1_788_004_860);

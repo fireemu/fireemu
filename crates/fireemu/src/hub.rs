@@ -575,15 +575,15 @@ fn mutation_preflight(req: &Request<Incoming>, path: &str) -> Response<Full<Byte
 /// page on a routable name must not reach it through DNS rebinding; every fireemu listener
 /// applies the same rule.
 fn host_is_local(req: &Request<Incoming>) -> bool {
-    let Some(host) = req
-        .headers()
-        .get(hyper::header::HOST)
-        .and_then(|v| v.to_str().ok())
-    else {
+    let mut hosts = req.headers().get_all(hyper::header::HOST).iter();
+    let Some(first) = hosts.next() else {
         // HTTP/1.0 without a Host header cannot be a browser request.
         return true;
     };
-    authority_is_loopback(host)
+    if hosts.next().is_some() {
+        return false;
+    }
+    first.to_str().is_ok_and(authority_is_loopback)
 }
 
 async fn respond(

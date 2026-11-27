@@ -44,6 +44,34 @@ fn valid_port_suffix(suffix: &str) -> bool {
             .is_some_and(|port| !port.is_empty() && port.parse::<u16>().is_ok())
 }
 
+/// Classification of raw `Origin` request header instances.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginHeader<'a> {
+    /// No `Origin` header was present.
+    Absent,
+    /// Exactly one well-formed UTF-8 loopback `Origin` header was present.
+    Local(&'a str),
+    /// Multiple `Origin` headers, non-UTF-8 bytes, or a non-loopback origin (including `null`).
+    Forbidden,
+}
+
+/// Classifies every raw `Origin` header instance on an HTTP request, failing closed on
+/// duplicate headers, non-UTF-8 bytes, `Origin: null`, or any non-loopback authority.
+#[must_use]
+pub fn parse_origin_headers<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> OriginHeader<'a> {
+    let mut iter = values.into_iter();
+    let Some(first) = iter.next() else {
+        return OriginHeader::Absent;
+    };
+    if iter.next().is_some() {
+        return OriginHeader::Forbidden;
+    }
+    match std::str::from_utf8(first) {
+        Ok(origin) if origin_is_local(origin) => OriginHeader::Local(origin),
+        _ => OriginHeader::Forbidden,
+    }
+}
+
 /// Whether a serialized browser origin is HTTP(S) and names a loopback authority. A single
 /// trailing slash is accepted for URI callers; paths, queries, fragments, and userinfo are
 /// not part of an origin and are rejected.
@@ -243,6 +271,52 @@ mod tests {
         assert_eq!(
             privileged_route_admission(false, Some("https://evil.example"), false),
             PrivilegedAdmission::ForeignOrigin
+        );
+    }
+
+    #[test]
+    fn parse_origin_headers_fails_closed_on_duplicates_and_non_utf8() {
+        assert_eq!(
+            parse_origin_headers(std::iter::empty()),
+            OriginHeader::Absent
+        );
+        assert_eq!(
+            parse_origin_headers([b"http://localhost:3000".as_slice()]),
+            OriginHeader::Local("http://localhost:3000")
+        );
+        assert_eq!(
+            parse_origin_headers([b"https://127.0.0.1:8080".as_slice()]),
+            OriginHeader::Local("https://127.0.0.1:8080")
+        );
+        assert_eq!(
+            parse_origin_headers([b"https://evil.example".as_slice()]),
+            OriginHeader::Forbidden
+        );
+        assert_eq!(
+            parse_origin_headers([b"null".as_slice()]),
+            OriginHeader::Forbidden
+        );
+        assert_eq!(
+            parse_origin_headers([b"".as_slice()]),
+            OriginHeader::Forbidden
+        );
+        assert_eq!(
+            parse_origin_headers([
+                b"http://localhost:3000".as_slice(),
+                b"https://evil.example".as_slice(),
+            ]),
+            OriginHeader::Forbidden
+        );
+        assert_eq!(
+            parse_origin_headers([
+                b"http://localhost:3000".as_slice(),
+                b"http://localhost:3000".as_slice(),
+            ]),
+            OriginHeader::Forbidden
+        );
+        assert_eq!(
+            parse_origin_headers([&[0xff_u8, 0xfe][..]]),
+            OriginHeader::Forbidden
         );
     }
 }

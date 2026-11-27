@@ -269,6 +269,7 @@ fn owner() -> RequestHeaders {
         host: Some("127.0.0.1:9099".to_owned()),
         app_check: Vec::new(),
         peer_ip: None,
+        browser_metadata: false,
     }
 }
 
@@ -7861,6 +7862,7 @@ fn follow(state: &AuthState, link: &str) -> (u16, Value) {
         host: Some("127.0.0.1:9099".to_owned()),
         app_check: Vec::new(),
         peer_ip: None,
+        browser_metadata: false,
     };
     let r = handle_with(state, "GET", path, &headers, &json!({}));
     (r.status, r.body)

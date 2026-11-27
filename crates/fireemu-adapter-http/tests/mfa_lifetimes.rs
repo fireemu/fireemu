@@ -117,6 +117,7 @@ fn admin(s: &AuthState, path: &str, body: &Value) -> (u16, Value) {
         host: Some("127.0.0.1:9099".to_owned()),
         app_check: Vec::new(),
         peer_ip: None,
+        browser_metadata: false,
     };
     let r = handle_with(s, "POST", path, &headers, body);
     (r.status, r.body)

@@ -233,6 +233,7 @@ fn auth(state: &UiState, path: &str, req: &UiRequest) -> UiResponse {
         // never forwards an App Check field of its own.
         app_check: Vec::new(),
         peer_ip: None,
+        browser_metadata: false,
     };
     let response = fireemu_adapter_http::identity_toolkit::handle_with(
         &state.auth,

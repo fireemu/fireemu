@@ -73,6 +73,23 @@ async fn respond(
         // Same-origin pages never preflight; a foreign page gets nothing useful.
         return Ok(to_hyper(UiResponse::error(403, "FORBIDDEN_ORIGIN")));
     }
+    if matches!(
+        fireemu_core_session::loopback::parse_origin_headers(
+            req.headers()
+                .get_all(hyper::header::ORIGIN)
+                .iter()
+                .map(hyper::header::HeaderValue::as_bytes),
+        ),
+        fireemu_core_session::loopback::OriginHeader::Forbidden
+    ) {
+        return Ok(to_hyper(UiResponse::error(403, "FORBIDDEN_ORIGIN")));
+    }
+    let mut host_values = req.headers().get_all(hyper::header::HOST).iter();
+    if let Some(first_host) = host_values.next() {
+        if host_values.next().is_some() || first_host.to_str().is_err() {
+            return Ok(to_hyper(UiResponse::error(403, "FORBIDDEN_HOST")));
+        }
+    }
     let mut headers = std::collections::BTreeMap::new();
     for name in FORWARDED_HEADERS {
         if let Some(v) = req.headers().get(*name).and_then(|v| v.to_str().ok()) {

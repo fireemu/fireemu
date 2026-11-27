@@ -428,6 +428,18 @@ fn undeclared_body() -> RestResponse {
     }
 }
 
+fn has_forbidden_origin(headers: &hyper::HeaderMap) -> bool {
+    matches!(
+        fireemu_core_session::loopback::parse_origin_headers(
+            headers
+                .get_all(hyper::header::ORIGIN)
+                .iter()
+                .map(hyper::header::HeaderValue::as_bytes),
+        ),
+        fireemu_core_session::loopback::OriginHeader::Forbidden
+    )
+}
+
 fn body_rejection_response(rejection: BodyRejection) -> RestResponse {
     match rejection {
         BodyRejection::TooLarge => api_request_too_large(),
@@ -1108,15 +1120,13 @@ where
                             strict_pipeline,
                         ));
                     }
-                    if let Some(origin) = header(&req, "origin") {
-                        if !crate::webchannel::origin_is_local(origin) {
-                            // A page on another site must not drive this credentialed
-                            // loopback runtime (simple requests need no preflight).
-                            return Ok(Response::builder()
-                                .status(403)
-                                .body(full(Bytes::from_static(b"forbidden origin")))
-                                .unwrap_or_else(|_| Response::new(full(Bytes::new()))));
-                        }
+                    if has_forbidden_origin(req.headers()) {
+                        // A page on another site must not drive this credentialed
+                        // loopback runtime (simple requests need no preflight).
+                        return Ok(Response::builder()
+                            .status(403)
+                            .body(full(Bytes::from_static(b"forbidden origin")))
+                            .unwrap_or_else(|_| Response::new(full(Bytes::new()))));
                     }
                     if req.method() == hyper::Method::OPTIONS {
                         return Ok(preflight(&req));

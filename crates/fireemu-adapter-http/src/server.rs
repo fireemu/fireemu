@@ -96,13 +96,22 @@ async fn respond(
             false,
         ));
     }
-    let origin = parts.headers.get("origin").and_then(|v| v.to_str().ok());
-    if origin.is_some_and(|o| !crate::identity_toolkit::origin_is_local(o)) {
-        return Ok(Response::builder()
-            .status(StatusCode::FORBIDDEN)
-            .body(Full::new(Bytes::from_static(b"forbidden origin")))
-            .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
-    }
+    let origin = match fireemu_core_session::loopback::parse_origin_headers(
+        parts
+            .headers
+            .get_all(hyper::header::ORIGIN)
+            .iter()
+            .map(hyper::header::HeaderValue::as_bytes),
+    ) {
+        fireemu_core_session::loopback::OriginHeader::Absent => None,
+        fireemu_core_session::loopback::OriginHeader::Local(origin) => Some(origin),
+        fireemu_core_session::loopback::OriginHeader::Forbidden => {
+            return Ok(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Full::new(Bytes::from_static(b"forbidden origin")))
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()))));
+        }
+    };
     if method == "OPTIONS" {
         let requested = parts
             .headers
@@ -225,6 +234,15 @@ async fn respond(
         .headers
         .get("accept-encoding")
         .and_then(|value| value.to_str().ok());
+    let browser_metadata = fireemu_core_session::loopback::BROWSER_METADATA_HEADERS
+        .iter()
+        .any(|name| {
+            parts
+                .headers
+                .get_all(*name)
+                .iter()
+                .any(|v| !v.as_bytes().is_empty())
+        });
     let headers = RequestHeaders {
         authorization: header("authorization"),
         origin: origin.map(str::to_owned),
@@ -240,6 +258,7 @@ async fn respond(
             .map(|v| v.to_str().unwrap_or_default().to_owned())
             .collect(),
         peer_ip,
+        browser_metadata,
     };
     if let Some(refusal) = control
         .as_ref()
@@ -627,11 +646,15 @@ async fn serve_request(
                 .map(hyper::header::HeaderValue::as_bytes),
         )
         .is_ok()
-            && req
-                .headers()
-                .get("origin")
-                .and_then(|v| v.to_str().ok())
-                .is_none_or(crate::identity_toolkit::origin_is_local);
+            && !matches!(
+                fireemu_core_session::loopback::parse_origin_headers(
+                    req.headers()
+                        .get_all(hyper::header::ORIGIN)
+                        .iter()
+                        .map(hyper::header::HeaderValue::as_bytes),
+                ),
+                fireemu_core_session::loopback::OriginHeader::Forbidden
+            );
         if local {
             return Ok(client_stream_response(control, stores.clone(), req).await);
         }

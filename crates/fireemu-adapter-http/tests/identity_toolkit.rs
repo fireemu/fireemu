@@ -3560,6 +3560,7 @@ fn owner() -> RequestHeaders {
         host: None,
         app_check: Vec::new(),
         peer_ip: None,
+        browser_metadata: false,
     }
 }
 fn admin(state: &AuthState, method: &str, path: &str, body: &Value) -> (u16, Value) {

@@ -16,7 +16,6 @@ use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
 
-use crate::identity_toolkit::origin_is_local;
 use crate::storage::{handle_framed, StorageRequest, StorageState};
 
 /// Room a request body has beyond the object limit for multipart framing and metadata.
@@ -489,17 +488,21 @@ async fn respond(
             .body(plain(Bytes::from(refusal.body())))
             .unwrap_or_else(|_| Response::new(plain(Bytes::new()))));
     }
-    let origin = req
-        .headers()
-        .get("origin")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    if origin.as_deref().is_some_and(|o| !origin_is_local(o)) {
-        return Ok(Response::builder()
-            .status(StatusCode::FORBIDDEN)
-            .body(plain(Bytes::from_static(b"forbidden origin")))
-            .unwrap_or_else(|_| Response::new(plain(Bytes::new()))));
-    }
+    let origin = match fireemu_core_session::loopback::parse_origin_headers(
+        req.headers()
+            .get_all(hyper::header::ORIGIN)
+            .iter()
+            .map(hyper::header::HeaderValue::as_bytes),
+    ) {
+        fireemu_core_session::loopback::OriginHeader::Absent => None,
+        fireemu_core_session::loopback::OriginHeader::Local(origin) => Some(origin.to_owned()),
+        fireemu_core_session::loopback::OriginHeader::Forbidden => {
+            return Ok(Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(plain(Bytes::from_static(b"forbidden origin")))
+                .unwrap_or_else(|_| Response::new(plain(Bytes::new()))));
+        }
+    };
     // A bucket `storage.cors` lists decides its own CORS headers, a preflight included.
     let bucket_cors = bucket_cors_for(
         &state,

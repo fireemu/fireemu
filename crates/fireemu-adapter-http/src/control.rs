@@ -683,8 +683,8 @@ fn diagnostics_guard(
     } else {
         return None;
     };
-    if !is_rules_diagnostics_path(path) {
-        headers.origin.as_ref()?;
+    if !(is_rules_diagnostics_path(path) || headers.browser_metadata || headers.origin.is_some()) {
+        return None;
     }
     let presented = headers
         .authorization
@@ -3189,7 +3189,10 @@ pub fn browser_guard(
             ));
         }
     }
-    let origin = headers.origin.as_deref()?;
+    let from_browser = headers.browser_metadata || headers.origin.is_some();
+    if !from_browser {
+        return None;
+    }
     let privileged = (method != "GET" && !path.starts_with("/health/"))
         || is_resources_path(path)
         || is_rules_requests_path(path)
@@ -3201,7 +3204,11 @@ pub fn browser_guard(
         .and_then(|a| a.strip_prefix("Bearer "))
         .map(str::trim);
     let token_ok = !privileged || token_matches(presented, &state.control_token);
-    match fireemu_core_session::loopback::privileged_route_admission(true, Some(origin), token_ok) {
+    match fireemu_core_session::loopback::privileged_route_admission(
+        true,
+        headers.origin.as_deref(),
+        token_ok,
+    ) {
         PrivilegedAdmission::Admit => None,
         PrivilegedAdmission::ForeignOrigin => Some(error(403, "FORBIDDEN_ORIGIN")),
         PrivilegedAdmission::ControlTokenRequired => Some(error(
@@ -3680,5 +3687,128 @@ mod capability_manifest_tests {
         assert_eq!(manifest.value(), json!({"schemaVersion": 1}));
         assert_eq!(manifest.value(), json!({"schemaVersion": 1}));
         assert_eq!(loads.load(Ordering::SeqCst), 1);
+    }
+
+    fn browser_guard_test_state() -> super::ControlState {
+        use fireemu_core_rules::runtime::RulesetSlot;
+        use fireemu_core_session::clock::VirtualClock;
+        use fireemu_core_types::edition::FirestoreEdition;
+        use fireemu_core_types::time::LogicalInstant;
+        use std::sync::{Mutex, RwLock};
+
+        super::ControlState {
+            clock: Arc::new(Mutex::new(VirtualClock::new(
+                LogicalInstant::from_unix_seconds(1_700_000_000),
+            ))),
+            require_demo_prefix: true,
+            edition: FirestoreEdition::Standard,
+            capabilities: json!({"schemaVersion": 1}).into(),
+            rules: Arc::new(RulesetSlot::default()),
+            storage_rules: Arc::new(crate::storage::StorageRulesRegistry::default()),
+            reset_hooks: Vec::new(),
+            functions: None,
+            control_token: "secret-token".to_owned(),
+            app_check: None,
+            firestore_listen_expiry: None,
+            firestore_missing_indexes: None,
+            require_control_token: false,
+            remote_config: crate::remote_config::RemoteConfigSettings::default(),
+            calendar_zones: None,
+            barrier: None,
+            snapshot_hooks: Vec::new(),
+            snapshots: Mutex::new(std::collections::BTreeMap::new()),
+            faults: Some(Arc::new(fireemu_core_session::fault::FaultRegistry::new())),
+            text_indexes: Arc::new(Mutex::new(
+                fireemu_core_firestore::text_index::TextIndexCatalog::default(),
+            )),
+            default_project: "demo-test".to_owned(),
+            tenancy: Arc::new(RwLock::new(fireemu_core_session::tenancy::Tenancy::new(
+                "demo-test",
+            ))),
+            sessions: Mutex::new(std::collections::BTreeMap::from([(
+                "default".to_owned(),
+                "demo-test".to_owned(),
+            )])),
+            project_hooks: None,
+            resource_hooks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn browser_metadata_without_origin_requires_control_token_on_privileged_and_diagnostics_routes()
+    {
+        use super::{browser_guard, diagnostics_guard};
+        use crate::identity_toolkit::RequestHeaders;
+
+        let state = browser_guard_test_state();
+        let browser_no_origin = RequestHeaders {
+            browser_metadata: true,
+            ..RequestHeaders::default()
+        };
+        let browser_with_token = RequestHeaders {
+            browser_metadata: true,
+            authorization: Some("Bearer secret-token".to_owned()),
+            ..RequestHeaders::default()
+        };
+        let process_no_metadata = RequestHeaders::default();
+
+        // Privileged write without Origin but with browser metadata must be refused without token.
+        assert_eq!(
+            browser_guard(
+                &state,
+                "POST",
+                "/v1/sessions/default/reset",
+                &browser_no_origin
+            )
+            .map(|r| r.status),
+            Some(403)
+        );
+        assert!(browser_guard(
+            &state,
+            "POST",
+            "/v1/sessions/default/reset",
+            &browser_with_token
+        )
+        .is_none());
+        assert!(browser_guard(
+            &state,
+            "POST",
+            "/v1/sessions/default/reset",
+            &process_no_metadata
+        )
+        .is_none());
+
+        // Non-privileged GET without Origin remains allowed for loopback browser metadata.
+        assert!(browser_guard(&state, "GET", "/v1/sessions/default", &browser_no_origin).is_none());
+
+        // Diagnostics routes require token when browser metadata is present, even without Origin.
+        for path in [
+            "/v1/sessions/default/resources",
+            "/v1/sessions/default/rules/requests",
+            "/v1/sessions/default/firestore/missingIndexes",
+        ] {
+            assert_eq!(
+                browser_guard(&state, "GET", path, &browser_no_origin).map(|r| r.status),
+                Some(403),
+                "browser_guard should refuse {path}"
+            );
+            assert_eq!(
+                diagnostics_guard(&state, path, &browser_no_origin).map(|r| r.status),
+                Some(403),
+                "diagnostics_guard should refuse {path}"
+            );
+            assert!(
+                browser_guard(&state, "GET", path, &browser_with_token).is_none(),
+                "browser_guard should admit {path} with token"
+            );
+            assert!(
+                diagnostics_guard(&state, path, &browser_with_token).is_none(),
+                "diagnostics_guard should admit {path} with token"
+            );
+            assert!(
+                diagnostics_guard(&state, path, &process_no_metadata).is_none(),
+                "diagnostics_guard should admit {path} for process"
+            );
+        }
     }
 }
