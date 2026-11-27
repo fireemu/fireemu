@@ -3,7 +3,7 @@
 //! The canonical JSON loader in `fireemu` delegates every binding rule to these
 //! functions, so a rule proved here holds for the schema, the loader and the runtime alike.
 
-use super::support;
+mod support;
 
 use fireemu_core_app_check::limits::{
     MAX_DEBUG_TOKENS_PER_APP, MAX_TOKEN_TTL_SECONDS, MIN_TOKEN_TTL_SECONDS,

@@ -6,7 +6,7 @@ use fireemu_core_app_check::{
 };
 use fireemu_core_types::time::LogicalInstant;
 
-const CORPUS: &str = include_str!("../fixtures/lean-app-check-registry.corpus");
+const CORPUS: &str = include_str!("fixtures/lean-app-check-registry.corpus");
 
 fn settings(n: usize) -> AppCheckRegistry {
     let mut registry = AppCheckRegistry::new(3600).unwrap();

@@ -1,6 +1,6 @@
 //! Token issuance and verification (specification section 11, scenarios 3-7, 9 and 11).
 
-use super::support;
+mod support;
 
 use fireemu_core_app_check::claims::{issuer_for, AppCheckClaims};
 use fireemu_core_app_check::jwt::{base64url_encode, encode};

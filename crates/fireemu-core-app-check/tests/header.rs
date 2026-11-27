@@ -3,6 +3,8 @@
 //! The property-style cases drive a seeded `SplitMix64` rather than a random generator, so a
 //! failure is reproducible from the seed printed in the assertion.
 
+mod support;
+
 use fireemu_core_app_check::header::{
     classify_app_check_header, collect_values, is_app_check_header, HeaderClassification,
 };

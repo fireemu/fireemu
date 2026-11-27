@@ -978,7 +978,7 @@
       "note": "The loader delegates every binding rule to the core registry, so the schema, the loader and the runtime cannot disagree; tools/config-schema-check checks the same rules over spec/config/examples and spec/config/invalid-examples.",
       "artifacts": {
         "integration": [
-          "crates/fireemu-core-app-check/tests/integration/config.rs",
+          "crates/fireemu-core-app-check/tests/config.rs",
           "crates/fireemu/tests/exec.rs"
         ],
         "conformance": "spec/config/invalid-examples"
@@ -993,8 +993,8 @@
       "note": "prop_app_check_foreign_keys_never_verify covers INV-APPCHECK-011 alongside the window property; the real RSA key isolation is checked in crates/fireemu-adapter-http/tests/app_check.rs.",
       "artifacts": {
         "integration": [
-          "crates/fireemu-core-app-check/tests/integration/token.rs",
-          "crates/fireemu-core-app-check/tests/integration/jwt.rs"
+          "crates/fireemu-core-app-check/tests/token.rs",
+          "crates/fireemu-core-app-check/tests/jwt.rs"
         ],
         "property": "prop_app_check_token_window_is_half_open",
         "mutation": [
@@ -1015,7 +1015,7 @@
       "artifacts": {
         "integration": [
           "crates/fireemu-adapter-http/tests/app_check.rs",
-          "crates/fireemu-core-app-check/tests/integration/exchange.rs"
+          "crates/fireemu-core-app-check/tests/exchange.rs"
         ],
         "property": "prop_app_check_exchange_needs_the_registered_digest",
         "mutation": [
@@ -1033,7 +1033,7 @@
       "note": "Milestone AC0 implemented and proved the transport-neutral classifier; AC1 adopted it on the Firebase Auth HTTP surface, the Storage HTTP surface, Firestore unary gRPC metadata and Firestore REST; AC2 adopted it on the WebChannel init header block -- where the parser now keeps every instance in wire order instead of collapsing them into a map -- and on the callable Functions proxy, where an ambiguous field list is never a credential and is stripped before the runner can decode it. Every transport covers duplicate, folded, empty and oversized values.",
       "artifacts": {
         "integration": [
-          "crates/fireemu-core-app-check/tests/integration/header.rs",
+          "crates/fireemu-core-app-check/tests/header.rs",
           "crates/fireemu-adapter-http/tests/app_check_auth.rs",
           "crates/fireemu-adapter-http/tests/app_check_storage.rs",
           "crates/fireemu-adapter-grpc/tests/app_check.rs",
@@ -1189,7 +1189,7 @@
           "crates/fireemu/src/sessions.rs",
           "crates/fireemu/src/snapshots.rs",
           "crates/fireemu-adapter-grpc/tests/app_check.rs",
-          "crates/fireemu-core-app-check/tests/integration/admission.rs"
+          "crates/fireemu-core-app-check/tests/admission.rs"
         ],
         "property": "prop_app_check_epoch_rotation_invalidates_every_earlier_token",
         "mutation": [
@@ -1207,7 +1207,7 @@
       "artifacts": {
         "integration": [
           "crates/fireemu-adapter-http/tests/app_check_control.rs",
-          "crates/fireemu-core-app-check/tests/integration/admission.rs",
+          "crates/fireemu-core-app-check/tests/admission.rs",
           "crates/fireemu-adapter-ui/tests/ui.rs",
           "ui/e2e/appcheck.spec.ts"
         ],

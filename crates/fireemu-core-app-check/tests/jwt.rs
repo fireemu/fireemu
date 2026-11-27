@@ -4,7 +4,7 @@
 //! The generators are seeded `SplitMix64` instances, so every case is reproducible from the
 //! seed in the assertion message.
 
-use super::support;
+mod support;
 
 use fireemu_core_app_check::jwt::{base64url_decode, base64url_encode, encode, split_compact};
 use fireemu_core_app_check::registry::AppCheckRegistry;
