@@ -237,7 +237,8 @@ fn every_keep_alive_listener_delivers_its_refusal_to_a_client_that_sends_its_bod
                 "/v0/b/demo-refused-body.appspot.com/o",
                 "HTTP/1.1 403 Forbidden",
             ),
-            ("hub", ports.hub, "/emulators", "HTTP/1.1 404 Not Found"),
+            ("hub", ports.hub, "/emulators", "HTTP/1.1 403 Forbidden"),
+            ("ui", ports.ui, "/api/anything", "HTTP/1.1 403 Forbidden"),
         ];
         for (listener, port, path, status) in cases {
             losses.extend(refusal_losses(
@@ -245,6 +246,14 @@ fn every_keep_alive_listener_delivers_its_refusal_to_a_client_that_sends_its_bod
             ));
         }
     }
+    losses.extend(refusal_losses(
+        "hub (unknown method)",
+        ports.hub,
+        "/emulators",
+        "",
+        64 * 1024,
+        "HTTP/1.1 404 Not Found",
+    ));
     // The UI reads a body up to its limit (256 KiB outside the storage routes) before it refuses a
     // larger one, so the body is several times that limit: a substantial remainder is unread at
     // the refusal.
@@ -252,7 +261,7 @@ fn every_keep_alive_listener_delivers_its_refusal_to_a_client_that_sends_its_bod
         "ui",
         ports.ui,
         "/api/anything",
-        OTHER_SITE,
+        "",
         4 * 1024 * 1024,
         "HTTP/1.1 413 Payload Too Large",
     ));

@@ -179,7 +179,11 @@ async fn the_daemons_runner_class_drives_the_real_python_runner() {
     let hello = runner.hello();
     assert_eq!(hello.runner, "python");
     assert!(hello.http_port.is_some());
-    assert!(hello.clock.is_none() && hello.app_check.is_none() && hello.inspector_port.is_none());
+    assert_eq!(
+        hello.clock.as_ref(),
+        Some(&serde_json::json!({"version":1,"date":true,"timers":false}))
+    );
+    assert!(hello.app_check.is_none() && hello.inspector_port.is_none());
     // The daemon's own parser accepts exactly what the runner announced.
     let manifest = parse_manifest(hello.manifest.as_ref().expect("a manifest")).unwrap();
     let names: Vec<&str> = manifest.functions.iter().map(|f| f.name.as_str()).collect();
