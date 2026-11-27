@@ -189,7 +189,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: 10.32.1
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - uses: actions/setup-python@v5.6.0
@@ -307,7 +307,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: "10.32.1"
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - name: the pinned real SDK for the runner tests
@@ -333,7 +333,7 @@ jobs:
       FIREEMU_REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4.4.0
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
       - name: the pinned SDKs for the database smoke tests
@@ -519,7 +519,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: "10.32.1"
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 24
           cache: pnpm
@@ -564,7 +564,7 @@ jobs:
       - uses: pnpm/action-setup@v4.3.0
         with:
           version: "10.32.1"
-      - uses: actions/setup-node@v4.4.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
           cache: pnpm
