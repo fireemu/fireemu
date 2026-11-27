@@ -1887,38 +1887,17 @@ struct ReloadResources {
     node_probe_cache: Arc<NodeProbeCache>,
 }
 
-/// The inspector flags a runner command gets, and whether the request for them is ignored.
-struct InspectorArguments {
-    /// Inserted after the program, in order.
-    arguments: Vec<String>,
-    /// `--inspect-functions` was asked for and the runner cannot honour it (a Python codebase).
-    ignored: bool,
-}
-
-/// What `--inspect-functions` does to a runner command: a Node runner gets the flags (dynamic port
-/// first), a Python one gets none and the request is reported as ignored, as firebase-tools does.
-fn inspector_arguments(python: bool, dynamic: bool, port: Option<u16>) -> InspectorArguments {
-    if !(dynamic || port.is_some()) {
-        return InspectorArguments {
-            arguments: Vec::new(),
-            ignored: false,
-        };
-    }
-    if python {
-        return InspectorArguments {
-            arguments: Vec::new(),
-            ignored: true,
-        };
+/// The Node inspector arguments. Python receives its debugger settings through the environment.
+fn inspector_arguments(python: bool, dynamic: bool, port: Option<u16>) -> Vec<String> {
+    if python || !(dynamic || port.is_some()) {
+        return Vec::new();
     }
     let address = if dynamic {
         "--inspect=127.0.0.1:0".to_owned()
     } else {
         format!("--inspect=127.0.0.1:{}", port.unwrap_or_default())
     };
-    InspectorArguments {
-        arguments: vec![address, "--inspect-publish-uid=http".to_owned()],
-        ignored: false,
-    }
+    vec![address, "--inspect-publish-uid=http".to_owned()]
 }
 
 /// Whether the daemon offers a runner the Admin SDK App Check channel: it exists for the Node
@@ -2225,11 +2204,14 @@ async fn supervise_codebase_reloads(
         else {
             continue;
         };
-        let fixed_inspector = cfg.functions_inspect_port.is_some()
-            && crate::python_functions::codebase_language(&codebase) != RuntimeLanguage::Python;
-        let _restart_guard = if let Some(port) =
-            cfg.functions_inspect_port.filter(|_| fixed_inspector)
-        {
+        let fixed_port = cfg.functions_inspect_port.filter(|port| {
+            crate::python_functions::codebase_language(&codebase) != RuntimeLanguage::Python
+                || runtime.current_runners().iter().any(|(name, runner)| {
+                    name == &codebase.codebase && runner.hello().inspector_port == Some(*port)
+                })
+        });
+        let fixed_inspector = fixed_port.is_some();
+        let _restart_guard = if let Some(port) = fixed_port {
             match prepare_fixed_inspector_reload(&runtime, &codebase.codebase, port).await {
                 Ok(guard) => Some(guard),
                 Err(reason) => {
@@ -4769,7 +4751,11 @@ async fn check_started_runner(
             return Err(error);
         }
     }
-    if inspecting && !python {
+    if inspecting && python {
+        if let Some(port) = runner.hello().inspector_port {
+            errln!("functions[{label}]: debugpy is listening on 127.0.0.1:{port}");
+        }
+    } else if inspecting {
         let reported = runner.hello().inspector_port;
         let endpoint_active = match reported {
             Some(port) => inspector_endpoint_is_active(port).await,
@@ -5033,13 +5019,7 @@ async fn start_codebase(
         cfg.functions_inspect_dynamic,
         cfg.functions_inspect_port,
     );
-    if inspector.ignored {
-        // firebase-tools says the same and goes on (`functionsEmulator.ts:1736-1738`).
-        errln!(
-            "warning: functions[{label}]: --inspect-functions is not supported for Python functions; ignored"
-        );
-    }
-    for (offset, argument) in inspector.arguments.into_iter().enumerate() {
+    for (offset, argument) in inspector.into_iter().enumerate() {
         command.insert(1 + offset, argument);
     }
     command.push("--source".to_owned());
@@ -5195,7 +5175,11 @@ async fn start_codebase(
     clock_options["following"] = serde_json::json!(!cfg.clock_frozen());
     env.push(("FIREEMU_CLOCK_JSON".into(), clock_options.to_string()));
     if python && (cfg.functions_inspect_port.is_some() || cfg.functions_inspect_dynamic) {
-        let port = cfg.functions_inspect_port.unwrap_or(0);
+        let port = if cfg.functions_inspect_dynamic {
+            0
+        } else {
+            cfg.functions_inspect_port.unwrap_or_default()
+        };
         env.push(("FIREEMU_PYTHON_INSPECT_PORT".to_owned(), port.to_string()));
     }
     if let Some(environment) = &python_environment {
@@ -7995,6 +7979,19 @@ impl FunctionsHook for Hook {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         Box::pin(self.0.sync_clock())
+    }
+    fn await_restored_runners(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async {
+            tokio::time::timeout(Duration::from_secs(8), async {
+                while !self.0.runner_alive() {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .map_err(|_| "Functions runners did not become ready after the snapshot restore".into())
+        })
     }
     fn run_due(
         &self,
@@ -13229,36 +13226,20 @@ exports.add = onCall({{}}, observe("add"));
 
     #[test]
     fn the_inspector_flags_go_to_a_node_runner_in_order_and_never_to_a_python_one() {
-        let flags = |python, dynamic, port| {
-            let result = super::inspector_arguments(python, dynamic, port);
-            (result.arguments, result.ignored)
-        };
-        assert_eq!(flags(false, false, None), (vec![], false));
-        assert_eq!(flags(true, false, None), (vec![], false));
+        let flags = super::inspector_arguments;
+        assert!(flags(false, false, None).is_empty());
+        assert!(flags(true, false, None).is_empty());
         assert_eq!(
             flags(false, true, None),
-            (
-                vec![
-                    "--inspect=127.0.0.1:0".to_owned(),
-                    "--inspect-publish-uid=http".to_owned()
-                ],
-                false
-            )
+            ["--inspect=127.0.0.1:0", "--inspect-publish-uid=http"]
         );
         assert_eq!(
             flags(false, false, Some(9229)),
-            (
-                vec![
-                    "--inspect=127.0.0.1:9229".to_owned(),
-                    "--inspect-publish-uid=http".to_owned()
-                ],
-                false
-            )
+            ["--inspect=127.0.0.1:9229", "--inspect-publish-uid=http"]
         );
-        // A dynamic port wins over a fixed one, as before.
-        assert_eq!(flags(false, true, Some(9229)).0[0], "--inspect=127.0.0.1:0");
-        assert_eq!(flags(true, true, None), (vec![], true));
-        assert_eq!(flags(true, false, Some(9229)), (vec![], true));
+        assert_eq!(flags(false, true, Some(9229))[0], "--inspect=127.0.0.1:0");
+        assert!(flags(true, true, None).is_empty());
+        assert!(flags(true, false, Some(9229)).is_empty());
     }
 
     #[test]
@@ -13348,10 +13329,9 @@ exports.add = onCall({{}}, observe("add"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// `--inspect-functions` is ignored for a Python codebase (a warning, as in firebase-tools): no
-    /// inspector flag reaches its command and no active inspector is demanded of it.
+    /// A Python codebase can run without debugpy even when an inspector was requested.
     #[tokio::test]
-    async fn the_inspect_option_is_ignored_for_a_python_codebase() {
+    async fn the_python_inspect_option_does_not_require_a_reported_port() {
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../fireemu-adapter-functions/tests/fake_runner.py");
         let (dir, python) = python_codebase("inspect");

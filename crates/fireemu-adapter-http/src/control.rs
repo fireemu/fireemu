@@ -130,6 +130,12 @@ pub trait FunctionsHook: Send + Sync {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         Box::pin(async { Ok(()) })
     }
+    /// Wait for the runners retired by a default-session restore to be ready again.
+    fn await_restored_runners(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
     /// Drain one bounded application timer batch.
     fn run_due(
         &self,
@@ -849,7 +855,13 @@ pub async fn handle_async(
             Err(error_message) => error(503, &error_message),
         };
     }
-    if path.contains("/clock:") || (path.contains("/snapshots/") && path.ends_with(":restore")) {
+    let restoring = path.contains("/snapshots/") && path.ends_with(":restore");
+    if restoring && path.starts_with("/v1/sessions/default/snapshots/") {
+        if let Err(cause) = functions.await_restored_runners().await {
+            return error(503, &format!("FUNCTIONS_NOT_READY : {cause}"));
+        }
+    }
+    if path.contains("/clock:") || restoring {
         if let Err(error_message) = functions.sync_clock().await {
             return error(503, &format!("CLOCK_NOT_SETTLED : {error_message}"));
         }

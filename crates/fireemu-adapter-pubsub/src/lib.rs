@@ -899,19 +899,19 @@ impl PubSubHandle {
         batching: OrderedPullBatching,
     ) -> Result<Vec<ReceivedMessage>, PubSubError> {
         let times = self.lease_times();
-        self.pull_batched_at(subscription, max, batching, times)
+        let _dead_letter = self.lock_dead_letter();
+        self.pull_batched_locked(subscription, max, batching, times)
     }
 
     /// A pull at `now`. Pull subscribers pull in delivery time; push delivery keeps the logical
     /// clock, whose backoff only an advance releases.
-    fn pull_batched_at(
+    fn pull_batched_locked(
         &self,
         subscription: &SubscriptionName,
         max: usize,
         batching: OrderedPullBatching,
         times: fireemu_core_pubsub::DeliveryTimes,
     ) -> Result<Vec<ReceivedMessage>, PubSubError> {
-        let _dead_letter = self.lock_dead_letter();
         let outcome = {
             let mut state = self.state();
             state.pull_with_dead_letters_batching(subscription, max, times, batching)?
@@ -1331,34 +1331,36 @@ impl PubSubHandle {
         Ok(())
     }
 
-    /// Re-enqueues every valid push subscription owned by matching projects after a snapshot
-    /// restore, waking the push dispatcher so restored backlogs redeliver without a new publish.
-    pub fn reschedule_push_workers_where(
+    /// Validates and restores the broker while holding its delivery gates. Invalidation and
+    /// broker replacement share the same state guard, so a new cross-project edge or a push
+    /// worker cannot reach the restored broker between validation and application.
+    pub fn restore_snapshot_scope(
         &self,
         matches: impl Fn(&str) -> bool,
+        snapshot: &fireemu_core_pubsub::state::PubSubScopeSnapshot,
     ) -> Result<(), String> {
-        let subscriptions: Vec<(fireemu_core_pubsub::SubscriptionName, String)> = {
-            let state = self
-                .state
-                .lock()
-                .map_err(|_| "the Pub/Sub state is poisoned".to_owned())?;
-            state
-                .all_push_subscriptions()
-                .into_iter()
-                .filter(|(name, _)| matches(name.project()))
-                .collect()
-        };
+        let _dead_letter = self.lock_dead_letter_gate()?;
+        let _publication = self.lock_publication()?;
         let now = self.now();
         let mut dispatch = self
             .push_dispatch
             .lock()
             .map_err(|_| "the Pub/Sub push dispatcher is poisoned".to_owned())?;
-        for (subscription, endpoint) in subscriptions {
-            if push::validate_endpoint(&endpoint).is_ok() {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "the Pub/Sub state is poisoned".to_owned())?;
+        state.validate_restore_scope(&matches, snapshot)?;
+        dispatch.invalidate_projects_where(&matches);
+        state.restore_scope(&matches, snapshot);
+        for (subscription, endpoint) in state.all_push_subscriptions() {
+            if matches(subscription.project()) && push::validate_endpoint(&endpoint).is_ok() {
                 dispatch.enqueue(subscription, now);
             }
         }
+        drop(state);
         drop(dispatch);
+        self.push_cancel_notify.notify_waiters();
         self.push_ready_notify.notify_one();
         Ok(())
     }
@@ -1531,10 +1533,17 @@ impl PubSubHandle {
         }
         // One sample for the pull and for the lookup after it: a lease that lapses between them
         // is still ahead on this sample, so it defers the work instead of being dropped as due.
-        let times = self.lease_times();
-        let received = self
-            .pull_batched_at(&work.subscription, 100, OrderedPullBatching::Mixed, times)
-            .unwrap_or_default();
+        let (times, received) = {
+            let _dead_letter = self.lock_dead_letter();
+            if !self.is_current_push_generation(&key, work.generation) {
+                return PushQuantumResult::Stop;
+            }
+            let times = self.lease_times();
+            let received = self
+                .pull_batched_locked(&work.subscription, 100, OrderedPullBatching::Mixed, times)
+                .unwrap_or_default();
+            (times, received)
+        };
         #[cfg(test)]
         {
             let pause = self

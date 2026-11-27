@@ -111,8 +111,11 @@ def _decode_message(payload: bytes) -> dict:
     if message.get("type") == "shutdown":
         return message
     if message.get("type") == "clock:set":
-        if not _text(message.get("invocationId")):
-            raise ProtocolError("clock:set invocationId")
+        if (
+            not all(_text(message.get(key)) for key in ("invocationId", "instantNanos", "elapsedNanos", "revision"))
+            or not isinstance(message.get("following"), bool)
+        ):
+            raise ProtocolError("message fields")
         return message
     if (
         message.get("type") != "invoke"

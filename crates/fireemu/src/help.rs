@@ -140,7 +140,7 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
     opt(
         &["--inspect-functions"],
         Value::Optional("[port]"),
-        "Run the Functions runner under the Node inspector on this port (1024-65535); without a port, or with `true`, a free port. Refused when functions.runner is not node. Default: off.",
+        "Enable the Node inspector or Python debugpy on loopback (port 1024-65535); without a port, or with `true`, use a free port. Python requires debugpy in the codebase venv. Default: off.",
     ),
     opt(
         &["--log-verbosity"],
@@ -161,7 +161,7 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
         flags: &["--write-missing-indexes"],
         value: Value::None,
         exec_only: true,
-        text: "Enable missing Firestore composite index reporting for this run and merge discovered indexes into firestore.indexes.json on exit (use --write-missing-indexes=<file> for a custom path; defaults to configured firestore.indexes or firestore.indexes.json). For exec only. Default: off.",
+        text: "In strict profile, report and merge missing Firestore composite indexes on exit. Defaults to the configured indexes for (default) or firestore.indexes.json. Use --write-missing-indexes=<file> for a custom path or one named database. Default: off.",
     },
     opt(
         &["--plan"],

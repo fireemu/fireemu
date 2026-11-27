@@ -227,15 +227,18 @@ export async function createTestWorld(options={}){
   };
   const assertUserSnapshotName=name=>{
     const resolved=String(name??'');
-    if(!resolved||resolved===BASELINE_SNAPSHOT)throw TypeError('snapshot/checkpoint name must be a non-empty non-reserved string');
+    if(!resolved||resolved==='.'||resolved==='..'||resolved===BASELINE_SNAPSHOT)throw TypeError('snapshot/checkpoint name must be a non-empty non-reserved string');
     return resolved;
   };
+  const restoreSnapshot=name=>requestFor(
+    current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(name)}:restore`,{},AbortSignal.timeout(15_000),
+  );
   const resetState=()=>queue.exclusive(async()=>{
     check();
     if(!current.hasBaseline){
       throw Error(`test world cannot reset state: startup baseline snapshot was not captured${current.baselineError?.message?` (${current.baselineError.message})`:''}`,{cause:current.baselineError});
     }
-    await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(BASELINE_SNAPSHOT)}:restore`,{});
+    await restoreSnapshot(BASELINE_SNAPSHOT);
     return world;
   },Error('test world call cancelled: the world state was reset'));
   const checkpoint=async name=>{
@@ -247,7 +250,7 @@ export async function createTestWorld(options={}){
     const resolved=assertUserSnapshotName(name);
     return queue.exclusive(async()=>{
       check();
-      await requestFor(current,'POST',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}:restore`,{});
+      await restoreSnapshot(resolved);
       return world;
     },Error('test world call cancelled: the world state was restored'));
   };

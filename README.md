@@ -66,6 +66,8 @@ await withTestWorld(
 );
 ```
 
+Starting in v0.69.0, use `world.resetState()` to restore the startup state while keeping the daemon endpoints, or use `world.checkpoint()` and `world.restore()` for named restore points. The package also provides suite and worker fixtures via `fireemu/vitest` and `fireemu/playwright`.
+
 See [Test worlds](https://fireemu.github.io/fireemu/guides/test-worlds/), [Time and scheduled functions](https://fireemu.github.io/fireemu/guides/time/), and [docs/test-worlds.md](docs/test-worlds.md).
 
 ## Supported services

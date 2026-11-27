@@ -105,7 +105,7 @@ By default one Python process serves the whole codebase, where production gives 
 
 ### Time
 
-Time is real time. Python code is not moved onto the virtual clock, so `datetime.now()` ignores `daemon.clock` settings. A configuration that asks for a virtual date for the Functions runner is refused for a Python codebase.
+Python uses real time by default. Starting in Fireemu v0.69.0, set `functions.clock.date` to `"virtual"` to move `time.time()`, `time.time_ns()`, `datetime.datetime.now()`, `datetime.datetime.utcnow()` and `datetime.date.today()` with the daemon clock. Sleep, monotonic time and timers use real time. Keep `functions.clock.timers` set to `"real"` for Python codebases.
 
 ### Source reload
 
@@ -140,7 +140,7 @@ Python Storage and Eventarc handlers parse the event `time` with a fractional-se
 
 ### Debugger
 
-`--inspect-functions` is ignored with a warning, as the Firebase CLI does.
+Starting in Fireemu v0.69.0, install [debugpy](https://github.com/microsoft/debugpy) into the codebase virtual environment, then run `fireemu up --inspect-functions`. Attach the debugger to `127.0.0.1` at the port printed by Fireemu. For one codebase with codebase isolation, `--inspect-functions 5678` keeps the port fixed. After reload, reconnect to the replacement runner. With multiple codebases or function isolation, use dynamic ports.
 
 ### App Check
 

@@ -261,7 +261,7 @@ struct Options {
     export_on_exit: Option<PathBuf>,
     /// Target `firestore.indexes.json` file to merge discovered missing indexes into at exit
     /// (`exec --write-missing-indexes [file]`).
-    write_missing_indexes: Option<PathBuf>,
+    write_missing_indexes: Option<MissingIndexesOutput>,
     /// Private endpoint descriptor for a supervised test world.
     ready_file: Option<PathBuf>,
     owner_stdin: bool,
@@ -1157,6 +1157,11 @@ enum WriteMissingIndexes {
     File(PathBuf),
     /// `--write-missing-indexes` with no value: use configured `firestore.indexes` or `firestore.indexes.json`.
     DefaultFile,
+}
+
+struct MissingIndexesOutput {
+    path: PathBuf,
+    explicit: bool,
 }
 
 /// What `--export-on-exit` named, before it is resolved against `--import`.
@@ -2149,13 +2154,19 @@ fn parse_options(
         }
         cfg.firestore_missing_indexes = config::MissingIndexes::Report;
         Some(match target {
-            WriteMissingIndexes::File(path) => path,
-            WriteMissingIndexes::DefaultFile => cfg
-                .firestore_databases
-                .get(fireemu_core_types::ids::DatabaseId::DEFAULT)
-                .and_then(|files| files.indexes.as_deref())
-                .or(cfg.index_file.as_deref())
-                .map_or_else(|| PathBuf::from("firestore.indexes.json"), PathBuf::from),
+            WriteMissingIndexes::File(path) => MissingIndexesOutput {
+                path,
+                explicit: true,
+            },
+            WriteMissingIndexes::DefaultFile => MissingIndexesOutput {
+                path: cfg
+                    .firestore_databases
+                    .get(fireemu_core_types::ids::DatabaseId::DEFAULT)
+                    .and_then(|files| files.indexes.as_deref())
+                    .or(cfg.index_file.as_deref())
+                    .map_or_else(|| PathBuf::from("firestore.indexes.json"), PathBuf::from),
+                explicit: false,
+            },
         })
     } else {
         None
@@ -4490,7 +4501,6 @@ fn control_state(
         Arc::new(snapshots::FieldConfig(backend.clone())),
         Arc::new(snapshots::Storage(storage.clone())),
         Arc::new(snapshots::RealtimeDatabase(realtime_database.clone())),
-        Arc::new(snapshots::PubSub(pubsub.clone(), pubsub_handle.clone())),
         Arc::new(snapshots::Auth(registry.clone())),
         Arc::new(snapshots::Faults(faults.clone(), cfg.auth_project.clone())),
         Arc::new(snapshots::TextIndexes(
@@ -4498,6 +4508,7 @@ fn control_state(
             backend.clone(),
         )),
         Arc::new(snapshots::SessionClock(clock.clone())),
+        Arc::new(snapshots::PubSub(pubsub.clone(), pubsub_handle.clone())),
         Arc::new(snapshots::Rules("firestore rules", rules.clone())),
     ];
     for slot in database_rules.values() {

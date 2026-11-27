@@ -26,8 +26,8 @@ def test_hello_announces_the_python_runner_its_http_port_and_the_manifest(runner
     assert hello["codebase"] == "default"
     assert isinstance(hello["httpPort"], int) and hello["httpPort"] > 0
     assert hello["version"].startswith("3.")
-    # No virtual clock, no App Check instrumentation: the daemon must see the keys absent.
-    for key in ("clock", "appCheck", "adminAppCheck", "inspectorPort"):
+    assert hello["clock"] == {"version": 1, "date": True, "timers": False}
+    for key in ("appCheck", "adminAppCheck", "inspectorPort"):
         assert key not in hello
     manifest = hello["manifest"]
     served = {entry["name"] for entry in manifest["functions"]}

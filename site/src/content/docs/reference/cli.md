@@ -96,13 +96,15 @@ options:
   --logging-port <n>
         Logging emulator port; 0 disables it. Default: 4500.
   --inspect-functions [port]
-        Run the Functions runner under the Node inspector on this port (1024-65535); without a port, or with `true`, a free port. Refused when functions.runner is not node. Default: off.
+        Enable the Node inspector or Python debugpy on loopback (port 1024-65535); without a port, or with `true`, use a free port. Python requires debugpy in the codebase venv. Default: off.
   --log-verbosity quiet|silent|info|debug
         quiet and silent print errors only; info adds the banner and notices; debug also prints the resolved configuration. Case-insensitive. Default: info.
   --import <dir>
         Import an export directory (from --export-on-exit or emulators:export) at start; it must exist. Default: start empty.
   --export-on-exit [dir]
         Export all state to this directory when the emulators stop; without a directory, the --import directory. Refused for the working directory or a parent of it, and unavailable on Windows. Default: no export.
+  --write-missing-indexes[=<file>]
+        With `exec` in the strict profile, report and merge missing Firestore composite indexes on exit. Defaults to the configured indexes for `(default)` or `firestore.indexes.json`. Give an explicit path to capture indexes for one named database.
   --plan
         Resolve the run exactly as start-up does, print what it would do and start nothing: the project ID and where it came from, the command-line overrides, each service with its address (or why it is off), the environment variables the run sets and the inherited ones that remain, the absolute path of every rules, index and source file with the directory a relative path is resolved against, the Node or Python each Functions codebase would run on with its SDK versions, the active development defaults and the settings that have no effect. It runs `node --version` and a Python codebase's own interpreter, probes no port, and exits 1 when the run would fail for a reason it can see (a codebase that cannot start, a variable --deny-inherited-emulator-env refuses). For up and exec; capabilities accepts and ignores it. Default: off.
   --json

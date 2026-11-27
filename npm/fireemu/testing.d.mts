@@ -1,3 +1,5 @@
+/// <reference lib="esnext.disposable" />
+
 import type { Environment } from './control.mjs';
 export type { Environment } from './control.mjs';
 
@@ -274,6 +276,7 @@ export interface TestWorld {
   readonly run: (command: string, args?: readonly string[], options?: RunOptions) => Promise<RunResult>;
   readonly reset: (options?: ResetOptions) => Promise<TestWorld>;
   readonly dispose: () => Promise<void>;
+  [Symbol.asyncDispose](): Promise<void>;
 }
 
 export function createTestWorld(options?: TestWorldOptions): Promise<TestWorld>;

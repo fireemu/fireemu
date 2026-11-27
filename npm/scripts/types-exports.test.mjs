@@ -19,10 +19,14 @@ export function compileProbe(name, runtimeNames, declarationDirectory = packageD
   const directory = mkdtempSync(join(tmpdir(), 'fireemu types exports '));
   try {
     const union = runtimeNames.length === 0 ? 'never' : runtimeNames.map(item => JSON.stringify(item)).join(' | ');
+    const disposal = name === 'testing'
+      ? 'export async function useWorld(world: declared.TestWorld) { await using active = world; return active.generation; }'
+      : '';
     writeFileSync(join(directory, 'probe.mts'), `
 import type * as declared from ${JSON.stringify(join(declarationDirectory, `${name}.mjs`).replaceAll('\\', '/'))};
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 export const exactlyTheRuntimeExports: Equal<keyof typeof declared, ${union}> = true;
+${disposal}
 `);
     writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, target: 'ES2022', lib: ['ES2022', 'DOM'], types: [], module: 'NodeNext', moduleResolution: 'NodeNext', skipLibCheck: false }, files: ['probe.mts'] }));
     execFileSync(resolve(compiler), ['-p', join(directory, 'tsconfig.json')], { cwd: directory, stdio: 'pipe' });

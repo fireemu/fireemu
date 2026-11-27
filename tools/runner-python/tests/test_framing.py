@@ -122,6 +122,14 @@ def test_messages_that_are_not_shutdown_or_a_complete_invoke_are_refused(message
     assert str(error.value) == "invalid runner frame (message fields)"
 
 
+def test_a_complete_clock_update_is_valid():
+    message = {
+        "type": "clock:set", "invocationId": "c", "instantNanos": "-1",
+        "elapsedNanos": "0", "revision": "1", "following": False,
+    }
+    assert read_frame(io.BytesIO(encode_frame(message))) == message
+
+
 def test_an_invoke_without_an_entry_point_is_valid():
     message = invoke()
     assert "entryPoint" not in message

@@ -192,6 +192,16 @@ npx fireemu exec -- sh -c '
 - Where nothing is reported (the `emulator` profile, `strict` with `"refuse"`, or Firestore not selected), `GET` answers `409` with `FAILED_PRECONDITION`, so a check that depends on the list cannot pass on an empty answer. `DELETE` still answers `{"cleared": 0}`.
 - A page in a browser needs `Authorization: Bearer <control token>` for both methods, as for the resource report, because the entries name the fields your queries filter and order on.
 
+### Write reported indexes on exit
+
+Starting in Fireemu v0.69.0, run a suite with index reporting and merge its discoveries when it exits:
+
+```sh
+fireemu exec --profile strict --only firestore --write-missing-indexes -- npm test
+```
+
+Fireemu uses the configured indexes file for `(default)` or `firestore.indexes.json` if none is configured. To collect from one named database, pass `--write-missing-indexes=path/to/indexes.json` and exercise that database alone. A run that reports missing indexes for more than one database refuses to write. The merge preserves existing definitions and field overrides. Give simultaneous runs separate output files.
+
 ### Checks on `firestore.indexes.json`
 
 Under `strict`, Fireemu refuses at start-up what `firebase deploy` refuses. When the file changes while Fireemu runs, it keeps the previous indexes. The message names the entry and starts with the path of the file, as in `./firestore.indexes.json: indexes[0] (collection group notes): ...`. Each refusal below is shown with the entry that causes it and one that production accepts.

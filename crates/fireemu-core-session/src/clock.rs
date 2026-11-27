@@ -613,6 +613,28 @@ impl VirtualClock {
         Ok(())
     }
 
+    /// Restores the captured instant and running mode as one clock publication.
+    /// Elapsed time and revision stay monotonic. The caller must hold the session idle.
+    pub fn restore_session_time(
+        &mut self,
+        instant: LogicalInstant,
+        following: bool,
+    ) -> Result<(), ClockError> {
+        if following {
+            return self.resume_at(instant, true);
+        }
+        let sample = self.sample();
+        self.check(instant, &sample)?;
+        if let Some(follow) = self.follow.take() {
+            self.paused = Some(follow.source);
+        }
+        if instant < sample.instant {
+            self.backwards_sets = self.backwards_sets.saturating_add(1);
+        }
+        self.publish(instant, &sample, true);
+        Ok(())
+    }
+
     /// Restrict every writer, including fault delays and fixture ticks, to a runtime range.
     pub fn restrict_range(
         &mut self,

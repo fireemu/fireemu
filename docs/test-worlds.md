@@ -88,7 +88,7 @@ The runtime validates service codebase suffixes (`[A-Za-z0-9_-]+`), URL and toke
 }
 ```
 
-Each mode accepts `real` or `virtual`. A virtual mode follows the daemon clock whatever it does; without a pinned `daemon.clockStart` that clock starts at the wall-clock time and runs with real time, and the runner's virtual Date and timers run with it between the daemon's updates. A world pins `daemon.clockStart`, so its clock stands still until it is moved; a daemon without a pinned start follows real time. Virtual timers require virtual Date. The bundled Node runner installs the policy before importing user code. Custom runners must advertise the clock protocol capability; startup refuses a virtual Date policy when the runner cannot acknowledge it.
+Each mode accepts `real` or `virtual`. A virtual mode follows the daemon clock whatever it does; without a pinned `daemon.clockStart` that clock starts at the wall-clock time and runs with real time, and the runner's virtual Date and timers run with it between the daemon's updates. A world pins `daemon.clockStart`, so its clock stands still until it is moved; a daemon without a pinned start follows real time. Virtual timers require virtual Date. The bundled Node and Python runners install the supported date policy before importing user code. Python application timers use real time. Custom runners must advertise the clock protocol capability; startup refuses a virtual Date policy when the runner cannot acknowledge it.
 
 Clock control commands acknowledge the current Functions runner generations before returning success. Date reads after that acknowledgement use the destination instant, including after an `await`, a reload or runner recovery. `new Date(value)`, `Date.parse`, `Date.UTC`, prototypes and subclasses keep their JavaScript meaning. Nanoseconds are converted to whole epoch milliseconds by flooring, including before the Unix epoch. Moves outside JavaScript's Date range are refused without publishing new clock state, including fault delays and fixture ticks.
 
@@ -211,7 +211,15 @@ Each world owns one daemon, OS-assigned service ports, a control token, private 
 
 `firebaseJson`, `functionsSource`, `cwd`, `import`, `projectId`, `clockStart`, `seed`, `services` and `clock` select the initial inputs. `binaryPath` can select a development binary. Input files and linked Functions dependencies are copied before readiness; later caller changes do not affect reset. This has an upfront disk/time cost for large dependency graphs. Do not put a world's temporary directory inside its Functions source.
 
-### What a snapshot copies, and what it costs
+### In-memory reset and checkpoints
+
+Fireemu v0.69.0 adds `world.resetState()` and `world.reset({ mode: 'state' })`. They restore the startup session snapshot while keeping the daemon generation and its endpoints. `world.reset()` uses restart mode, which also recreates the generation files from the authored inputs captured at startup. Use `checkpoint(name?)`, `restore(name)`, and `deleteCheckpoint(name)` to manage additional in-memory restore points. The baseline counts against the session snapshot budget. Wait for idle work before capturing a checkpoint.
+
+The Fireemu package provides `fireemu/vitest` and `fireemu/playwright`. The Vitest integration uses a suite-level world and requires sequential tests when automatic resets are enabled. The Playwright integration exposes a worker world and a test fixture that resets it. Both integrations default to state reset. The [test worlds guide](https://fireemu.github.io/fireemu/guides/test-worlds/#fixtures-for-vitest-and-playwright) includes example setup.
+
+Python and Go wrappers live in [the Python SDK directory](../sdks/python/fireemu_testing/) and [the Go module](../sdks/go/fireemu/). They launch a local Fireemu binary and expose in-memory reset and checkpoint helpers. See the SDK links and setup in the [test worlds guide](https://fireemu.github.io/fireemu/guides/test-worlds/#python-and-go).
+
+## What a snapshot copies, and what it costs
 
 Functions sources, dependency links and `NODE_PATH` roots are copied only when the world loads Functions: when `services` is omitted (the default selection includes Functions if the configuration names a source or manifest) or lists `functions` or `functions:<codebase>` (every configured codebase is copied). With any other selection, for example `['auth', 'firestore']`, none of it is copied and the Functions section is removed from the snapshotted configuration, because the daemon does not load Functions that `--only` leaves out. Auth blocking functions and event-triggered functions run in the Functions service, so select `functions` for tests that use them.
 

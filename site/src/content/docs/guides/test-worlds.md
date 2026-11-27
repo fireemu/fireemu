@@ -17,7 +17,8 @@ Read these two sections before you write a test: they say what a clock move does
 
 | Surface | Moved by `world.clock`? |
 | --- | --- |
-| Functions `Date`, `Date.now()`, `new Date()` | Yes, by default in a world (`functions.clock.date` is `virtual`). |
+| Node Functions `Date`, `Date.now()`, `new Date()` | Yes, by default in a world (`functions.clock.date` is `virtual`). |
+| Python Functions application dates | Yes from v0.69.0 when `functions.clock.date` is `virtual`. |
 | Security Rules `request.time`, Auth, Storage and App Check timestamps | Yes. |
 | Cloud Tasks schedule times, retry backoff and rate refill | Yes, by default in a world (`functions.clock.tasks` is `virtual`). |
 | Scheduled Functions | Yes. |
@@ -34,6 +35,22 @@ Read these two sections before you write a test: they say what a clock move does
 - `world.control()`, `world.clock.*` and `world.run()` always use the current generation. A client made with `createControlClient({ env: world.environment })` or with an explicit origin and token keeps the old generation's endpoint and credential: create it again after `reset()`.
 - Commands started with `world.run()` in the old generation are terminated.
 - `reset()` returns to the *creation snapshot*, not to your current sources. Edits made to Functions code, Rules, indexes or configuration after the world was created are not picked up. Create a new world to use them.
+
+### Reset state without restarting
+
+Starting in Fireemu v0.69.0, `await world.resetState()` or `await world.reset({ mode: 'state' })` restores the startup session snapshot without changing ports or generation. It restores captured service state and the daemon clock, including whether it was running. Use `world.reset()` to restore the generation's input files and stop commands started with `world.run()`.
+
+```ts
+const baseline = await world.checkpoint('before-import');
+try {
+  // Make changes in the world, then return to this checkpoint.
+  await world.restore(baseline);
+} finally {
+  await world.deleteCheckpoint(baseline);
+}
+```
+
+Checkpoints use the session snapshot count and byte budgets. The startup baseline occupies one slot. Wait for idle work before capturing a checkpoint. State restore restarts Functions runners and waits for previously started runners to become ready. If the baseline could not be captured, `resetState()` reports the capture error. Use restart mode for a new generation.
 
 ## Start a world
 
@@ -139,6 +156,29 @@ await world.control('POST', 'sessions/default:awaitIdle', { scope: 'runnable' })
 See [idle scopes and task clocks](https://github.com/fireemu/fireemu/blob/main/docs/tasks-idle.md).
 
 ## Fixtures for Vitest and Playwright
+
+Starting in Fireemu v0.69.0, the package includes integrations for both runners:
+
+```ts
+// Vitest
+import { afterAll, beforeAll, beforeEach, test } from 'vitest';
+import { useTestWorld } from 'fireemu/vitest';
+
+const handle = useTestWorld({ services: ['firestore'] }, { beforeAll, beforeEach, afterAll });
+test('uses a local Firestore listener', () => {
+  if (!handle.world.endpoints.firestore) throw Error('Firestore is unavailable');
+});
+```
+
+```ts
+// Playwright
+import { test as base } from '@playwright/test';
+import { createFireemuFixtures } from 'fireemu/playwright';
+
+export const test = base.extend(createFireemuFixtures({ services: ['firestore'] }));
+```
+
+Vitest shares one world per suite and Playwright one per worker. Use sequential Vitest tests when sharing a world. Playwright tests should request the `fireemu` fixture so the reset runs. Both integrations default to `resetMode: 'state'` between tests. Choose `'restart'` for a fresh generation or `'none'` to keep state.
 
 Create the world in a fixture, give each test its own named Admin SDK app, and delete the app at teardown. After `reset()`, delete the app, read `world.endpoints` again and create a new app. The default Admin app is cached process-wide and cannot be redirected to a world.
 
@@ -250,6 +290,16 @@ export const test = base.extend<{ db: Firestore }, { world: TestWorld }>({
 ```
 
 Clients that read their emulator host from the environment, such as Admin Auth, cannot be pointed at a world through a named app: run that code with `world.run()`, which passes `world.environment` to the child process.
+
+## Python and Go
+
+Starting in Fireemu v0.69.0, the repository ships small standard-library wrappers that launch an installed Fireemu binary. Check out the corresponding Fireemu tag to use the Python package from source:
+
+```sh
+python -m pip install ./sdks/python/fireemu_testing
+```
+
+The package exports `TestWorld` as a context manager. Install the `pytest` extra and enable `fireemu_testing.pytest_plugin` for fixtures. For Go, use the [Fireemu Go module](https://github.com/fireemu/fireemu/tree/v0.69.0/sdks/go/fireemu) in the source checkout. `fireemu.Start(t, opts)` registers test cleanup and gives the test the world endpoints. Both wrappers offer state reset and named checkpoints.
 
 ## TypeScript
 

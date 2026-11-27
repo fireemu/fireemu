@@ -15,7 +15,7 @@ export interface VitestTestWorldOptions extends TestWorldOptions {
 
 export interface VitestLifecycleHooks {
   readonly beforeAll: (fn: () => Promise<void> | void, timeout?: number) => void;
-  readonly beforeEach: (fn: () => Promise<void> | void, timeout?: number) => void;
+  readonly beforeEach: (fn: (context?: { readonly task?: { readonly concurrent?: boolean } }) => Promise<void> | void, timeout?: number) => void;
   readonly afterAll: (fn: () => Promise<void> | void, timeout?: number) => void;
 }
 

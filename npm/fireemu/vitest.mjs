@@ -34,7 +34,10 @@ export function useTestWorld(options = {}, hooks) {
   }, startupTimeoutMs ?? 60_000);
 
   if (resetMode !== 'none') {
-    lifecycle.beforeEach(async () => {
+    lifecycle.beforeEach(async context => {
+      if (context?.task?.concurrent) {
+        throw Error('fireemu/vitest reset requires sequential tests; use test.sequential or give each concurrent test its own world');
+      }
       if (!instance) return;
       if (!needsReset) {
         needsReset = true;
@@ -45,7 +48,7 @@ export function useTestWorld(options = {}, hooks) {
       } else {
         await instance.reset({ mode: 'restart' });
       }
-    });
+    }, startupTimeoutMs ?? 60_000);
   }
 
   lifecycle.afterAll(async () => {

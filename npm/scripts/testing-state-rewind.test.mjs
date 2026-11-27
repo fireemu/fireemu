@@ -30,6 +30,7 @@ test('vitest integration validates options and runs lifecycle hooks with state r
   for (const fn of hooks.beforeAll) await fn();
   try {
     assert.equal(handle.world.generation, 1);
+    await assert.rejects(hooks.beforeEach[0]({ task: { concurrent: true } }), /requires sequential tests/);
     const baseClock = (await handle.world.clock.get()).clock.clock;
     for (const fn of hooks.beforeEach) await fn();
     await handle.world.clock.advance(60_000);
@@ -87,6 +88,8 @@ test('world.resetState, checkpoints, appcheck endpoint, and Symbol.asyncDispose 
     assert.match(cp1, /^cp-\d+-[0-9a-f]{8}$/);
     assert.throws(() => world.snapshots.create('__fireemu_baseline__'), TypeError);
     assert.throws(() => world.snapshots.delete('__fireemu_baseline__'), TypeError);
+    await assert.rejects(world.checkpoint('..'), TypeError);
+    assert.throws(() => world.snapshots.create('.'), TypeError);
     const listed = await world.snapshots.list();
     assert.ok(!listed.snapshots.some(s => s.name === '__fireemu_baseline__'));
     const cp1Clock = (await world.clock.get()).clock.clock;
@@ -120,3 +123,28 @@ test('world.resetState, checkpoints, appcheck endpoint, and Symbol.asyncDispose 
   }
   assert.throws(() => world.endpoints, /disposed/);
 });
+
+for (const startRunning of [false, true]) {
+  test(`state rewind restores the clock's captured running mode (${startRunning})`, { skip: !hasBinary }, async () => {
+    const world = await createTestWorld({
+      binaryPath,
+      services: ['firestore'],
+      config: { schemaVersion: 1, daemon: { clock: startRunning ? 'realtime' : 'frozen' } },
+    });
+    try {
+      const running = async () => (await world.clock.get()).clock.running;
+      assert.equal(await running(), startRunning);
+      const checkpoint = await world.checkpoint();
+      const changeMode = () => world.control('POST', `/v1/sessions/default/clock:${startRunning ? 'freeze' : 'resume'}`, {});
+      await changeMode();
+      assert.equal(await running(), !startRunning);
+      await world.resetState();
+      assert.equal(await running(), startRunning);
+      await changeMode();
+      await world.restore(checkpoint);
+      assert.equal(await running(), startRunning);
+    } finally {
+      await world.dispose();
+    }
+  });
+}

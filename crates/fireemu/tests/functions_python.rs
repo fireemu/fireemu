@@ -361,7 +361,7 @@ fn a_python_trigger_family_that_is_deferred_fails_discovery_naming_the_function(
 
 #[test]
 #[ignore = "requires the fixture virtual environment; CI creates it"]
-fn a_virtual_clock_for_the_functions_runner_is_refused_for_a_python_codebase() {
+fn a_virtual_application_date_moves_with_the_daemon_clock() {
     let dir = scratch("clock");
     let firebase = firebase_json(&dir, &fixture(), None);
     let config = dir.join("fireemu.json");
@@ -371,16 +371,29 @@ fn a_virtual_clock_for_the_functions_runner_is_refused_for_a_python_codebase() {
     )
     .unwrap();
     let config = config.display().to_string();
-    let out = exec(&firebase, &["--config", &config], &["true"]);
-    let err = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert_eq!(out.status.code(), Some(1), "{err}");
-    assert!(
-        err.contains(
-            "does not support the requested virtual clock (Python code runs on real time)"
-        ),
-        "{err}"
+    let script = r#"import json, os, urllib.request
+base = 'http://' + os.environ['FIREEMU_FUNCTIONS_HOST']
+def instant():
+    return json.load(urllib.request.urlopen(base + '/demo-py/us-central1/application_clock', timeout=10))['instant']
+assert instant() == '2026-01-01T00:00:00+00:00'
+request = urllib.request.Request(os.environ['FIREEMU_CONTROL_URL'] + 'sessions/default/clock:advance',
+    data=b'{"seconds":60}', headers={'Authorization':'Bearer ' + os.environ['FIREEMU_CONTROL_TOKEN'],
+    'Content-Type':'application/json'})
+with urllib.request.urlopen(request, timeout=10) as response:
+    assert response.status == 200
+assert instant() == '2026-01-01T00:01:00+00:00'
+"#;
+    let out = exec(
+        &firebase,
+        &["--config", &config],
+        &[interpreter().to_str().unwrap(), "-c", script],
     );
     let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]

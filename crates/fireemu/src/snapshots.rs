@@ -550,6 +550,12 @@ impl SnapshotHook for TextIndexes {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ClockState {
+    instant: fireemu_core_types::time::LogicalInstant,
+    following: bool,
+}
+
 /// The virtual clock (shared; restored even when that moves it backwards).
 pub struct SessionClock(pub Arc<Mutex<VirtualClock>>);
 
@@ -561,33 +567,35 @@ impl SnapshotHook for SessionClock {
         true
     }
     fn capture(&self, _: &Scope) -> Result<SnapshotPart, TransitionFailure> {
-        let at = self
+        let clock = self
             .0
             .lock()
-            .map_err(|_| poisoned(self.name(), "the clock"))?
-            .now();
-        Ok(Arc::new(at))
+            .map_err(|_| poisoned(self.name(), "the clock"))?;
+        Ok(Arc::new(ClockState {
+            instant: clock.now(),
+            following: clock.is_following(),
+        }))
     }
     fn validate(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
-        let at = *part
-            .downcast_ref::<fireemu_core_types::time::LogicalInstant>()
+        let state = part
+            .downcast_ref::<ClockState>()
             .ok_or_else(|| wrong_shape(self.name()))?;
         self.0
             .lock()
             .map_err(|_| poisoned(self.name(), "the clock"))?
-            .validate_target(at)
+            .validate_target(state.instant)
             .map_err(|error| poisoned(self.name(), &error.to_string()))
     }
     fn restore(&self, _: &Scope, part: &SnapshotPart) -> Result<(), TransitionFailure> {
-        let at = *part
-            .downcast_ref::<fireemu_core_types::time::LogicalInstant>()
+        let state = part
+            .downcast_ref::<ClockState>()
             .ok_or_else(|| wrong_shape(self.name()))?;
         let mut clock = self
             .0
             .lock()
             .map_err(|_| poisoned(self.name(), "the clock"))?;
         clock
-            .try_set_allow_backwards(at)
+            .restore_session_time(state.instant, state.following)
             .map_err(|error| poisoned(self.name(), &error.to_string()))
     }
 }
@@ -752,37 +760,9 @@ impl SnapshotHook for PubSub {
         let snapshot = part
             .downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()
             .ok_or_else(|| wrong_shape(self.name()))?;
-        let _dead_letter = self
-            .1
-            .lock_dead_letter_gate()
-            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        let _publication = self
-            .1
-            .lock_publication()
-            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        {
-            let state = self
-                .0
-                .lock()
-                .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
-            state
-                .validate_restore_scope(|project| scope.owns_project(project), snapshot)
-                .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        }
         self.1
-            .invalidate_push_workers_where(|project| scope.owns_project(project))
-            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        {
-            let mut state = self
-                .0
-                .lock()
-                .map_err(|_| poisoned(self.name(), "the Pub/Sub state"))?;
-            state.restore_scope(|project| scope.owns_project(project), snapshot);
-        }
-        self.1
-            .reschedule_push_workers_where(|project| scope.owns_project(project))
-            .map_err(|reason| TransitionFailure::new(self.name(), reason))?;
-        Ok(())
+            .restore_snapshot_scope(|project| scope.owns_project(project), snapshot)
+            .map_err(|reason| TransitionFailure::new(self.name(), reason))
     }
     fn retained_bytes(&self, part: &SnapshotPart) -> u64 {
         part.downcast_ref::<fireemu_core_pubsub::state::PubSubScopeSnapshot>()

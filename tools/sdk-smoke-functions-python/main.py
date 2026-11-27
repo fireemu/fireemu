@@ -61,6 +61,11 @@ def hello(request):
 
 
 @https_fn.on_request()
+def application_clock(request):
+    return jsonify(instant=datetime.datetime.now(datetime.timezone.utc).isoformat())
+
+
+@https_fn.on_request()
 def boom(request):
     raise RuntimeError("kaboom")
 

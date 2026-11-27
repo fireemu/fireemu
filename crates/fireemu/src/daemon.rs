@@ -43,7 +43,7 @@ struct BoundStartup {
     verbosity: Verbosity,
     import: Option<PathBuf>,
     export_on_exit: Option<PathBuf>,
-    write_missing_indexes: Option<PathBuf>,
+    write_missing_indexes: Option<super::MissingIndexesOutput>,
     quiet: bool,
     clock: Arc<Mutex<VirtualClock>>,
     gateway: Gateway,
@@ -80,7 +80,7 @@ struct ServiceAssembly {
     verbosity: Verbosity,
     import: Option<PathBuf>,
     export_on_exit: Option<PathBuf>,
-    write_missing_indexes: Option<PathBuf>,
+    write_missing_indexes: Option<super::MissingIndexesOutput>,
     quiet: bool,
     clock: Arc<Mutex<VirtualClock>>,
     gateway: Gateway,
@@ -1273,7 +1273,7 @@ struct ReadySuite {
     only: Selection,
     quiet: bool,
     export_on_exit: Option<PathBuf>,
-    write_missing_indexes: Option<PathBuf>,
+    write_missing_indexes: Option<super::MissingIndexesOutput>,
     clock: Arc<Mutex<VirtualClock>>,
     backend: Arc<LocalBackend>,
     auth: Arc<AuthState>,
@@ -1746,7 +1746,8 @@ async fn serve_suite(
         }
         _ => 0,
     };
-    if let Some(path) = &write_missing_indexes {
+    if let Some(output) = &write_missing_indexes {
+        let path = &output.path;
         let reports = fireemu_adapter_grpc::gateway::missing_index_reports();
         let dropped = fireemu_adapter_grpc::gateway::missing_index_dropped(None);
         if dropped > 0 {
@@ -1756,20 +1757,14 @@ async fn serve_suite(
         }
         let distinct_databases: std::collections::BTreeSet<&str> =
             reports.iter().map(|r| r.database.as_str()).collect();
-        let has_named_db = distinct_databases
-            .iter()
-            .any(|db| !db.ends_with("/databases/(default)"));
-        if distinct_databases.len() > 1
-            || (has_named_db
-                && path.file_name().and_then(|n| n.to_str()) == Some("firestore.indexes.json"))
-        {
+        if !missing_indexes_output_matches(&distinct_databases, output.explicit) {
             errln!(
                 "error: --write-missing-indexes cannot merge missing indexes from database(s) ({}) into {}; pass an explicit per-database file path via --write-missing-indexes=<file>",
                 distinct_databases.into_iter().collect::<Vec<_>>().join(", "),
                 path.display()
             );
             code = export_failure_exit_code(code);
-        } else {
+        } else if !reports.is_empty() {
             match merge_missing_indexes_file(path, &reports) {
                 Ok(added) => {
                     if !quiet && added > 0 {
@@ -1852,6 +1847,17 @@ async fn serve_suite(
         flush();
     }
     outcome.map(|_| code)
+}
+
+fn missing_indexes_output_matches(
+    databases: &std::collections::BTreeSet<&str>,
+    explicit: bool,
+) -> bool {
+    databases.len() <= 1
+        && (explicit
+            || databases
+                .iter()
+                .all(|db| db.ends_with("/databases/(default)")))
 }
 
 /// Merges discovered missing Firestore composite indexes into `path` (`firestore.indexes.json`),
@@ -4561,6 +4567,33 @@ mod tests {
             emulator.ends_with("\r\n\r\n{\n  \"error\" : \"bad request\"\n}\n"),
             "{emulator}"
         );
+    }
+
+    #[test]
+    fn missing_indexes_output_requires_an_explicit_path_for_a_named_database() {
+        let default = "projects/demo/databases/(default)";
+        let named = "projects/demo/databases/other";
+        for (databases, implicit, explicit) in [
+            (vec![], true, true),
+            (vec![default], true, true),
+            (vec![named], false, true),
+            (vec![default, named], false, false),
+            (
+                vec![default, "projects/demo2/databases/(default)"],
+                false,
+                false,
+            ),
+        ] {
+            let databases = databases.into_iter().collect();
+            assert_eq!(
+                super::missing_indexes_output_matches(&databases, false),
+                implicit
+            );
+            assert_eq!(
+                super::missing_indexes_output_matches(&databases, true),
+                explicit
+            );
+        }
     }
 
     #[test]

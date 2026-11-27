@@ -8,6 +8,24 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-11-27
+
+### Added
+
+- Test worlds can rewind to the startup snapshot with `resetState()` or save and restore named checkpoints without starting a new daemon generation. The npm package provides Vitest and Playwright integrations and exposes the App Check endpoint. Python and Go wrappers are available in the repository.
+- Session snapshots include Pub/Sub and Remote Config state. Resource reports include Realtime Database namespaces and Remote Config templates.
+- `fireemu exec --write-missing-indexes[=<file>]` collects strict-profile Firestore composite index discoveries and merges them into the index file on exit.
+- Python Functions support virtual application dates with real timers and loopback debugging with debugpy installed in the codebase environment.
+
+### Changed
+
+- Firestore avoids reevaluating completed query reads in transactions when the store has not changed. The Emulator UI pauses polling while its tab is hidden and refreshes when it becomes visible.
+
+### Fixed
+
+- Security Rules count parentheses in optimized scalar member reads under the same expression budget as ordinary evaluation.
+- Browser Origin and metadata checks use consistent header validation on local listeners.
+
 ## [0.68.0] - 2026-11-27
 
 ### Added
@@ -1582,7 +1600,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.68.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.69.0...HEAD
+[0.69.0]: https://github.com/fireemu/fireemu/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/fireemu/fireemu/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/fireemu/fireemu/compare/v0.66.0...v0.67.0
 [0.66.0]: https://github.com/fireemu/fireemu/compare/v0.65.0...v0.66.0
