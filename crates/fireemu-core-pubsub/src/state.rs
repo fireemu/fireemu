@@ -184,34 +184,54 @@ pub struct PubSubScopeSnapshot {
 }
 
 impl PubSubScopeSnapshot {
-    /// A cheap, saturating estimate of the heap bytes retained by this snapshot.
+    /// Estimates retained heap bytes, charging each shared stored message once per capture.
     #[must_use]
     pub fn retained_bytes(&self) -> u64 {
-        let mut total = 0_u64;
-        for key in self.topics.keys() {
-            total = total.saturating_add(u64::try_from(key.len()).unwrap_or(u64::MAX) + 64);
+        let mut total = 0_usize;
+        for (key, topic) in &self.topics {
+            total = total
+                .saturating_add(PubSubState::owned_string_bytes(key))
+                .saturating_add(std::mem::size_of::<TopicEntry>())
+                .saturating_add(topic.name.project().len())
+                .saturating_add(topic.name.topic().len())
+                .saturating_add(PubSubState::snapshot_label_bytes(&topic.labels))
+                .saturating_add(PubSubState::snapshot_label_bytes(&topic.tags))
+                .saturating_add(topic.kms_key_name.capacity());
         }
         for key in self.external_topic_incarnations.keys() {
-            total = total.saturating_add(
-                u64::try_from(PubSubState::owned_string_bytes(key)).unwrap_or(u64::MAX),
-            );
+            total = total
+                .saturating_add(PubSubState::owned_string_bytes(key))
+                .saturating_add(std::mem::size_of::<u64>());
         }
         for (name, sub) in &self.subscriptions {
-            let (_, unacked_bytes, acked_bytes) = sub.retention_accounting();
             total = total
-                .saturating_add(u64::try_from(name.len()).unwrap_or(u64::MAX))
-                .saturating_add(unacked_bytes)
-                .saturating_add(acked_bytes)
-                .saturating_add(128);
+                .saturating_add(PubSubState::owned_string_bytes(name))
+                .saturating_add(sub.snapshot_metadata_bytes())
+                .saturating_add(PubSubState::snapshot_label_bytes(&sub.config().labels))
+                .saturating_add(PubSubState::snapshot_label_bytes(
+                    &sub.config().push_config.attributes,
+                ));
         }
         for (name, snap) in &self.snapshots {
-            total = total.saturating_add(u64::try_from(name.len()).unwrap_or(u64::MAX) + 64);
-            for msg in snap.captured_messages.iter() {
-                total =
-                    total.saturating_add(u64::try_from(msg.message.data.len()).unwrap_or(u64::MAX));
+            total = total
+                .saturating_add(PubSubState::owned_string_bytes(name))
+                .saturating_add(PubSubState::snapshot_owned_bytes(snap));
+        }
+        let queued = self
+            .subscriptions
+            .values()
+            .flat_map(SubscriptionState::snapshot_messages);
+        let captured = self
+            .snapshots
+            .values()
+            .flat_map(|snap| snap.captured_messages.iter().map(Arc::as_ref));
+        let mut seen = BTreeSet::new();
+        for message in queued.chain(captured) {
+            if seen.insert(message.message_id.as_str()) {
+                total = total.saturating_add(PubSubState::snapshot_shared_message_bytes(message));
             }
         }
-        total
+        u64::try_from(total).unwrap_or(u64::MAX)
     }
 }
 
@@ -4052,6 +4072,64 @@ mod tests {
         let error = state.validate_restore_scope(owns, &snapshot).unwrap_err();
         assert!(error.contains(&topic.to_full()), "{error}");
         assert!(state.topic_exists(&topic));
+    }
+
+    #[test]
+    fn scoped_snapshot_accounts_for_shared_attribute_only_messages() {
+        let topic = topic("publisher", "orders");
+        let source = SubscriptionName::new("publisher", "orders-sub").unwrap();
+        let attributes = (0..8)
+            .map(|i| (format!("key-{i}"), "v".repeat(1024)))
+            .collect();
+        let message = PubsubMessage {
+            attributes,
+            ordering_key: "o".repeat(1024),
+            ..PubsubMessage::default()
+        };
+        let message_bytes = u64::try_from(
+            message.ordering_key.len()
+                + message
+                    .attributes
+                    .iter()
+                    .map(|(key, value)| key.len() + value.len())
+                    .sum::<usize>(),
+        )
+        .unwrap();
+        let estimate = |publish, retain_in_native_snapshot| {
+            let now = LogicalInstant::from_unix_seconds(1);
+            let mut state = PubSubState::new(42);
+            state.create_topic(topic.clone(), BTreeMap::new()).unwrap();
+            for name in ["orders-sub", "orders-copy"] {
+                state
+                    .create_subscription(sub_cfg("publisher", name, "orders", Filter::always()))
+                    .unwrap();
+            }
+            if publish {
+                state.publish(&topic, vec![message.clone()], now).unwrap();
+            }
+            if retain_in_native_snapshot {
+                state
+                    .create_snapshot(
+                        "projects/publisher/snapshots/orders-checkpoint",
+                        &source,
+                        BTreeMap::new(),
+                        now,
+                    )
+                    .unwrap();
+                state.delete_subscription(&source).unwrap();
+                let copy = SubscriptionName::new("publisher", "orders-copy").unwrap();
+                state.delete_subscription(&copy).unwrap();
+            }
+            state.capture_scope(|_| true).retained_bytes()
+        };
+        for retain_in_native_snapshot in [false, true] {
+            let added = estimate(true, retain_in_native_snapshot)
+                - estimate(false, retain_in_native_snapshot);
+            assert!(
+                (message_bytes..2 * message_bytes).contains(&added),
+                "attribute and ordering bytes should be charged once: {added} for {message_bytes}"
+            );
+        }
     }
 
     #[test]

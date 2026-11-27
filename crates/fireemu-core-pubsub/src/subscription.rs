@@ -1101,6 +1101,34 @@ impl SubscriptionState {
         Ok(())
     }
 
+    /// Owned subscription and delivery metadata, excluding shared messages and string maps.
+    pub(crate) fn snapshot_metadata_bytes(&self) -> usize {
+        let mut total = std::mem::size_of::<Self>()
+            .saturating_add(
+                self.entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Entry>()),
+            )
+            .saturating_add(self.config.name.project().len())
+            .saturating_add(self.config.name.subscription().len())
+            .saturating_add(self.config.topic.project().len())
+            .saturating_add(self.config.topic.topic().len())
+            .saturating_add(self.config.filter.as_str().len())
+            .saturating_add(self.config.push_config.push_endpoint.capacity());
+        for id in self.outstanding.keys() {
+            // The delivery entry and the index both own a copy of the ack ID.
+            total = total
+                .saturating_add(id.capacity().saturating_mul(2))
+                .saturating_add(std::mem::size_of::<(String, usize)>())
+                .saturating_add(64);
+        }
+        total
+    }
+
+    pub(crate) fn snapshot_messages(&self) -> impl Iterator<Item = &StoredMessage> {
+        self.entries.iter().map(|entry| entry.stored.as_ref())
+    }
+
     /// Retained payload accounting for the resource diagnostics: `(unacknowledged messages,
     /// their payload bytes, acknowledged-but-retained payload bytes)`. Acknowledged entries
     /// stay retained only while a snapshot or the retention window still needs them, so their
