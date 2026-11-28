@@ -1,4 +1,5 @@
 //! `fireemu` command-line entry point.
+#![cfg_attr(not(test), deny(clippy::print_stdout))]
 //!
 //! ```text
 //! fireemu init [options]
@@ -322,21 +323,21 @@ fn main() -> ExitCode {
         // Version is answered before anything else so tooling that records which build it
         // drove (benchmarks, packaging) never has to start a daemon to find out.
         Some("--version" | "-V" | "version") if args.len() == 1 => {
-            println!("fireemu {}", env!("CARGO_PKG_VERSION"));
+            term::write_stdout_line(&format!("fireemu {}", env!("CARGO_PKG_VERSION")));
             ExitCode::SUCCESS
         }
         Some("--version" | "-V" | "version") => fail(&CliError::usage("usage: fireemu --version")),
         Some("init") => match init::run(&args[1..]) {
             Ok(path) => {
-                println!("created {}", diagnostic_path(&path));
+                term::write_stdout_line(&format!("created {}", diagnostic_path(&path)));
                 let configuration = if path.with_file_name("fireemu.json").is_file() {
                     "fireemu.json"
                 } else {
                     "fireemu.toml"
                 };
-                println!(
+                term::write_stdout_line(&format!(
                     "next: fireemu up ({configuration} in this directory is loaded automatically)"
-                );
+                ));
                 ExitCode::SUCCESS
             }
             Err(e) => fail_for(command, &e),
@@ -380,14 +381,13 @@ fn main() -> ExitCode {
         // options the daemon does and reports the profile they resolve to.
         Some("capabilities") => match parse_options(&args[1..], OptionContext::Inspect) {
             Ok((options, None)) => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&control::capabilities_manifest(
+                term::write_stdout_line(
+                    &serde_json::to_string_pretty(&control::capabilities_manifest(
                         options.cfg.profile,
                         options.cfg.production_exact,
                         &options.cfg.development_defaults,
                     ))
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
                 );
                 ExitCode::SUCCESS
             }
@@ -423,7 +423,7 @@ fn test_world_config_command(args: &[String]) -> Result<(), CliError> {
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
     let (document, _) = read_config_file(path, is_toml)?;
-    println!("{document}");
+    term::write_stdout_line(&document.to_string());
     Ok(())
 }
 
@@ -487,11 +487,16 @@ fn config_schema_command(args: &[String]) -> Result<(), CliError> {
     }
     match out {
         Some(path) => init::replace_config(Path::new(path), config::CONFIG_SCHEMA_JSON.as_bytes()),
-        None => std::io::Write::write_all(
-            &mut std::io::stdout().lock(),
-            config::CONFIG_SCHEMA_JSON.as_bytes(),
-        )
-        .map_err(|e| CliError::refused(format!("cannot write the schema: {e}"))),
+        None => {
+            match std::io::Write::write_all(
+                &mut std::io::stdout().lock(),
+                config::CONFIG_SCHEMA_JSON.as_bytes(),
+            ) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+                Err(e) => Err(CliError::refused(format!("cannot write the schema: {e}"))),
+            }
+        }
     }
 }
 
@@ -640,9 +645,8 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
         }
     }
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&rows).expect("configuration rows")
+        term::write_stdout_line(
+            &serde_json::to_string_pretty(&rows).expect("configuration rows"),
         );
     } else {
         for row in rows {
@@ -653,12 +657,12 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
             } else {
                 row["value"].to_string()
             };
-            println!(
+            term::write_stdout_line(&format!(
                 "{} = {} ({})",
                 row["key"].as_str().expect("key"),
                 value,
                 row["source"].as_str().expect("source")
-            );
+            ));
             if let Some(effective) = row["effective"].as_object() {
                 let surfaces: Vec<String> = effective
                     .iter()
@@ -668,9 +672,12 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
                     || "every product selected".to_owned(),
                     |list| format!("--only {list}"),
                 );
-                println!("  in effect ({scope}): {}", surfaces.join("; "));
+                term::write_stdout_line(&format!(
+                    "  in effect ({scope}): {}",
+                    surfaces.join("; ")
+                ));
                 if let Some(note) = row["note"].as_str() {
-                    println!("  note: {note}");
+                    term::write_stdout_line(&format!("  note: {note}"));
                 }
             }
         }
@@ -753,13 +760,10 @@ fn config_lint(flags: &[String], json: bool, options: &LintOptions) -> Result<()
                 .collect::<Vec<_>>(),
             "denied": denied,
         });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).expect("lint report")
-        );
+        term::write_stdout_line(&serde_json::to_string_pretty(&report).expect("lint report"));
     } else if let Some(path) = &path {
         if settings.is_empty() {
-            println!("{path}: no ineffective settings");
+            term::write_stdout_line(&format!("{path}: no ineffective settings"));
         }
         for setting in &settings {
             let label = if setting.allowed {
@@ -767,10 +771,10 @@ fn config_lint(flags: &[String], json: bool, options: &LintOptions) -> Result<()
             } else {
                 "ineffective"
             };
-            println!("{label}: {} ({path})", setting.note);
+            term::write_stdout_line(&format!("{label}: {} ({path})", setting.note));
         }
     } else {
-        println!("no fireemu.toml or fireemu.json to lint; nothing is checked");
+        term::write_stdout_line("no fireemu.toml or fireemu.json to lint; nothing is checked");
     }
     if options.deny && !denied.is_empty() {
         return Err(CliError::refused(format!(
@@ -830,18 +834,18 @@ fn help_command(args: &[String]) -> Option<ExitCode> {
     let first = args.first()?.as_str();
     match first {
         "--help" | "-h" => {
-            print!("{}", help::overall_help());
+            term::write_stdout(&help::overall_help());
             Some(ExitCode::SUCCESS)
         }
         "help" => Some(
             match args[1..].iter().map(String::as_str).collect::<Vec<_>>()[..] {
                 [] | ["--help" | "-h"] => {
-                    print!("{}", help::overall_help());
+                    term::write_stdout(&help::overall_help());
                     ExitCode::SUCCESS
                 }
                 [name] => match help::Topic::for_command(name) {
                     Some(topic) => {
-                        print!("{}", help::command_help(topic));
+                        term::write_stdout(&help::command_help(topic));
                         ExitCode::SUCCESS
                     }
                     None => fail(&CliError::usage(format!(
@@ -857,7 +861,7 @@ fn help_command(args: &[String]) -> Option<ExitCode> {
             if !help::requested(topic, &args[1..]) {
                 return None;
             }
-            print!("{}", help::command_help(topic));
+            term::write_stdout(&help::command_help(topic));
             Some(ExitCode::SUCCESS)
         }
     }

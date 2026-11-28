@@ -171,11 +171,34 @@ fn paint_tokens(text: &str) -> String {
     out
 }
 
-/// `println!` whose line is painted when stdout takes colour. The text written otherwise is
-/// exactly what `println!` writes.
+/// Writes `text` to stdout, exiting cleanly with status 0 if the downstream pipe closed.
+pub(crate) fn write_stdout(text: &str) {
+    let mut out = std::io::stdout().lock();
+    if let Err(err) = std::io::Write::write_all(&mut out, text.as_bytes()) {
+        if err.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        panic!("failed printing to stdout: {err}");
+    }
+}
+
+/// Writes `text` followed by a newline to stdout, exiting cleanly with status 0 on `BrokenPipe`.
+pub(crate) fn write_stdout_line(text: &str) {
+    let mut out = std::io::stdout().lock();
+    let res = std::io::Write::write_all(&mut out, text.as_bytes())
+        .and_then(|()| std::io::Write::write_all(&mut out, b"\n"));
+    if let Err(err) = res {
+        if err.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(0);
+        }
+        panic!("failed printing to stdout: {err}");
+    }
+}
+
+/// `println!` whose line is painted when stdout takes colour and exits cleanly on `BrokenPipe`.
 macro_rules! outln {
     ($($arg:tt)*) => {
-        println!("{}", $crate::term::paint($crate::term::Stream::Stdout, &format!($($arg)*)))
+        $crate::term::write_stdout_line(&$crate::term::paint($crate::term::Stream::Stdout, &format!($($arg)*)))
     };
 }
 

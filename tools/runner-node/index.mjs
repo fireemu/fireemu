@@ -518,13 +518,27 @@ function rejectAsyncOption(value, field) {
   return value;
 }
 
+function isResetValue(value) {
+  if (value == null || typeof value !== "object") return false;
+  if (value[Symbol.for("firebase-functions:ResetValue:Tag")] === true) return true;
+  // firebase-functions 6.x ResetValue predates the symbol tag: `constructor.name === "ResetValue"`
+  // and `toJSON() === null`. Never read `.value` here so single-read Expression accessors stay intact.
+  if (
+    value.constructor?.name === "ResetValue" &&
+    typeof value.toJSON === "function" &&
+    value.toJSON() === null
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // SDK endpoint options keep Expression objects until the local runtime resolves
 // them. JSON/toString encode a deployment expression, not its runtime value.
 // Match the existing numeric-option `.value()` protocol, but never read its
 // accessor twice or coerce an unresolved value into false/true/default.
 function resolvedOption(value, field) {
-  if (value == null) return undefined;
-  if (value?.[Symbol.for("firebase-functions:ResetValue:Tag")] === true) return undefined;
+  if (value == null || isResetValue(value)) return undefined;
   if (typeof value === "object") {
     const evaluate = value.value;
     if (typeof evaluate === "function") {
@@ -573,7 +587,7 @@ function resolvedNonNegativeInteger(value, field) {
 // Do not stringify an Expression (that emits its deployment representation),
 // coerce malformed values, or retain a caller-owned map with a later toJSON.
 function triggerRecord(value, field) {
-  if (value == null || value?.[Symbol.for("firebase-functions:ResetValue:Tag")] === true) {
+  if (value == null || isResetValue(value)) {
     return Object.create(null);
   }
   rejectAsyncOption(value, field);
@@ -690,10 +704,14 @@ function describeSchedule(base, value) {
 function platformOptions(ep) {
   if (!ep) return undefined;
   const options = {};
-  const preserveExternalChanges =
+  const rawPreserveExternalChanges =
     ep.preserveExternalChanges ??
     (ep.platform === "gcfv2" ? discoveredGlobalOptions.preserveExternalChanges : undefined);
-  if (preserveExternalChanges != null)
+  const preserveExternalChanges = resolvedOption(
+    rawPreserveExternalChanges,
+    "preserveExternalChanges",
+  );
+  if (preserveExternalChanges !== undefined)
     options.preserveExternalChanges = Boolean(preserveExternalChanges);
   const availableMemoryMb = resolvedNonNegativeInteger(ep.availableMemoryMb, "availableMemoryMb");
   if (availableMemoryMb !== undefined) options.availableMemoryMb = availableMemoryMb;
@@ -701,16 +719,26 @@ function platformOptions(ep) {
   if (minInstances !== undefined) options.minInstances = minInstances;
   const maxInstances = resolvedNonNegativeInteger(ep.maxInstances, "maxInstances");
   if (maxInstances !== undefined) options.maxInstances = maxInstances;
-  if (ep.ingressSettings != null) options.ingressSettings = ep.ingressSettings;
+  const ingressSettings = resolvedOption(ep.ingressSettings, "ingressSettings");
+  if (ingressSettings !== undefined) options.ingressSettings = ingressSettings;
   if (ep.httpsTrigger?.invoker?.length) options.invoker = ep.httpsTrigger.invoker;
-  if (ep.serviceAccountEmail != null) options.serviceAccountEmail = ep.serviceAccountEmail;
-  if (ep.vpc?.connector != null) options.vpcConnector = ep.vpc.connector;
-  if (ep.vpc?.egressSettings != null) options.vpcEgressSettings = ep.vpc.egressSettings;
-  if (ep.labels && Object.keys(ep.labels).length > 0) options.labels = ep.labels;
+  const serviceAccountEmail = resolvedOption(ep.serviceAccountEmail, "serviceAccountEmail");
+  if (serviceAccountEmail !== undefined) options.serviceAccountEmail = serviceAccountEmail;
+  const vpc = resolvedOption(ep.vpc, "vpc");
+  if (vpc && typeof vpc === "object") {
+    const vpcConnector = resolvedOption(vpc.connector, "vpc.connector");
+    if (vpcConnector !== undefined) options.vpcConnector = vpcConnector;
+    const vpcEgressSettings = resolvedOption(vpc.egressSettings, "vpc.egressSettings");
+    if (vpcEgressSettings !== undefined) options.vpcEgressSettings = vpcEgressSettings;
+  }
+  if (ep.labels && !isResetValue(ep.labels) && Object.keys(ep.labels).length > 0) {
+    options.labels = ep.labels;
+  }
   if (ep.platform === "gcfv2") {
-    if (ep.cpu != null) options.cpu = String(ep.cpu);
-    if (Array.isArray(ep.vpc?.networkInterfaces))
-      options.networkInterfaces = ep.vpc.networkInterfaces;
+    const cpu = resolvedOption(ep.cpu, "cpu");
+    if (cpu !== undefined) options.cpu = String(cpu);
+    if (vpc && typeof vpc === "object" && Array.isArray(vpc.networkInterfaces))
+      options.networkInterfaces = vpc.networkInterfaces;
   }
   if (Array.isArray(ep.secretEnvironmentVariables)) {
     options.secrets = ep.secretEnvironmentVariables.map((secret) => secret.key).filter(Boolean);
@@ -1438,8 +1466,21 @@ async function makeHttpServer(functions, manifest) {
         ? blockingFailure(error, HttpsErrors)
         : invocationFailure(error);
       try {
-        const diagnostic = blocking ? invocationFailure(error).diagnostic : failure.diagnostic;
-        log("error", `${spec.name}: ${diagnostic}`, undefined, spec.name);
+        const expectedHttpsError =
+          blocking &&
+          Array.isArray(HttpsErrors) &&
+          HttpsErrors.some((Ctor) => typeof Ctor === "function" && error instanceof Ctor) &&
+          !(
+            failure.canonicalName === "UNAVAILABLE" &&
+            failure.status === 503 &&
+            failure.message === "An unexpected error occurred."
+          );
+        if (expectedHttpsError) {
+          log("warn", `${spec.name}: ${failure.canonicalName}: ${failure.message}`, undefined, spec.name);
+        } else {
+          const diagnostic = blocking ? invocationFailure(error).diagnostic : failure.diagnostic;
+          log("error", `${spec.name}: ${diagnostic}`, undefined, spec.name);
+        }
       } catch {
         // Diagnostics cannot suppress the already classified response.
       }

@@ -1153,11 +1153,10 @@ pub(crate) fn run(
     match build(options, exec, command, parent) {
         Ok((plan, errors)) => {
             match format {
-                PlanFormat::Json => println!(
-                    "{}",
-                    serde_json::to_string_pretty(&plan).expect("the plan is JSON")
+                PlanFormat::Json => crate::term::write_stdout_line(
+                    &serde_json::to_string_pretty(&plan).expect("the plan is JSON"),
                 ),
-                PlanFormat::Text => print!("{}", text(&plan)),
+                PlanFormat::Text => crate::term::write_stdout(&text(&plan)),
             }
             if errors.is_empty() {
                 ExitCode::SUCCESS

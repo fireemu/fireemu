@@ -255,7 +255,7 @@ fn report() -> (String, bool) {
 /// than merely optional and absent, so `doctor` can gate an install in a script.
 pub fn run() -> std::process::ExitCode {
     let (text, problem) = report();
-    print!("{text}");
+    crate::term::write_stdout(&text);
     if problem {
         std::process::ExitCode::FAILURE
     } else {
@@ -269,10 +269,10 @@ pub fn run_export_dir(path: &Path) -> std::process::ExitCode {
         .and_then(|resolved| crate::import_export::may_overwrite(&resolved));
     match result {
         Ok(()) => {
-            println!(
+            crate::term::write_stdout_line(&format!(
                 "export destination: {} (preflight passed; checked again when exporting)",
                 path.display()
-            );
+            ));
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
@@ -290,13 +290,13 @@ pub fn run_export_dir(path: &Path) -> std::process::ExitCode {
 /// the plain `doctor` stays offline; the control API must be loopback.
 pub fn run_connect(control_url: &str) -> std::process::ExitCode {
     let (text, problem) = report();
-    print!("{text}");
+    crate::term::write_stdout(&text);
     match connect_report(control_url) {
         Ok(lines) => {
-            println!();
-            println!("connected to {control_url}");
+            crate::term::write_stdout_line("");
+            crate::term::write_stdout_line(&format!("connected to {control_url}"));
             for line in lines {
-                println!("{line}");
+                crate::term::write_stdout_line(&line);
             }
             if problem {
                 std::process::ExitCode::FAILURE

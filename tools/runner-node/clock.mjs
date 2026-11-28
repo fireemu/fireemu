@@ -115,10 +115,40 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
 
   function cancel(value) {
     const handle = value instanceof Timer ? value : handles.get(Number(value));
-    if (!handle) return;
+    if (!handle) {
+      native.clearTimeout(value);
+      return;
+    }
     handle.cancelled = true;
     queue.delete(handle.id);
     handles.delete(handle.id);
+  }
+
+  function cancelInterval(value) {
+    const handle = value instanceof Timer ? value : handles.get(Number(value));
+    if (!handle) {
+      native.clearInterval(value);
+      return;
+    }
+    handle.cancelled = true;
+    queue.delete(handle.id);
+    handles.delete(handle.id);
+  }
+
+  // Internal gRPC transport timers (BackoffTimeout, ResolvingCall deadlines, subchannel
+  // keepalive/cleanup) live inside `@grpc/grpc-js`. Freezing them under a non-following
+  // virtual clock deadlocks Admin SDK calls inside Functions triggers. Exempt only when
+  // the immediate caller frame outside `clock.mjs` belongs to `@grpc/grpc-js`.
+  function isTransportTimerCaller() {
+    const stack = new Error().stack;
+    if (typeof stack !== 'string') return false;
+    const lines = stack.split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const normalized = lines[i].replace(/\\/g, '/');
+      if (normalized.includes('/runner-node/clock.mjs')) continue;
+      return normalized.includes('node_modules/') && /@grpc[+/]grpc-js\//.test(normalized);
+    }
+    return false;
   }
 
   function promiseTimeout(duration, value, config = {}) {
@@ -199,9 +229,16 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     },
   });
   const virtual = {
-    setTimeout: (callback, duration, ...args) => schedule(callback, duration, args, false),
-    setInterval: (callback, duration, ...args) => schedule(callback, duration, args, true),
-    clearTimeout: cancel, clearInterval: cancel,
+    setTimeout: (callback, duration, ...args) =>
+      isTransportTimerCaller()
+        ? native.setTimeout(callback, duration, ...args)
+        : schedule(callback, duration, args, false),
+    setInterval: (callback, duration, ...args) =>
+      isTransportTimerCaller()
+        ? native.setInterval(callback, duration, ...args)
+        : schedule(callback, duration, args, true),
+    clearTimeout: cancel,
+    clearInterval: cancelInterval,
   };
   Object.defineProperty(virtual.setTimeout, promisify.custom, {value:promiseTimeout});
 
