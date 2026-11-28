@@ -547,26 +547,20 @@ fn only_keeps_the_app_check_enforcement_a_selected_product_is_configured_with() 
 fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_and_in_effect() {
     let dir = scratch("defaults-appcheck-dlq");
     let exchange = r#"curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"debugToken":"a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"}' "http://$FIREEMU_APP_CHECK_EMULATOR_HOST/v1/projects/demo-exec/apps/1:1234567890:web:local-test-app:exchangeDebugToken""#;
-    let run = |config: Option<&str>| {
+    let run = |config: Option<&str>, plan: bool| {
         let mut command = daemon();
         if let Some(config) = config {
             let path = dir.join("fireemu-case.json");
             std::fs::write(&path, config).unwrap();
             command.arg("--config").arg(path);
         }
-        let output = command
-            .args([
-                "--project",
-                "demo-exec",
-                "--pubsub-port",
-                "0",
-                "--",
-                "/bin/sh",
-                "-c",
-                &format!("{exchange} || true"),
-            ])
-            .output()
-            .unwrap();
+        command.args(["--project", "demo-exec", "--pubsub-port", "0"]);
+        if plan {
+            command.args(["--plan", "--", "/bin/sh", "-c", "true"]);
+        } else {
+            command.args(["--", "/bin/sh", "-c", &format!("{exchange} || true")]);
+        }
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -575,7 +569,7 @@ fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_an
         String::from_utf8_lossy(&output.stdout).into_owned()
     };
 
-    let open = run(None);
+    let open = run(None, false);
     assert!(
         open.contains("exchanges any well-formed debug token"),
         "{open}"
@@ -583,16 +577,22 @@ fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_an
     assert!(open.contains("(kid "), "{open}");
     assert!(open.contains("forwarded without grants"), "{open}");
     assert!(
-        open.contains("appCheck.debugTokens: any (default)"),
-        "{open}"
-    );
-    assert!(
-        open.contains("pubsub.deadLetterAuthorization: implicit (default)"),
+        open.contains("productionExact: false (") && open.contains("use --plan to list)"),
         "{open}"
     );
     assert!(open.trim_end().ends_with("200"), "{open}");
+    let open_plan = run(None, true);
+    assert!(
+        open_plan.contains("appCheck.debugTokens = any (default)"),
+        "{open_plan}"
+    );
+    assert!(
+        open_plan.contains("pubsub.deadLetterAuthorization = implicit (default)"),
+        "{open_plan}"
+    );
 
-    let exact = run(Some(r#"{"schemaVersion":1,"productionExact":true}"#));
+    let exact_cfg = r#"{"schemaVersion":1,"productionExact":true}"#;
+    let exact = run(Some(exact_cfg), false);
     assert!(
         !exact.contains("exchanges any well-formed debug token"),
         "{exact}"
@@ -602,23 +602,24 @@ fn the_development_defaults_for_app_check_and_dead_letters_show_in_the_banner_an
         exact.contains("gcp-sa-pubsub.iam.gserviceaccount.com"),
         "{exact}"
     );
-    assert!(
-        exact.contains("appCheck.debugTokens: registered (productionExact)"),
-        "{exact}"
-    );
     // Not served at all without registration: the variable is not exported, the request fails.
     assert!(!exact.trim_end().ends_with("200"), "{exact}");
-
-    let block = run(Some(
-        r#"{"schemaVersion":1,"appCheck":{"enabled":true,"apps":[{"projectId":"demo-exec","projectNumber":"1234567890","appId":"1:1234567890:web:local-test-app"}]}}"#,
-    ));
+    let exact_plan = run(Some(exact_cfg), true);
     assert!(
-        block.contains("appCheck.debugTokens: registered (derived from the appCheck block)"),
-        "{block}"
+        exact_plan.contains("appCheck.debugTokens = registered (productionExact)"),
+        "{exact_plan}"
     );
+
+    let block_cfg = r#"{"schemaVersion":1,"appCheck":{"enabled":true,"apps":[{"projectId":"demo-exec","projectNumber":"1234567890","appId":"1:1234567890:web:local-test-app"}]}}"#;
+    let block = run(Some(block_cfg), false);
     assert!(
         block.trim_end().ends_with("403"),
         "an unregistered digest is refused: {block}"
+    );
+    let block_plan = run(Some(block_cfg), true);
+    assert!(
+        block_plan.contains("appCheck.debugTokens = registered (derived from the appCheck block)"),
+        "{block_plan}"
     );
 }
 
