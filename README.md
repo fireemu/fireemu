@@ -20,15 +20,29 @@ What you get out of the box:
 
 ## Quick start
 
-Install Fireemu, generate a config file, and start the emulators:
+Install Fireemu via npm or Nix, generate a config file, and start the emulators:
 
 ```sh
+# npm (includes CLI + fireemu/testing, fireemu/vitest, fireemu/playwright)
 npm install --save-dev fireemu
 npx fireemu init
 
 # Start the emulators (default UI: http://127.0.0.1:4000/ui/)
 npx fireemu up
 ```
+
+Or with Nix flakes (installs the standalone `fireemu` CLI binary with bundled Emulator UI and Functions runners; no Java or global npm install required):
+
+```sh
+# Run directly
+nix run github:fireemu/fireemu -- init
+nix run github:fireemu/fireemu -- up
+
+# Or install into your profile
+nix profile install github:fireemu/fireemu
+```
+
+If you use `fireemu/testing`, `fireemu/vitest`, or `fireemu/playwright`, install the `fireemu` npm package as well (you can point it at a Nix-built binary with `FIREEMU_BINARY_PATH=$(which fireemu)`).
 
 Press `Ctrl+C` to stop. For test runs and CI, use `exec` to start Fireemu, inject the Firebase emulator environment variables, run your command, and shut down with its exit code:
 

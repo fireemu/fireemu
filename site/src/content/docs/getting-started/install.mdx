@@ -22,11 +22,34 @@ To run Node.js Cloud Functions, install `firebase-functions` v6 or v7 in your Fu
 
 ## Install
 
-Add Fireemu to your project's devDependencies:
+<Tabs syncKey="install-method">
+<TabItem label="npm">
+
+Add Fireemu to your project's devDependencies (includes the CLI plus `fireemu/testing`, `fireemu/vitest`, `fireemu/playwright`, and `fireemu/control`):
 
 ```sh
 npm install --save-dev fireemu
 ```
+
+</TabItem>
+<TabItem label="Nix (Flakes)">
+
+Install the standalone `fireemu` CLI binary (with the bundled Emulator UI and Functions runners) via Nix flakes:
+
+```sh
+# Install into your profile
+nix profile install github:fireemu/fireemu
+
+# Or run directly without installing
+nix run github:fireemu/fireemu -- --version
+```
+
+In a project `flake.nix`, add `fireemu.url = "github:fireemu/fireemu";` and include `inputs.fireemu.packages.${system}.default` in your `devShell`.
+
+> **Note:** Nix provides the `fireemu` CLI binary. If your test suite imports `fireemu/testing`, `fireemu/vitest`, or `fireemu/playwright`, install the `fireemu` npm package as well (you can point it at the Nix binary with `FIREEMU_BINARY_PATH=$(which fireemu)`).
+
+</TabItem>
+</Tabs>
 
 ## Create `fireemu.toml`
 
