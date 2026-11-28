@@ -166,7 +166,12 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     for (let i = 1; i < lines.length; i++) {
       const normalized = lines[i].replace(/\\/g, '/');
       if (normalized.includes('/runner-node/clock.mjs')) continue;
-      return normalized.includes('node_modules/') && /@grpc[+/]grpc-js\//.test(normalized);
+      return (
+        normalized.includes('node_modules/') &&
+        /(?:@grpc[+/]grpc-js|google-gax|@google-cloud[+/](?:firestore|storage)|gaxios|google-auth-library)\//.test(
+          normalized,
+        )
+      );
     }
     return false;
   }
