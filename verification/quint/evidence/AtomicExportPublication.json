@@ -2148,7 +2148,7 @@
     },
     "crates/fireemu/src/daemon.rs": {
       "kind": "sha256",
-      "value": "ba0b4accfeae137003bcc728d2e10a6c9f0672d97ca6a72d975e47c369fd77dd"
+      "value": "1e3565a33fc63a0ec8dfa21450ff14fc3d1d481c224ed43c0b37c4dad1853e33"
     },
     "crates/fireemu/src/daemon/auth_startup.rs": {
       "kind": "sha256",

@@ -4791,6 +4791,20 @@ mod tests {
             cg_pos < qs_pos && qs_pos < fields_pos,
             "composite index keys must follow collectionGroup -> queryScope -> fields:\n{raw_written}"
         );
+        // Exact formatting & field-level key order checks (kills indentation, duplicate-key, and field-order mutants).
+        assert!(
+            raw_written.starts_with("{\n  \"indexes\": [\n    {\n"),
+            "unexpected top-level indentation:\n{raw_written}"
+        );
+        assert!(
+            raw_written.contains("    {\n      \"collectionGroup\": \"orders\",\n      \"queryScope\": \"COLLECTION\",\n      \"fields\": [\n        {\n          \"fieldPath\": \"userId\",\n          \"order\": \"ASCENDING\"\n        },"),
+            "unexpected pretty formatting or field key order:\n{raw_written}"
+        );
+        assert_eq!(
+            raw_written.matches("\"collectionGroup\"").count(),
+            3,
+            "keys must not be duplicated:\n{raw_written}"
+        );
         let written: serde_json::Value = serde_json::from_str(&raw_written).unwrap();
         assert_eq!(written["indexes"].as_array().unwrap().len(), 2);
         assert_eq!(written["fieldOverrides"].as_array().unwrap().len(), 1);
