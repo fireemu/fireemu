@@ -22,11 +22,34 @@ Node.jsのCloud Functionsを動かすには、コードベースに`firebase-fun
 
 ## インストール
 
-プロジェクトの開発依存にFireemuを追加します。
+<Tabs syncKey="install-method">
+<TabItem label="npm">
+
+プロジェクトの開発依存にFireemuを追加します（CLIに加えて`fireemu/testing`、`fireemu/vitest`、`fireemu/playwright`、`fireemu/control`を含みます）。
 
 ```sh
 npm install --save-dev fireemu
 ```
+
+</TabItem>
+<TabItem label="Nix (Flakes)">
+
+Nix flakesを使って単体の`fireemu` CLIバイナリ（Emulator UIとFunctionsランナー同梱）をインストールできます。
+
+```sh
+# プロファイルにインストール
+nix profile install github:fireemu/fireemu
+
+# インストールせずに直接実行
+nix run github:fireemu/fireemu -- --version
+```
+
+プロジェクトの`flake.nix`では`fireemu.url = "github:fireemu/fireemu";`を追加し、`devShell`に`inputs.fireemu.packages.${system}.default`を含めてください。
+
+> **Note:** Nixが提供するのは`fireemu` CLIバイナリです。`fireemu/testing`・`fireemu/vitest`・`fireemu/playwright`を使う場合はnpmパッケージも併用してください（`FIREEMU_BINARY_PATH=$(which fireemu)`でNixバイナリを指定できます）。
+
+</TabItem>
+</Tabs>
 
 ## `fireemu.toml`を作成する
 

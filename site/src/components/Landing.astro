@@ -4,7 +4,7 @@
 // code blocks and footer are the same components the docs pages use. The words come from
 // src/i18n/<locale>.json and internal links stay in the page's locale.
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
-import { Code } from '@astrojs/starlight/components';
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components';
 import { loadRepositoryData, verifiedAreaCount } from '../data/compat.mjs';
 import { pageLocale } from '../i18n/ui.mjs';
 import '../styles/landing.css';
@@ -16,6 +16,10 @@ const verifiedAreas = verifiedAreaCount((await loadRepositoryData()).closures);
 const startCommands = `npm install --save-dev fireemu
 npx fireemu init
 npx fireemu up`;
+
+const startCommandsNix = `nix profile install github:fireemu/fireemu
+fireemu init
+fireemu up`;
 
 const testCommand = `npx fireemu exec -- npm test`;
 
@@ -126,7 +130,14 @@ const resources = [
 				</p>
 			</div>
 			<aside class="lp-start" aria-label={t('landing.quickStart')}>
-				<Code code={startCommands} lang="sh" title={t('landing.startLocally')} />
+				<Tabs syncKey="install-method">
+					<TabItem label="npm">
+						<Code code={startCommands} lang="sh" title={t('landing.startLocally')} />
+					</TabItem>
+					<TabItem label="Nix (Flakes)">
+						<Code code={startCommandsNix} lang="sh" title={t('landing.startLocally')} />
+					</TabItem>
+				</Tabs>
 				<p class="lp-meta">{t('landing.platforms')}</p>
 				<div class="lp-next">
 					<Code code={testCommand} lang="sh" title={t('landing.runTests')} />
