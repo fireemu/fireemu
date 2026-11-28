@@ -110,8 +110,8 @@ pnpm -C ui mutation -- --since "$(git merge-base origin/main HEAD)" --undo-chang
 pnpm -C ui mutation -- src/lib/rtdbTree.ts --test src/lib/rtdbTree.test.ts --mutators full
 ```
 
-The UI pins `targeted-mutation` 0.9.1 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
+The UI pins `targeted-mutation` 0.9.2 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
 
 For targeted Playwright analysis, supply a Playwright config with a managed `webServer` that serves the UI from TMT's temporary source copy. The ordinary Playwright config uses the daemon's prebuilt UI assets. For mutation runs, serve the copied sources through Vite, forward `/ui/api` to the local daemon, and provide the runtime bootstrap that the daemon normally injects. Select the relevant spec with `--test` and pass `--runner playwright --mutators targeted` to `pnpm -C ui mutation`.
 
-Check `operatorExecution` and `reachedTests` in the JSON report to confirm that the session reached the selected edits. If the text report says every edit was unreached or the report uses `operatorExecution: "source-rewrite"`, verify that the browser receives the copied sources before acting on mutation verdicts. See the [upstream Playwright guide](https://github.com/t-k/targeted-mutation-ts/blob/v0.9.1/docs/analysis.md) for the daemon proxy configuration.
+Check `operatorExecution` and `reachedTests` in the JSON report to confirm that the session reached the selected edits. If the report marks `sourceApplication` as `unconfirmed` or says every edit was unreached, verify that the browser receives the copied sources before acting on mutation verdicts. See the [upstream Playwright guide](https://github.com/t-k/targeted-mutation-ts/blob/v0.9.2/docs/analysis.md) for the daemon proxy configuration.
