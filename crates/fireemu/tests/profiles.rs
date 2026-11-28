@@ -477,7 +477,12 @@ fn the_control_api_refuses_to_list_missing_indexes_where_none_are_reported() {
         None,
     );
     assert_eq!(status, 200, "strict session: {body}");
-    let (status, body) = http(strict_control, "DELETE", "/v1/firestore/missingIndexes", None);
+    let (status, body) = http(
+        strict_control,
+        "DELETE",
+        "/v1/firestore/missingIndexes",
+        None,
+    );
     assert_eq!((status, body.as_str()), (200, r#"{"cleared":1}"#));
     strict.stop();
 

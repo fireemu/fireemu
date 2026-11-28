@@ -23,7 +23,7 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 - `fireemu exec` prints a compact one-line summary for `productionExact` development defaults instead of listing all entries on every run.
 - `fireemu init` omits the redundant `"$schema"` key in generated `fireemu.toml` files where the `#:schema` directive is already present.
 - `world.hostingUrl` and `world.hostingSites[].url` omit the trailing slash to match `world.endpoints.hosting.url`.
-- `fireemu/testing` enables copy-on-write file cloning on macOS during initial input snapshotting and increases parallel file copy concurrency.
+- `fireemu/testing` enables copy-on-write file cloning on macOS during initial input snapshotting.
 - Emulator UI polishes input widths, Auth table layout and inline Custom Claims display, sidebar service running indicators, singular Storage object count, a styled file picker with selection count, compact header clock precision with full precision in the popover, and Functions timeline outcome fallback and expandable ungrouped logs.
 
 ### Fixed

@@ -54,7 +54,7 @@ export const cloneSupport={
 };
 
 // Internal bound shared by portable snapshots and deterministic copy benchmarks.
-export const copySupport={maxConcurrentFiles:16};
+export const copySupport={maxConcurrentFiles:4};
 
 /** Counters for one snapshot or generation copy; `noClone` remembers source devices that cannot clone. */
 function createCopyStats(){

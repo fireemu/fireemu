@@ -672,9 +672,7 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
         });
     }
     if json {
-        term::write_stdout_line(
-            &serde_json::to_string_pretty(&rows).expect("configuration rows"),
-        );
+        term::write_stdout_line(&serde_json::to_string_pretty(&rows).expect("configuration rows"));
     } else {
         for row in rows {
             let value = if row["source"] == "unset"
@@ -699,10 +697,7 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
                     || "every product selected".to_owned(),
                     |list| format!("--only {list}"),
                 );
-                term::write_stdout_line(&format!(
-                    "  in effect ({scope}): {}",
-                    surfaces.join("; ")
-                ));
+                term::write_stdout_line(&format!("  in effect ({scope}): {}", surfaces.join("; ")));
                 if let Some(note) = row["note"].as_str() {
                     term::write_stdout_line(&format!("  note: {note}"));
                 }
