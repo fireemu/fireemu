@@ -1241,6 +1241,10 @@ impl TaskScheduler {
         self.outstanding
     }
 
+    pub(crate) fn failed_total(&self) -> u64 {
+        self.failed_total
+    }
+
     pub(crate) fn active(&self) -> usize {
         self.queues.values().map(|queue| queue.active.len()).sum()
     }

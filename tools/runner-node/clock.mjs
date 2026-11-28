@@ -177,6 +177,7 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   }
 
   function promiseTimeout(duration, value, config = {}) {
+    if (isTransportTimerCaller()) return nativePromises.setTimeout(duration, value, config);
     try { options(config); } catch (error) { return Promise.reject(error); }
     if (config.signal?.aborted) return Promise.reject(abortError(config.signal.reason));
     return new Promise((resolve, reject) => {
@@ -195,29 +196,32 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
     });
   }
 
-  async function* promiseInterval(duration, value, config = {}) {
-    options(config);
-    if (config.signal?.aborted) throw abortError(config.signal.reason);
-    let count = 0;
-    let wake;
-    let aborted = false;
-    const handle = schedule(() => { count++; wake?.(); }, duration, [], true);
-    if (config.ref === false) handle.unref();
-    const abort = () => { aborted = true; cancel(handle); wake?.(); };
-    config.signal?.addEventListener('abort', abort, {once:true});
-    try {
-      while (!aborted) {
-        if (count === 0) await new Promise(resolve => {wake = resolve;});
-        wake = undefined;
-        if (aborted) break;
-        count--;
-        yield value;
+  function promiseInterval(duration, value, config = {}) {
+    if (isTransportTimerCaller()) return nativePromises.setInterval(duration, value, config);
+    return (async function* () {
+      options(config);
+      if (config.signal?.aborted) throw abortError(config.signal.reason);
+      let count = 0;
+      let wake;
+      let aborted = false;
+      const handle = schedule(() => { count++; wake?.(); }, duration, [], true);
+      if (config.ref === false) handle.unref();
+      const abort = () => { aborted = true; cancel(handle); wake?.(); };
+      config.signal?.addEventListener('abort', abort, {once:true});
+      try {
+        while (!aborted) {
+          if (count === 0) await new Promise(resolve => {wake = resolve;});
+          wake = undefined;
+          if (aborted) break;
+          count--;
+          yield value;
+        }
+        throw abortError(config.signal.reason);
+      } finally {
+        cancel(handle);
+        config.signal?.removeEventListener('abort', abort);
       }
-      throw abortError(config.signal.reason);
-    } finally {
-      cancel(handle);
-      config.signal?.removeEventListener('abort', abort);
-    }
+    })();
   }
 
   function now() {

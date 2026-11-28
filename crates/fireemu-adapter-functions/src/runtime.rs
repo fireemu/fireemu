@@ -6169,6 +6169,7 @@ impl FunctionsRuntime {
             "catchUpPending": inner.catch_up_pending,
             "authEventsPending": inner.pending_auth.len(),
             "tasksInFlight": inner.task_scheduler.outstanding(),
+            "tasks": { "failedTotal": inner.task_scheduler.failed_total() },
             "overlapRejected": inner.overlap_rejected,
             "timeZoneDatabase": crate::zone::database_version(),
             "runnerAlive": self.runner_alive(),

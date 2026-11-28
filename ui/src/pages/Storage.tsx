@@ -410,6 +410,7 @@ const Storage: Component = () => {
     const input = fileInput();
     uploadFiles([...(input?.files ?? [])]);
     if (input) input.value = "";
+    setSelectedFileCount(0);
   };
   const onDragOver = (event: DragEvent) => {
     if (!dragHasFiles(event.dataTransfer?.types)) return;
