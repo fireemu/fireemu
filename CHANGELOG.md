@@ -8,6 +8,31 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-11-28
+
+### Added
+
+- `fireemu up` accepts `--write-missing-indexes[=<file>]` to merge discovered Firestore composite indexes on graceful shutdown, in addition to `fireemu exec`.
+- CLI adds `--auth-port` as an alias for `--http-port`, `--logging-port auto` for dynamic Logging port assignment, `FIREEMU_HOSTING_HOST` in the child environment when Hosting is started, and `fireemu config show --changed` / `--explicit` filters.
+- The Control API exposes token-guarded `GET /v1/sessions/{s}/functions/history` and `GET /v1/sessions/{s}/functions/logs` diagnostics, and `GET /v1/sessions/{s}/functions` includes cumulative `tasks.failedTotal`.
+- `fireemu/testing` exposes `world.awaitIdle()`, `world.functions.invocations()`, `world.logs()`, `checkpoint(name, { allowNonQuiescent })`, `snapshots.create(name, { allowNonQuiescent })`, and `advanceAndSettle(..., { failOnFunctionError })`. `fireemu/vitest` forwards `awaitIdle` and `checkpoint` options and adds opt-in `dumpDiagnosticsOnFailure`.
+
+### Changed
+
+- Under the `strict` profile, Firestore also records composite indexes refused in `refuse` mode so `GET /v1/firestore/missingIndexes` and `world.firestore.missingIndexes()` work without switching to `report` mode.
+- `fireemu exec` prints a compact one-line summary for `productionExact` development defaults instead of listing all entries on every run.
+- `fireemu init` omits the redundant `"$schema"` key in generated `fireemu.toml` files where the `#:schema` directive is already present.
+- `world.hostingUrl` and `world.hostingSites[].url` omit the trailing slash to match `world.endpoints.hosting.url`.
+- `fireemu/testing` enables copy-on-write file cloning on macOS during initial input snapshotting and increases parallel file copy concurrency.
+- Emulator UI polishes input widths, Auth table layout and inline Custom Claims display, sidebar service running indicators, singular Storage object count, a styled file picker with selection count, compact header clock precision with full precision in the popover, and Functions timeline outcome fallback and expandable ungrouped logs.
+
+### Fixed
+
+- Node Functions runner recognizes `firebase-functions` v6 `ResetValue` objects (without the v7 symbol tag) across all endpoint and platform options instead of ignoring v2 exports with unset options.
+- Virtual timers in the Node Functions runner exempt internal Google/gRPC SDK transport timers (`@grpc/grpc-js`, `google-gax`, `@google-cloud/firestore`, `@google-cloud/storage`, `gaxios`, `google-auth-library`) including `node:timers/promises` and `util.promisify(setTimeout)`, and cancel native `Timeout` handles without colliding with virtual timer IDs.
+- Expected `HttpsError` rejections from blocking Auth functions log a concise warning instead of an internal runner/Express stack trace.
+- CLI stdout writes handle `BrokenPipe` cleanly without panicking when piped into tools such as `head`.
+
 ## [0.69.0] - 2026-11-27
 
 ### Added
@@ -1600,7 +1625,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.69.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.70.0...HEAD
+[0.70.0]: https://github.com/fireemu/fireemu/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/fireemu/fireemu/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/fireemu/fireemu/compare/v0.67.0...v0.68.0
 [0.67.0]: https://github.com/fireemu/fireemu/compare/v0.66.0...v0.67.0

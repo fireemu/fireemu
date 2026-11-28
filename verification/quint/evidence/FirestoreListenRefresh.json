@@ -298,7 +298,7 @@
     },
     "crates/fireemu-adapter-grpc/src/gateway.rs": {
       "kind": "sha256",
-      "value": "da25e377bcf2b27139f74a1eb524981fbefd429b3d9a26d2243ea1c3eb80e75d"
+      "value": "4c82c0677911235bbd99e00a8ea8bd567825c79dbfb668efeee424d1af0eac4e"
     },
     "crates/fireemu-adapter-grpc/src/index_messages.rs": {
       "kind": "sha256",
@@ -310,7 +310,7 @@
     },
     "crates/fireemu-adapter-grpc/src/local.rs": {
       "kind": "sha256",
-      "value": "ba3e7d378ff48d14f2868b63b86d2da71fb1f84b5e4f63b2c15025abd9fed8e5"
+      "value": "a56342f77f0770858ae47030f9232e72cce819e9ef5304fb1c3a1fbad3bbded6"
     },
     "crates/fireemu-adapter-grpc/src/partition.rs": {
       "kind": "sha256",
