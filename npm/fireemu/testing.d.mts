@@ -307,8 +307,11 @@ export interface TestWorld {
   readonly functions: TestWorldFunctions;
   /** Read retained Functions runner log lines and structured log entries. */
   readonly logs: () => Promise<FunctionsLogsResponse>;
-  /** Wait until background Functions and Tasks work reaches idle. */
-  readonly awaitIdle: (options?: Pick<AwaitIdleOptions, 'scope' | 'timeoutSeconds'>) => Promise<{
+  /**
+   * Wait until background Functions and Tasks work reaches idle.
+   * Defaults: `scope: 'all'` and `timeoutSeconds: 30` (matching `POST /v1/sessions/default:awaitIdle`).
+   */
+  readonly awaitIdle: (options?: { readonly scope?: 'all' | 'runnable'; readonly timeoutSeconds?: number }) => Promise<{
     readonly idle: boolean;
     readonly scope?: 'all' | 'runnable';
     readonly [key: string]: unknown;

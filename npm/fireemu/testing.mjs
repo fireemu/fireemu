@@ -212,39 +212,41 @@ export async function createTestWorld(options={}){
     if(typeof timeoutSeconds!=='number'||!Number.isFinite(timeoutSeconds)||timeoutSeconds<0||timeoutSeconds>600)throw TypeError('timeoutSeconds must be a number from 0 through 600');
     if(typeof runTimers!=='boolean')throw TypeError('runTimers must be a boolean');
     if(typeof failOnFunctionError!=='boolean')throw TypeError('failOnFunctionError must be a boolean');
-    let priorDeadLetters=0;
-    if(failOnFunctionError){
-      try{
-        const before=await control('GET','/v1/sessions/default/functions/history');
-        if(Array.isArray(before?.deadLetters))priorDeadLetters=before.deadLetters.length;
-      }catch{}
-    }
+    const failureCounts=status=>({
+      deadLettered:Number(status?.deadLettered??0),
+      tasksFailed:Number(status?.tasks?.failedTotal??0),
+    });
     // The wait is admitted right behind the move, so it sees the move and never delays later clock calls.
     const moved=queue.ordered(async()=>{
       check();
       const active=current;
+      let beforeFailures=null;
+      if(failOnFunctionError){
+        const beforeStatus=await requestFor(active,'GET','/v1/sessions/default/functions');
+        beforeFailures=failureCounts(beforeStatus);
+      }
       const clock=await requestFor(active,'POST','/v1/sessions/default/clock:advance',advanceBody(duration,{timeZone,allowBackwards}));
       let timers;
       if(runTimers)for(let round=0;round<100;round++){
         timers=await requestFor(active,'POST','/v1/sessions/default/clock:runDue',{budget:1000});
         if(!timers?.codebases?.some(codebase=>codebase.timers?.due>0))break;
       }
-      return {active,clock,timers};
+      return {active,clock,timers,beforeFailures};
     });
     const settled=queue.waiting(async signal=>{
-      const {active,clock,timers}=await moved;
+      const {active,clock,timers,beforeFailures}=await moved;
       const body={scope,timeoutSeconds};
       const idle=await requestFor(active,'POST','/v1/sessions/default:awaitIdle',body,anySignal(idleSignal(body),signal));
-      if(failOnFunctionError){
-        try{
-          const after=await requestFor(active,'GET','/v1/sessions/default/functions/history');
-          const deadLetters=Array.isArray(after?.deadLetters)?after.deadLetters.slice(priorDeadLetters):[];
-          if(deadLetters.length>0){
-            const summary=deadLetters.map(d=>`${d.function??'unknown'} (${JSON.stringify(d.outcome)})`).join(', ');
-            throw Error(`background function(s) failed during advanceAndSettle: ${summary}`);
-          }
-        }catch(err){
-          if(err?.message?.startsWith('background function(s) failed'))throw err;
+      if(failOnFunctionError&&beforeFailures){
+        const afterStatus=await requestFor(active,'GET','/v1/sessions/default/functions');
+        const afterFailures=failureCounts(afterStatus);
+        const newDeadLetters=afterFailures.deadLettered-beforeFailures.deadLettered;
+        const newTaskFailures=afterFailures.tasksFailed-beforeFailures.tasksFailed;
+        if(newDeadLetters>0||newTaskFailures>0){
+          const parts=[];
+          if(newDeadLetters>0)parts.push(`${newDeadLetters} dead-lettered event(s)`);
+          if(newTaskFailures>0)parts.push(`${newTaskFailures} failed task(s)`);
+          throw Error(`background function(s) failed during advanceAndSettle: ${parts.join(', ')}`);
         }
       }
       return {clock,timers,idle};

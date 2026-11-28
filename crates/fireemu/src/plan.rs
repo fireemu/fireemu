@@ -516,6 +516,7 @@ pub(crate) fn check_bound_listeners(
         ("auth", addrs.auth.is_some()),
         ("storage", addrs.storage.is_some()),
         ("functions", addrs.functions.is_some()),
+        ("hosting", addrs.hosting.is_some()),
         ("eventarc", addrs.eventarc.is_some()),
         ("tasks", addrs.tasks.is_some()),
         ("pubsub", addrs.pubsub.is_some()),

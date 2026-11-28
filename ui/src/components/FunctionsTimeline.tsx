@@ -93,18 +93,29 @@ export const FunctionsTimeline: Component<{
     [...new Set(events().flatMap((e) => (e.causal ? [e.causal.source] : [])))].toSorted(),
   );
   const phases = createMemo(() =>
-    [...new Set(events().flatMap((e) => e.causal?.phases.map((p) => p.phase) ?? []))].toSorted(),
+    [
+      ...new Set(
+        events().flatMap((e) => {
+          const causalPhases = e.causal?.phases.map((p) => p.phase) ?? [];
+          const outcomePhase = e.outcomes.at(-1)?.outcome;
+          if (outcomePhase) causalPhases.push(outcomePhase);
+          return causalPhases;
+        }),
+      ),
+    ].toSorted(),
   );
   const names = createMemo(() => [...new Set(events().map((e) => e.function))].toSorted());
   const visible = createMemo(() =>
     events()
-      .filter(
-        (e) =>
+      .filter((e) => {
+        const lastPhase = e.causal?.phases.at(-1)?.phase ?? e.outcomes.at(-1)?.outcome;
+        return (
           (!source() || e.causal?.source === source()) &&
-          (!status() || e.causal?.phases.at(-1)?.phase === status()) &&
+          (!status() || lastPhase === status()) &&
           (!fn() || e.function === fn()) &&
-          e.eventId.includes(eventId()),
-      )
+          e.eventId.includes(eventId())
+        );
+      })
       .map((e) => e.key),
   );
   const attempts = createMemo(() =>
@@ -274,10 +285,7 @@ export const FunctionsTimeline: Component<{
                         </Show>
                       </td>
                       <td class="mono text-xs">{byKey().get(key)!.function}</td>
-                      <td>
-                        {byKey().get(key)!.causal?.source ??
-                          (byKey().get(key)!.outcomes.length > 0 ? "http" : "—")}
-                      </td>
+                      <td>{byKey().get(key)!.causal?.source ?? "—"}</td>
                       <td>
                         <Show
                           when={

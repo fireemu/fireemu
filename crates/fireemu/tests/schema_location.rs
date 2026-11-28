@@ -57,7 +57,7 @@ fn init_writes_the_schema_url_of_the_build() {
         "{generated}"
     );
     let document: serde_json::Value = toml::from_str(&generated).unwrap();
-    assert_eq!(document["$schema"], installed());
+    assert!(document.get("$schema").is_none());
     // The file it generates loads.
     let output = run(&dir, &["capabilities", "--config", "fireemu.toml"]);
     assert!(output.status.success(), "{output:?}");

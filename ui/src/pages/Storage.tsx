@@ -346,6 +346,7 @@ const Storage: Component = () => {
   const [notice, setNotice] = createSignal<string | null>(null);
   const [selected, setSelected] = createSignal<string | null>(null);
   const [fileInput, setFileInput] = createSignal<HTMLInputElement>();
+  const [selectedFileCount, setSelectedFileCount] = createSignal(0);
   const [uploadSubpath, setUploadSubpath] = createSignal("");
   const [objectFilter, setObjectFilter] = createSignal("");
   const filteredFolders = createMemo(() => {
@@ -498,8 +499,12 @@ const Storage: Component = () => {
               value={uploadSubpath()}
               onInput={(e) => setUploadSubpath(e.currentTarget.value)}
             />
-            <label class="btn cursor-pointer">
-              <span>Choose files</span>
+            <label class="btn cursor-pointer focus-within:ring-2 focus-within:ring-accent">
+              <span data-testid="upload-file-label">
+                {selectedFileCount() > 0
+                  ? `${selectedFileCount()} file${selectedFileCount() === 1 ? "" : "s"} selected`
+                  : "Choose files"}
+              </span>
               <input
                 ref={setFileInput}
                 type="file"
@@ -507,6 +512,7 @@ const Storage: Component = () => {
                 class="sr-only"
                 data-testid="upload-input"
                 aria-label={t("storage.upload")}
+                onChange={(e) => setSelectedFileCount(e.currentTarget.files?.length ?? 0)}
               />
             </label>
             <button

@@ -1303,6 +1303,8 @@ pub struct RuntimeConfig {
     /// Like the Hub's and UI's, a busy default port only disables logging; a busy explicit one
     /// is an error.
     pub logging_addr_explicit: bool,
+    /// Whether `--logging-port auto` requested an ephemeral free port.
+    pub logging_auto_port: bool,
     /// `network.allowNonLoopbackHosts`: `emulators.<name>.host` of a product emulator may name
     /// a non-loopback address such as `0.0.0.0` (a container). The Hub, the UI and the Logging
     /// emulator stay on loopback, and the control API answers loopback peers only.
@@ -2136,6 +2138,7 @@ impl Default for RuntimeConfig {
             logging_addr: format!("127.0.0.1:{DEFAULT_LOGGING_PORT}"),
             logging_enabled: true,
             logging_addr_explicit: false,
+            logging_auto_port: false,
             allow_non_loopback_hosts: false,
             allowed_hosts: Vec::new(),
             single_project_mode: false,

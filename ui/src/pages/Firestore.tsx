@@ -1354,13 +1354,13 @@ const CollectionView: Component<{
                     {(col) => {
                       const val = () => d.fields?.[col];
                       return (
-                        <td class="mono break-words text-secondary">
+                        <td class="mono break-words [overflow-wrap:anywhere] text-secondary">
                           {val() ? summarize(val()!) : "—"}
                         </td>
                       );
                     }}
                   </For>
-                  <td class="mono break-words text-secondary">
+                  <td class="mono break-words [overflow-wrap:anywhere] text-secondary">
                     {Object.entries(d.fields ?? {})
                       .slice(0, 4)
                       .map(([k, v]) => `${k}: ${summarize(v)}`)

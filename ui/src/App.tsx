@@ -259,7 +259,7 @@ export const App: Component<RouteSectionProps> = (props) => {
                 <A
                   href={item.href}
                   class="nav-link"
-                  classList={{ "opacity-55": inactive() }}
+                  classList={{ "opacity-75": inactive() }}
                   title={inactive() ? `${t(item.key)} (${t("app.inactive")})` : undefined}
                   aria-description={inactive() ? t("app.inactive") : undefined}
                   onClick={() => setNavigationOpen(false)}

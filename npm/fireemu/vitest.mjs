@@ -60,8 +60,8 @@ export function useTestWorld(options = {}, hooks) {
   }
 
   if (dumpDiagnosticsOnFailure && typeof lifecycle.afterEach === 'function') {
-    lifecycle.afterEach(async context => {
-      if (context?.task?.result?.state !== 'fail' || !instance) return;
+    lifecycle.afterEach(async ({ task } = {}) => {
+      if (task?.result?.state !== 'fail' || !instance) return;
       try {
         const [history, logData] = await Promise.all([
           instance.functions.invocations().catch(() => null),
@@ -71,7 +71,7 @@ export function useTestWorld(options = {}, hooks) {
         const lines = Array.isArray(logData?.lines) ? logData.lines.slice(-20) : [];
         if (deadLetters.length > 0 || lines.length > 0) {
           console.error(
-            `[fireemu/vitest] diagnostics for failed test "${context?.task?.name ?? 'unknown'}":`,
+            `[fireemu/vitest] diagnostics for failed test "${task?.name ?? 'unknown'}":`,
             JSON.stringify({ deadLetters, recentLogs: lines }, null, 2),
           );
         }

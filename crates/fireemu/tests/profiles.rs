@@ -461,23 +461,39 @@ fn the_indexes_the_route_lists_are_accepted_when_written_to_firestore_indexes_js
 
 #[test]
 fn the_control_api_refuses_to_list_missing_indexes_where_none_are_reported() {
-    // The strict default refuses the query, and the emulator profile assumes every index: an
-    // empty list in either would pass a check it cannot support.
-    for (name, profile) in [("strict-default", "strict"), ("emulator-route", "emulator")] {
-        let daemon = Daemon::start_with(name, profile, "");
-        let control = daemon.control_port();
-        for path in [
-            "/v1/firestore/missingIndexes",
-            "/v1/sessions/default/firestore/missingIndexes",
-        ] {
-            let (status, body) = http(control, "GET", path, None);
-            assert_eq!(status, 409, "{profile} {path}: {body}");
-            assert!(body.contains("FAILED_PRECONDITION"), "{body}");
-        }
-        let (status, body) = http(control, "DELETE", "/v1/firestore/missingIndexes", None);
-        assert_eq!((status, body.as_str()), (200, r#"{"cleared":0}"#));
-        daemon.stop();
+    // The strict default records refused missing indexes; the emulator profile assumes every index,
+    // so an empty list there would pass a check it cannot support.
+    let strict = Daemon::start_with("strict-default", "strict", "");
+    let strict_control = strict.control_port();
+    let (q_status, _) = strict.unindexed_query_with(http_as_owner);
+    assert_eq!(q_status, 400);
+    let (status, body) = http(strict_control, "GET", "/v1/firestore/missingIndexes", None);
+    assert_eq!(status, 200, "strict global: {body}");
+    assert!(body.contains("\"count\":1"), "{body}");
+    let (status, body) = http(
+        strict_control,
+        "GET",
+        "/v1/sessions/default/firestore/missingIndexes",
+        None,
+    );
+    assert_eq!(status, 200, "strict session: {body}");
+    let (status, body) = http(strict_control, "DELETE", "/v1/firestore/missingIndexes", None);
+    assert_eq!((status, body.as_str()), (200, r#"{"cleared":1}"#));
+    strict.stop();
+
+    let emulator = Daemon::start_with("emulator-route", "emulator", "");
+    let emu_control = emulator.control_port();
+    for path in [
+        "/v1/firestore/missingIndexes",
+        "/v1/sessions/default/firestore/missingIndexes",
+    ] {
+        let (status, body) = http(emu_control, "GET", path, None);
+        assert_eq!(status, 409, "emulator {path}: {body}");
+        assert!(body.contains("FAILED_PRECONDITION"), "{body}");
     }
+    let (status, body) = http(emu_control, "DELETE", "/v1/firestore/missingIndexes", None);
+    assert_eq!((status, body.as_str()), (200, r#"{"cleared":0}"#));
+    emulator.stop();
 }
 
 #[test]

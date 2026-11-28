@@ -605,7 +605,7 @@ fn missing_indexes_route(
             }
             _ => error(
                 409,
-                "FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with Firestore selected; the emulator profile assumes every index, and nothing is reported when Firestore is not selected",
+                "FAILED_PRECONDITION : missing composite indexes (firestore.missingIndexes) are reported only under the strict profile with Firestore selected; the emulator profile assumes every index, and nothing is reported when Firestore is not selected",
             ),
         },
         _ => error(
@@ -674,7 +674,8 @@ pub fn is_no_store_path(path: &str) -> bool {
             || is_resources_path(path)
             || is_rules_requests_path(path)
             || is_rules_diagnostics_path(path)
-            || is_missing_indexes_path(path))
+            || is_missing_indexes_path(path)
+            || is_functions_diagnostics_path(path))
         || path == MISSING_INDEXES_PATH
 }
 
@@ -694,6 +695,8 @@ fn diagnostics_guard(
         "CONTROL_TOKEN_REQUIRED : the Security Rules request trace needs Authorization: Bearer <control token> on every method"
     } else if is_missing_indexes_path(path) {
         "CONTROL_TOKEN_REQUIRED : the missing-index reports need Authorization: Bearer <control token> on every method"
+    } else if is_functions_diagnostics_path(path) {
+        "CONTROL_TOKEN_REQUIRED : functions history and logs need Authorization: Bearer <control token> on every method"
     } else {
         return None;
     };
@@ -729,6 +732,12 @@ fn is_rules_requests_path(path: &str) -> bool {
 fn is_rules_diagnostics_path(path: &str) -> bool {
     path.starts_with("/v1/sessions/")
         && (path.ends_with("/rules/diagnostics") || path.ends_with("/rules/diagnostics:clear"))
+}
+
+/// Functions invocation history and runner log diagnostics.
+fn is_functions_diagnostics_path(path: &str) -> bool {
+    path.starts_with("/v1/sessions/")
+        && (path.ends_with("/functions/history") || path.ends_with("/functions/logs"))
 }
 
 fn error(status: u16, message: &str) -> JsonResponse {
@@ -3221,7 +3230,8 @@ pub fn browser_guard(
         || is_resources_path(path)
         || is_rules_requests_path(path)
         || is_rules_diagnostics_path(path)
-        || is_missing_indexes_path(path);
+        || is_missing_indexes_path(path)
+        || is_functions_diagnostics_path(path);
     let presented = headers
         .authorization
         .as_deref()
@@ -3810,6 +3820,8 @@ mod capability_manifest_tests {
             "/v1/sessions/default/resources",
             "/v1/sessions/default/rules/requests",
             "/v1/sessions/default/firestore/missingIndexes",
+            "/v1/sessions/default/functions/history",
+            "/v1/sessions/default/functions/logs",
         ] {
             assert_eq!(
                 browser_guard(&state, "GET", path, &browser_no_origin).map(|r| r.status),

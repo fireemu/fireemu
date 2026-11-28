@@ -612,6 +612,9 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
             "daemon.tasksPort" => "/emulators/tasks/port",
             "daemon.pubsubPort" => "/emulators/pubsub/port",
             "daemon.databasePort" => "/emulators/database/port",
+            "daemon.hostingPort" => "/emulators/hosting/port",
+            "daemon.hubPort" => "/emulators/hub/port",
+            "daemon.uiPort" => "/emulators/ui/port",
             "daemon.loggingPort" => "/emulators/logging/port",
             "rules.source" | "firestore.indexFile" => "/firestore",
             "storage.rules" => "/storage",
@@ -659,7 +662,6 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
             let source = row["source"].as_str().unwrap_or("");
             source.starts_with("explicit")
                 || source == ".firebaserc"
-                || source == "discovered"
                 || (source == config::NO_EFFECT_SOURCE && !row["value"].is_null())
         });
     } else if changed_only {
@@ -1744,6 +1746,7 @@ fn apply_port_overrides(cfg: &mut RuntimeConfig, raw: &RawOptions) {
             AuxiliaryPort::Auto => (0, true),
             AuxiliaryPort::Fixed(port) => (port, port != 0),
         };
+        cfg.logging_auto_port = selection == AuxiliaryPort::Auto;
         cfg.logging_addr = with_port(&cfg.logging_addr, port);
         cfg.logging_enabled = enabled;
         cfg.logging_addr_explicit = true;
@@ -3784,6 +3787,21 @@ async fn bind_listeners(cfg: &RuntimeConfig, only: &Selection) -> Result<Listene
     bind_listeners_with(cfg, only, kernel_pick).await
 }
 
+async fn bind_logging_listener(
+    cfg: &RuntimeConfig,
+) -> Result<Option<tokio::net::TcpListener>, String> {
+    if !cfg.logging_enabled {
+        return Ok(None);
+    }
+    if cfg.logging_auto_port {
+        return tokio::net::TcpListener::bind(&cfg.logging_addr)
+            .await
+            .map(Some)
+            .map_err(|e| format!("cannot bind {}: {e}", cfg.logging_addr));
+    }
+    bind_best_effort(&cfg.logging_addr, cfg.logging_addr_explicit).await
+}
+
 async fn bind_listeners_with(
     cfg: &RuntimeConfig,
     only: &Selection,
@@ -3882,11 +3900,7 @@ async fn bind_listeners_with(
     // The Logging emulator is not a `--only` service (the official suite configures it through
     // `emulators.logging`), so it is bound on every run unless it was turned off. Best effort
     // like the Hub and UI: a busy default port only disables it, a busy explicit one is an error.
-    let logging = if cfg.logging_enabled {
-        bind_best_effort(&cfg.logging_addr, cfg.logging_addr_explicit).await?
-    } else {
-        None
-    };
+    let logging = bind_logging_listener(cfg).await?;
     Ok(Listeners {
         firestore,
         control,
@@ -4202,7 +4216,7 @@ fn print_banner(
     );
     if verb == "exec" {
         outln!(
-            "  productionExact: {} ({} development defaults; use --plan or --log-verbosity debug to list)",
+            "  productionExact: {} ({} development defaults; use --plan to list)",
             cfg.production_exact,
             cfg.development_defaults.len()
         );

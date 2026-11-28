@@ -114,7 +114,17 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   }
 
   function cancel(value) {
-    const handle = value instanceof Timer ? value : handles.get(Number(value));
+    if (value instanceof Timer) {
+      value.cancelled = true;
+      queue.delete(value.id);
+      handles.delete(value.id);
+      return;
+    }
+    if (typeof value === 'object' && value !== null) {
+      native.clearTimeout(value);
+      return;
+    }
+    const handle = handles.get(Number(value));
     if (!handle) {
       native.clearTimeout(value);
       return;
@@ -125,7 +135,17 @@ export function createRuntimeClock({date = 'real', timers: timerPolicy = 'real',
   }
 
   function cancelInterval(value) {
-    const handle = value instanceof Timer ? value : handles.get(Number(value));
+    if (value instanceof Timer) {
+      value.cancelled = true;
+      queue.delete(value.id);
+      handles.delete(value.id);
+      return;
+    }
+    if (typeof value === 'object' && value !== null) {
+      native.clearInterval(value);
+      return;
+    }
+    const handle = handles.get(Number(value));
     if (!handle) {
       native.clearInterval(value);
       return;
