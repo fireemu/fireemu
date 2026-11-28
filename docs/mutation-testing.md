@@ -5,7 +5,7 @@
 Install the version used by the workspace campaign runner:
 
 ```bash
-cargo install targeted-mutation --version '=0.14.0' --locked
+cargo install targeted-mutation --version '=0.15.0' --locked
 ```
 
 Run mutation tests from an independent, credential-free checkout in a loopback-only sandbox. On a Fireemu development machine, use the local mutation sandbox and run its guard before executing mutants. Give direct invocations their own work directory. TMT sets both Cargo output directories inside it. Keep the paths outside the source checkout so reports and caches stay out of later scans.
@@ -29,6 +29,8 @@ python3 tools/ci/targeted-mutation.py --workspace --since "$(git merge-base orig
 The campaign runner processes packages sequentially and reuses its own build directory. It keeps `<package>.json` and `<package>.log` for every attempt and writes `summary.json` at the end. A completed campaign exits `1` if any analysis fails, `2` if it reports findings or unstable predictions, `3` if a package reports no executed mutants for a nonempty analysis, and `0` otherwise. When several outcomes occur, `1` takes precedence over `2`, then `3`. Each parsed report contributes its site and mutant counts to the summary. A `no-sites` diff skips the build and baseline. Setup errors go to stderr and command-line usage errors emit no report. Inspect the reports for unreached, skipped, unevaluated and unbuilt mutants before drawing coverage conclusions. The batch run skips propagation tracing and selects ordinary tests for each package. It attempts every requested package even when an incompatible test prevents a report. Rerun a focused selection without `--no-effects` for that diagnosis. Reproduce changes against the ordinary test suite and add assertions for observable behavior before rerunning the selection.
 
 The campaign runner passes `--no-config` so local `tmt.toml` files cannot change its test selection or build options. Direct invocations of `cargo tmt` discover these files unless you pass `--no-config`.
+
+For a slow instrumented test, set `--baseline-timeout <seconds>` on the direct invocation. It limits each baseline test independently of the mutant trial timeout. If a baseline times out, read `baseline-timeout.json` in the work directory for the test name and the arguments to rerun or exclude it.
 
 Tracing and mutant replay need the same test inputs. The campaign uses `PROPTEST_RNG_SEED=0` by default and records the effective seed. Rerun with a different explicit seed to sample more inputs. For a direct run, set the seed in the sandbox before calling `cargo tmt`. Use `--audit` on a focused selection to check for trace drift.
 
@@ -108,6 +110,8 @@ pnpm -C ui mutation -- --since "$(git merge-base origin/main HEAD)" --undo-chang
 pnpm -C ui mutation -- src/lib/rtdbTree.ts --test src/lib/rtdbTree.test.ts --mutators full
 ```
 
-The UI pins `targeted-mutation` 0.9.0 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
+The UI pins `targeted-mutation` 0.9.1 in `ui/package.json` and `ui/pnpm-lock.yaml`. Rerun `pnpm -C ui mutation:sanity` after Vitest or dependency upgrades.
 
 For targeted Playwright analysis, supply a Playwright config with a managed `webServer` that serves the UI from TMT's temporary source copy. The ordinary Playwright config uses the daemon's prebuilt UI assets. For mutation runs, serve the copied sources through Vite, forward `/ui/api` to the local daemon, and provide the runtime bootstrap that the daemon normally injects. Select the relevant spec with `--test` and pass `--runner playwright --mutators targeted` to `pnpm -C ui mutation`.
+
+Check `operatorExecution` and `reachedTests` in the JSON report to confirm that the session reached the selected edits. If the text report says every edit was unreached or the report uses `operatorExecution: "source-rewrite"`, verify that the browser receives the copied sources before acting on mutation verdicts. See the [upstream Playwright guide](https://github.com/t-k/targeted-mutation-ts/blob/v0.9.1/docs/analysis.md) for the daemon proxy configuration.
