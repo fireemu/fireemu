@@ -8,6 +8,32 @@ Each release is a Git tag; the binaries and the npm packages are built from that
 
 ## [Unreleased]
 
+## [0.71.0] - 2026-11-29
+
+### Added
+
+- `fireemu/testing` adds `functionsSnapshotMode` (`'copy'`, `'symlink-deps'`, or `'in-place'`) to avoid duplicating large `node_modules` / `.venv` trees in test worlds, plus `world.injectEnv()` (with `[Symbol.dispose]()` and automatic refresh on `reset()`) and `world.sdkConfig`.
+- `fireemu/vitest` adds opt-in `injectEnv: true` and top-level `handle.clock` and `handle.sdkConfig` shortcuts.
+- Control API `GET /v1/sessions/default/rules/requests` includes Storage Security Rules request traces alongside Firestore traces and keeps trace recording enabled across Storage rules reloads when the UI is running.
+- Functions invocation history and UI SSE streams include `httpMethod` for HTTP/callable/blocking invocations and record Blocking Auth function invocations (`beforeUserCreated`, `beforeUserSignedIn`, etc.) scoped to the admission epoch.
+- Emulator UI adds Hosting to the Overview services card and `FIREEMU_HOSTING_HOST` to connection snippets, an Expression snippet column to Rules Coverage, an HTTP Method column and "Hide CORS OPTIONS" filter to Functions Invocations, a page-level Missing Composite Indexes panel on the Firestore page, optional Custom Claims input on Auth user creation, and a warning when advancing the virtual clock while `functions.clock.date` is `"real"`.
+- Added a root `flake.nix` for building and installing the standalone `fireemu` CLI binary (with the bundled Emulator UI and Node.js/Python Functions runners) via Nix flakes.
+
+### Changed
+
+- `fireemu up` prints the same compact one-line `productionExact` summary as `fireemu exec` at default `info` verbosity (full list under `--log-verbosity debug` or `--plan`), and reports configured Storage rules and active `--write-missing-indexes` recording in the startup banner.
+- `--write-missing-indexes` serializes `firestore.indexes.json` in canonical Firebase CLI key order (`indexes` before `fieldOverrides`; `collectionGroup`, `queryScope`, `fields`) to avoid spurious diffs.
+- `fireemu config show` prints `<key> = (unset)` instead of `<key> = (unset) (unset)`.
+- Overview Web SDK snippet includes `storageBucket`, singular user count (`1 user`), and consistent service visibility; Overview and Runtime clocks display second-level precision with full precision on hover; Runtime Fault Plan label omits internal spec numbering.
+
+### Fixed
+
+- `fireemu exec --only ...` reports `not selected by --only (nothing is bound)` for excluded Functions instead of `not configured`.
+- `fireemu up --plan` omits the best-effort note when `ui` or `logging` ports are explicitly configured, and warns when a non-`demo-` project ID is selected while `projects.requireDemoPrefix` is `true`.
+- `fireemu config --help` synopsis lists `[--changed|--explicit]`.
+- Functions runner suppresses spurious `runner exited` warnings on intentional shutdown/reload and only prints `debug`-level runner logs to the terminal under `--log-verbosity debug`.
+- Emulator UI Rules Requests formats synthetic `list` query placeholder segments (`*` / `**`) only for `list` requests without altering real document paths.
+
 ## [0.70.0] - 2026-11-28
 
 ### Added
@@ -1625,7 +1651,8 @@ Security Rules (FS-RULES): behavior below was measured against a real Firestore 
 - The `strict` and `firebase` compatibility profiles, the Capability Manifest, and the Compatibility Contract pinned to firebase-tools 15.28.2.
 - `fireemu init`, `up`, `exec`, `emulators:export`, `doctor`, and `capabilities` commands, with the official `emulators:start` and `emulators:exec` spellings as aliases.
 
-[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.70.0...HEAD
+[Unreleased]: https://github.com/fireemu/fireemu/compare/v0.71.0...HEAD
+[0.71.0]: https://github.com/fireemu/fireemu/compare/v0.70.0...v0.71.0
 [0.70.0]: https://github.com/fireemu/fireemu/compare/v0.69.0...v0.70.0
 [0.69.0]: https://github.com/fireemu/fireemu/compare/v0.68.0...v0.69.0
 [0.68.0]: https://github.com/fireemu/fireemu/compare/v0.67.0...v0.68.0

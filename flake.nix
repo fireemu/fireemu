@@ -62,7 +62,7 @@
 
           fireemu-ui = pkgs.stdenv.mkDerivation (finalAttrs: {
             pname = "fireemu-ui";
-            version = "0.70.0";
+            version = "0.71.0";
             src = uiSrc;
 
             pnpmDeps = pkgs.fetchPnpmDeps {
@@ -94,7 +94,7 @@
 
           fireemu = rustPlatform.buildRustPackage {
             pname = "fireemu";
-            version = "0.70.0";
+            version = "0.71.0";
             src = pkgs.lib.cleanSourceWith {
               src = self;
               filter =
