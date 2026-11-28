@@ -343,7 +343,7 @@ impl Topic {
     const fn synopsis(self) -> &'static str {
         match self {
             Self::Init => "  fireemu init [options]\n",
-            Self::Config => "  fireemu config show [--config <path>] [--firebase-json <path>] [--only <services>] [--json]\n  fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n  fireemu config schema [--out <path>]\n",
+            Self::Config => "  fireemu config show [--config <path>] [--firebase-json <path>] [--only <services>] [--changed|--explicit] [--json]\n  fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n  fireemu config schema [--out <path>]\n",
             Self::Up => "  fireemu up [options]\n  fireemu up --plan [--json] [options]\n  fireemu emulators:start [options]\n",
             Self::Exec => "  fireemu exec [options] \"shell script\"\n  fireemu exec [options] -- <command...>\n  fireemu exec --plan [--json] [options] -- <command...>\n  fireemu emulators:exec [options] \"shell script\"\n  fireemu emulators:exec [options] -- <command...>\n",
             Self::Export => "  fireemu emulators:export <dir> [options]\n",
@@ -835,6 +835,25 @@ mod tests {
             without.push("--".to_owned());
             without.extend(after);
             prop_assert!(!requested(Topic::Exec, &without));
+        }
+    }
+
+    /// Regression lint: every non-help long flag documented in `CONFIG_OPTIONS` must appear in
+    /// `Topic::Config`'s synopsis so `fireemu config --help` never drifts between usage and options.
+    #[test]
+    fn config_synopsis_covers_all_config_options() {
+        let synopsis = Topic::Config.synopsis();
+        for opt in CONFIG_OPTIONS {
+            for flag in opt.flags {
+                for token in flag.split_whitespace() {
+                    if token.starts_with("--") && token != "--help" {
+                        assert!(
+                            synopsis.contains(token),
+                            "Topic::Config synopsis is missing option `{token}`:\n{synopsis}"
+                        );
+                    }
+                }
+            }
         }
     }
 }

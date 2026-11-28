@@ -1718,3 +1718,43 @@ fn unbound_logging_listener_is_checked_against_inherited_environment() {
         .lines()
         .any(|line| line.contains("warning:") && line.contains("FIREBASE_LOGGING_EMULATOR_HOST")));
 }
+
+#[test]
+fn plan_omits_best_effort_note_for_explicit_ui_and_logging_ports_and_warns_on_non_demo_project() {
+    let dir = project("explicit-ports-and-demo-prefix");
+    std::fs::write(
+        dir.join("firebase.json"),
+        r#"{"emulators":{"ui":{"enabled":true,"port":14001},"logging":{"port":14501}}}"#,
+    )
+    .unwrap();
+    let plan = json_plan(
+        &dir,
+        &[
+            "up",
+            "--plan",
+            "--json",
+            "--firebase-json",
+            "firebase.json",
+            "-P",
+            "prod-like-project",
+        ],
+        &[],
+    );
+    let services = plan["services"].as_array().unwrap();
+    let ui = services.iter().find(|s| s["name"] == "ui").unwrap();
+    assert_eq!(ui["start"], true);
+    assert_eq!(ui["address"], "127.0.0.1:14001");
+    assert!(ui["note"].is_null(), "explicit ui port should have no best-effort note: {ui}");
+    let logging = services.iter().find(|s| s["name"] == "logging").unwrap();
+    assert_eq!(logging["start"], true);
+    assert_eq!(logging["address"], "127.0.0.1:14501");
+    assert!(
+        logging["note"].is_null(),
+        "explicit logging port should have no best-effort note: {logging}"
+    );
+    let warnings = plan["warnings"].to_string();
+    assert!(
+        warnings.contains("prod-like-project") && warnings.contains("requireDemoPrefix"),
+        "expected non-demo project warning in plan: {warnings}"
+    );
+}

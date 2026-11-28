@@ -675,19 +675,18 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
         term::write_stdout_line(&serde_json::to_string_pretty(&rows).expect("configuration rows"));
     } else {
         for row in rows {
-            let value = if row["source"] == "unset"
-                || (row["source"] == config::NO_EFFECT_SOURCE && row["value"].is_null())
-            {
-                "(unset)".to_owned()
+            let source = row["source"].as_str().expect("source");
+            let key = row["key"].as_str().expect("key");
+            if source == "unset" {
+                term::write_stdout_line(&format!("{key} = (unset)"));
             } else {
-                row["value"].to_string()
-            };
-            term::write_stdout_line(&format!(
-                "{} = {} ({})",
-                row["key"].as_str().expect("key"),
-                value,
-                row["source"].as_str().expect("source")
-            ));
+                let value = if source == config::NO_EFFECT_SOURCE && row["value"].is_null() {
+                    "(unset)".to_owned()
+                } else {
+                    row["value"].to_string()
+                };
+                term::write_stdout_line(&format!("{key} = {value} ({source})"));
+            }
             if let Some(effective) = row["effective"].as_object() {
                 let surfaces: Vec<String> = effective
                     .iter()
@@ -4062,12 +4061,15 @@ fn print_database_lines(cfg: &RuntimeConfig, addrs: &BoundAddrs) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn print_banner(
     cfg: &RuntimeConfig,
     verb: &str,
     config_origin: &str,
     addrs: &BoundAddrs,
+    only: &Selection,
+    verbosity: Verbosity,
+    write_missing_indexes: Option<&MissingIndexesOutput>,
     functions_runtime: Option<&fireemu_adapter_functions::runtime::FunctionsRuntime>,
 ) {
     outln!("fireemu {verb}");
@@ -4124,6 +4126,16 @@ fn print_banner(
                         "  storage rules:    none loaded, so every end-user request is denied with 403; set storage.rules in firebase.json or fireemu.toml (the owner credential and the JSON API are unaffected)"
                     );
                 }
+            } else if let Some(path) = &cfg.storage_rules_file {
+                outln!("  storage rules:    enforced from {path}");
+            } else if !cfg.storage_rules_by_target.is_empty() {
+                let mut targets: Vec<String> = cfg
+                    .storage_rules_by_target
+                    .iter()
+                    .map(|(target, path)| format!("{target} -> {path}"))
+                    .collect();
+                targets.sort();
+                outln!("  storage rules:    enforced ({})", targets.join(", "));
             }
         }
         None => outln!("  storage:          not selected by --only (nothing is bound)"),
@@ -4149,6 +4161,9 @@ fn print_banner(
                     }
                 }
             }
+        }
+        None if !only.functions => {
+            outln!("  functions:        not selected by --only (nothing is bound)");
         }
         None => {
             outln!("  functions:        not configured (functions.source or --functions <dir>)");
@@ -4209,13 +4224,7 @@ fn print_banner(
                 "behaves like production Firebase where the official emulators do not",
         }
     );
-    if verb == "exec" {
-        outln!(
-            "  productionExact: {} ({} development defaults; use --plan to list)",
-            cfg.production_exact,
-            cfg.development_defaults.len()
-        );
-    } else {
+    if verbosity == Verbosity::Debug {
         outln!("  productionExact: {}", cfg.production_exact);
         for setting in &cfg.development_defaults {
             outln!(
@@ -4225,6 +4234,18 @@ fn print_banner(
                 setting["source"].as_str().unwrap_or_default()
             );
         }
+    } else {
+        outln!(
+            "  productionExact: {} ({} development defaults; use --plan to list)",
+            cfg.production_exact,
+            cfg.development_defaults.len()
+        );
+    }
+    if let Some(output) = write_missing_indexes {
+        outln!(
+            "  missing indexes:  recording to {} on exit (--write-missing-indexes)",
+            output.path.display()
+        );
     }
     outln!(
         "  edition: {}   clock: {}{}",

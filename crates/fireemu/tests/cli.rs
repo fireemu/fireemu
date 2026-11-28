@@ -474,7 +474,7 @@ fn config_show_reports_effective_values_sources_and_schema_order() {
     assert!(out.status.success(), "{}", stderr(&out));
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("auth.idpAssertions = \"signed\" (derived from auth.idpSigners)\n"));
-    assert!(text.contains("functions.source = (unset) (unset)\n"));
+    assert!(text.contains("functions.source = (unset)\n"));
 }
 
 #[test]

@@ -126,10 +126,8 @@ See [spec/compatibility/contract.json](spec/compatibility/contract.json) for the
 #:schema https://raw.githubusercontent.com/fireemu/fireemu/v0.64.0/spec/config/fireemu.schema.json
 schemaVersion = 1
 profile = "strict"
-
-[firestore]
-edition = "standard"
-apiMode = "native"
+firestore.apiMode = "native"
+firestore.edition = "standard"
 ```
 
 Keep Fireemu-specific options in `fireemu.toml` and point it at your existing `firebase.json` with `npx fireemu init --firebase-json firebase.json`. Rules, indexes, Functions codebases, and ports are read from `firebase.json` on each start.

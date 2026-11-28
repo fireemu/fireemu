@@ -1137,12 +1137,16 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         }
         locator
     });
+    fireemu_adapter_support::term::set_debug_enabled(verbosity == Verbosity::Debug);
     if !quiet {
         print_banner(
             &cfg,
             if exec_mode { "exec" } else { "up" },
             &config_origin,
             &addrs,
+            &only,
+            verbosity,
+            write_missing_indexes.as_ref(),
             functions_runtime.as_deref(),
         );
         if let Some(state) = &app_check {
@@ -1930,9 +1934,7 @@ fn merge_missing_indexes_file(
                 .map_err(|e| format!("cannot create directory {}: {e}", parent.display()))?;
         }
     }
-    let mut formatted = serde_json::to_string_pretty(&serde_json::Value::Object(root))
-        .map_err(|e| format!("cannot serialize indexes JSON: {e}"))?;
-    formatted.push('\n');
+    let formatted = format_indexes_document(&root)?;
 
     let file_name = path
         .file_name()
@@ -1946,6 +1948,113 @@ fn merge_missing_indexes_file(
         format!("cannot replace {}: {e}", path.display())
     })?;
     Ok(added)
+}
+
+/// Formats a `firestore.indexes.json` object using the Firebase CLI canonical key order:
+/// top-level `"indexes"` before `"fieldOverrides"` (then any extra keys), and within each
+/// composite index entry `"collectionGroup"`, `"queryScope"`, `"fields"` (then any extra keys).
+fn format_indexes_document(root: &serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
+    fn push_indent(out: &mut String, depth: usize) {
+        for _ in 0..depth {
+            out.push_str("  ");
+        }
+    }
+
+    fn write_pretty_value(
+        out: &mut String,
+        val: &serde_json::Value,
+        depth: usize,
+        key_order: &[&str],
+    ) -> Result<(), String> {
+        match val {
+            serde_json::Value::Object(map) => {
+                if map.is_empty() {
+                    out.push_str("{}");
+                    return Ok(());
+                }
+                out.push_str("{\n");
+                let mut ordered_keys: Vec<&String> = Vec::with_capacity(map.len());
+                for preferred in key_order {
+                    if let Some((k, _)) = map.get_key_value(*preferred) {
+                        ordered_keys.push(k);
+                    }
+                }
+                for k in map.keys() {
+                    if !key_order.contains(&k.as_str()) {
+                        ordered_keys.push(k);
+                    }
+                }
+                for (idx, k) in ordered_keys.iter().enumerate() {
+                    push_indent(out, depth + 1);
+                    let encoded_key = serde_json::to_string(k)
+                        .map_err(|e| format!("cannot serialize index key: {e}"))?;
+                    out.push_str(&encoded_key);
+                    out.push_str(": ");
+                    let child = &map[*k];
+                    let child_order: &[&str] = if depth == 0 && k.as_str() == "indexes" {
+                        &["collectionGroup", "queryScope", "fields"]
+                    } else if k.as_str() == "fields" {
+                        &["fieldPath", "order", "arrayConfig", "vectorConfig"]
+                    } else {
+                        &[]
+                    };
+                    if let serde_json::Value::Array(items) = child {
+                        write_pretty_array(out, items, depth + 1, child_order)?;
+                    } else {
+                        write_pretty_value(out, child, depth + 1, child_order)?;
+                    }
+                    if idx + 1 < ordered_keys.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                push_indent(out, depth);
+                out.push('}');
+                Ok(())
+            }
+            serde_json::Value::Array(items) => write_pretty_array(out, items, depth, key_order),
+            other => {
+                let s = serde_json::to_string(other)
+                    .map_err(|e| format!("cannot serialize indexes JSON: {e}"))?;
+                out.push_str(&s);
+                Ok(())
+            }
+        }
+    }
+
+    fn write_pretty_array(
+        out: &mut String,
+        items: &[serde_json::Value],
+        depth: usize,
+        item_key_order: &[&str],
+    ) -> Result<(), String> {
+        if items.is_empty() {
+            out.push_str("[]");
+            return Ok(());
+        }
+        out.push_str("[\n");
+        for (idx, item) in items.iter().enumerate() {
+            push_indent(out, depth + 1);
+            write_pretty_value(out, item, depth + 1, item_key_order)?;
+            if idx + 1 < items.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        push_indent(out, depth);
+        out.push(']');
+        Ok(())
+    }
+
+    let mut out = String::new();
+    write_pretty_value(
+        &mut out,
+        &serde_json::Value::Object(root.clone()),
+        0,
+        &["indexes", "fieldOverrides"],
+    )?;
+    out.push('\n');
+    Ok(out)
 }
 
 /// The exit status of a run whose `--export-on-exit` failed: a command's own failure is kept,
@@ -4663,8 +4772,21 @@ mod tests {
         ];
         let added = super::merge_missing_indexes_file(&path, &reports).unwrap();
         assert_eq!(added, 1);
-        let written: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let raw_written = std::fs::read_to_string(&path).unwrap();
+        let idx_pos = raw_written.find("\"indexes\"").unwrap();
+        let fo_pos = raw_written.find("\"fieldOverrides\"").unwrap();
+        assert!(
+            idx_pos < fo_pos,
+            "indexes must be serialized before fieldOverrides:\n{raw_written}"
+        );
+        let cg_pos = raw_written.find("\"collectionGroup\"").unwrap();
+        let qs_pos = raw_written.find("\"queryScope\"").unwrap();
+        let fields_pos = raw_written.find("\"fields\"").unwrap();
+        assert!(
+            cg_pos < qs_pos && qs_pos < fields_pos,
+            "composite index keys must follow collectionGroup -> queryScope -> fields:\n{raw_written}"
+        );
+        let written: serde_json::Value = serde_json::from_str(&raw_written).unwrap();
         assert_eq!(written["indexes"].as_array().unwrap().len(), 2);
         assert_eq!(written["fieldOverrides"].as_array().unwrap().len(), 1);
         assert_eq!(

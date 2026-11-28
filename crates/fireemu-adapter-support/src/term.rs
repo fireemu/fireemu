@@ -24,7 +24,21 @@
 //! unchanged.
 
 use std::io::IsTerminal as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+
+static DEBUG_LOGS_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enables or disables terminal emission of `debug`-level diagnostics from background runners.
+pub fn set_debug_enabled(enabled: bool) {
+    DEBUG_LOGS_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Returns whether `debug`-level diagnostics should be printed to the terminal.
+#[must_use]
+pub fn debug_enabled() -> bool {
+    DEBUG_LOGS_ENABLED.load(Ordering::Relaxed)
+}
 
 /// The stream a line is written to; each is decided on its own, because one can be redirected
 /// while the other is a terminal.

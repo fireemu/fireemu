@@ -1321,6 +1321,66 @@ fn an_occupied_port_of_a_selected_service_fails_before_the_command_runs() {
     drop(busy);
 }
 
+#[cfg(unix)]
+#[test]
+fn banner_distinguishes_only_excluded_functions_and_reports_storage_rules_and_missing_indexes() {
+    let dir = std::env::temp_dir().join(format!(
+        "fireemu-exec-banner-details-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("functions")).unwrap();
+    std::fs::write(
+        dir.join("storage.rules"),
+        "rules_version = '2';\nservice firebase.storage { match /b/{bucket}/o { match /{allPaths=**} { allow read, write: if false; } } }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("firebase.json"),
+        r#"{"storage":{"rules":"storage.rules"},"functions":[{"source":"functions"}]}"#,
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_fireemu"))
+        .current_dir(&dir)
+        .args([
+            "exec",
+            "--only",
+            "auth,firestore,storage",
+            "--firestore-port",
+            "0",
+            "--http-port",
+            "0",
+            "--storage-port",
+            "0",
+            "--hub-port",
+            "0",
+            "--logging-port",
+            "0",
+            "--write-missing-indexes",
+            "--",
+            "true",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(out.status.success(), "stderr:\n{stderr}");
+    assert!(
+        stdout.contains("  functions:        not selected by --only (nothing is bound)\n"),
+        "expected --only exclusion message for functions:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("  storage rules:    enforced from "),
+        "expected storage rules banner line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("  missing indexes:  recording to "),
+        "expected --write-missing-indexes banner line:\n{stdout}"
+    );
+}
+
 /// The owner evidence names the process holding a listener. The socket stays open for the
 /// whole check, so its owner is this test process.
 #[cfg(target_os = "linux")]

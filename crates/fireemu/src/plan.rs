@@ -258,10 +258,7 @@ fn service_rows(
             Some(format!("127.0.0.1:{}", crate::config::DEFAULT_UI_PORT)),
             Some("best effort unless the port was asked for"),
         ),
-        crate::UiSelection::Fixed(port) => (
-            Some(format!("127.0.0.1:{port}")),
-            Some("best effort unless the port was asked for"),
-        ),
+        crate::UiSelection::Fixed(port) => (Some(format!("127.0.0.1:{port}")), None),
     };
     rows.push(ServiceRow {
         name: "ui",
@@ -276,8 +273,7 @@ fn service_rows(
         start: cfg.logging_enabled,
         address: cfg.logging_enabled.then(|| cfg.logging_addr.clone()),
         reason: (!cfg.logging_enabled).then(|| "turned off (port 0)".to_owned()),
-        note: cfg
-            .logging_enabled
+        note: (cfg.logging_enabled && !cfg.logging_addr_explicit)
             .then_some("best effort unless the port was asked for"),
         auxiliary: true,
     });
@@ -862,6 +858,12 @@ fn build(
 
     let path_rows = path_rows(cfg, facts, &starts);
     warnings.extend(path_rows.iter().filter_map(|row| cwd_warning(row, facts)));
+    if cfg.require_demo_prefix && !cfg.auth_project.starts_with("demo-") {
+        warnings.push(format!(
+            "project {:?} does not start with \"demo-\" while projects.requireDemoPrefix is true; new control API sessions require the \"demo-\" prefix unless projects.requireDemoPrefix = false",
+            cfg.auth_project
+        ));
+    }
 
     let mut functions = Vec::new();
     if starts.functions {

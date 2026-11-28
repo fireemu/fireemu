@@ -538,7 +538,7 @@ pub struct Runner {
     alive: Arc<AtomicBool>,
     /// Set by [`Runner::shutdown`] and [`Runner::kill_now`]: the daemon stopped this runner on
     /// purpose, so an exit it meets afterwards is expected rather than a crash.
-    stopped_on_purpose: AtomicBool,
+    stopped_on_purpose: Arc<AtomicBool>,
     credential_sandbox: Mutex<Option<PathBuf>>,
     /// The last clock revision and follow flag the runner acknowledged.
     clock_revision: AsyncMutex<Option<(u64, bool)>>,
@@ -912,12 +912,14 @@ impl Runner {
             Arc::new(Mutex::new(HashMap::new()));
         let clock_status = Arc::new(Mutex::new(Value::Null));
         let alive = Arc::new(AtomicBool::new(true));
+        let stopped_on_purpose = Arc::new(AtomicBool::new(false));
         let (hello_tx, hello_rx) = oneshot::channel::<Hello>();
         {
             let waiters = waiters.clone();
             let label = label.clone();
             let logs = logs.clone();
             let alive = alive.clone();
+            let stopped_on_purpose = stopped_on_purpose.clone();
             let clock_status = clock_status.clone();
             let stdin_shared = stdin_shared.clone();
             let in_flight = Arc::new(AtomicUsize::new(0));
@@ -1013,7 +1015,11 @@ impl Runner {
                                     .cloned()
                                     .unwrap_or_default(),
                             );
-                            eprintln!("{}", log.line.terminal_line(&label));
+                            if !level.eq_ignore_ascii_case("debug")
+                                || fireemu_adapter_support::term::debug_enabled()
+                            {
+                                eprintln!("{}", log.line.terminal_line(&label));
+                            }
                             if let Ok(mut l) = logs.lock() {
                                 l.push(log);
                             }
@@ -1022,9 +1028,12 @@ impl Runner {
                     }
                 }
                 // The runner is gone: every waiter learns it and the runtime stops
-                // dispatching.
+                // dispatching. Suppress the warning when the daemon stopped or reloaded
+                // the runner intentionally.
                 alive.store(false, Ordering::SeqCst);
-                eprintln_at!(Level::Warn, "{label} runner exited");
+                if !stopped_on_purpose.load(Ordering::SeqCst) {
+                    eprintln_at!(Level::Warn, "{label} runner exited");
+                }
                 if let Ok(mut w) = waiters.lock() {
                     for (_, tx) in w.drain() {
                         let _ = tx.send(InvokeOutcome::RunnerGone("runner exited".into()));
@@ -1109,7 +1118,7 @@ impl Runner {
             logs,
             label,
             alive,
-            stopped_on_purpose: AtomicBool::new(false),
+            stopped_on_purpose,
             credential_sandbox: Mutex::new(Some(credential_sandbox)),
             clock_revision: AsyncMutex::new(None),
             clock_sequence: AtomicU64::new(0),
@@ -1134,7 +1143,7 @@ impl Runner {
             logs: Arc::new(Mutex::new(LogBuffer::default())),
             label: label.to_owned(),
             alive: Arc::new(AtomicBool::new(false)),
-            stopped_on_purpose: AtomicBool::new(false),
+            stopped_on_purpose: Arc::new(AtomicBool::new(false)),
             credential_sandbox: Mutex::new(None),
             clock_revision: AsyncMutex::new(None),
             clock_sequence: AtomicU64::new(0),

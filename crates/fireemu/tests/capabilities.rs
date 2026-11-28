@@ -119,8 +119,8 @@ impl Daemon {
             control_port,
             _banner: reader,
         };
-        assert!(banner.contains("  productionExact: false\n"));
-        assert!(banner.contains("    auth.allowUnsignedIdTokens: true (default)\n"));
+        assert!(banner.contains("  productionExact: false ("));
+        assert!(banner.contains("use --plan to list)"));
         assert!(!banner.contains("development defaults: on"));
         daemon
     }
