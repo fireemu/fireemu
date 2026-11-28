@@ -270,8 +270,13 @@ export const createPreviousInterval = <T,>(current: Accessor<T | undefined>) => 
   return { previous, remember: () => setPrevious(() => current()) };
 };
 
-const formatRulePath = (path: string): string =>
-  path.replaceAll("fireemu-any-prefix", "**").replaceAll("fireemu-placeholder", "*");
+const formatRulePath = (method: string, path: string): string => {
+  if (method !== "list") return path;
+  return path
+    .split("/")
+    .map((seg) => (seg === "fireemu-any-prefix" ? "**" : seg === "fireemu-placeholder" ? "*" : seg))
+    .join("/");
+};
 
 const expressionSnippet = (
   content: string | null | undefined,
@@ -408,7 +413,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                         {r.method} ({r.service})
                       </td>
                       <td class="mono" title={r.path}>
-                        {formatRulePath(r.path)}
+                        {formatRulePath(r.method, r.path)}
                       </td>
                       <td class="mono">{r.uid ?? "-"}</td>
                       <td>

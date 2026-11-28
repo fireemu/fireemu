@@ -166,13 +166,17 @@ pub fn firestore_watch(state: &Arc<UiState>, req: &UiRequest) -> UiResponse {
 /// One invocation record on the wire, with the sequence that identifies its position in the
 /// runtime's diagnostic stream (two identical outcomes are still distinct records).
 fn invocation_json(r: &fireemu_adapter_functions::runtime::SequencedRecord) -> Value {
-    json!({
+    let mut obj = json!({
         "sequence": r.sequence,
         "eventId": r.record.event_id.to_string(),
         "function": r.record.function,
         "attempt": r.record.attempt,
         "outcome": r.record.outcome,
-    })
+    });
+    if let Some(method) = &r.record.http_method {
+        obj["httpMethod"] = json!(method);
+    }
+    obj
 }
 
 /// Each codebase cursor belongs to exactly one runner identity, including across hot reloads.

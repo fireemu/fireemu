@@ -1658,11 +1658,27 @@ const PageMissingIndexes: Component<{ session: string; root: string }> = (props)
   const [reports, setReports] = createSignal<MissingIndexReports | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  let requestSeq = 0;
+
+  createEffect(
+    on(
+      () => [props.session, props.root] as const,
+      () => {
+        requestSeq += 1;
+        setReports(null);
+        setError(null);
+        setLoading(false);
+      },
+      { defer: true },
+    ),
+  );
 
   const load = async () => {
+    const seq = ++requestSeq;
     setLoading(true);
     setError(null);
     const result = await loadMissingIndexes(props.session, props.root);
+    if (seq !== requestSeq) return;
     setLoading(false);
     result.match(
       (data) => setReports(data),
@@ -1671,8 +1687,10 @@ const PageMissingIndexes: Component<{ session: string; root: string }> = (props)
   };
 
   const clear = async () => {
+    const seq = ++requestSeq;
     setError(null);
     const result = await clearMissingIndexes(props.session);
+    if (seq !== requestSeq) return;
     result.match(
       () => {
         setReports({
@@ -1684,6 +1702,15 @@ const PageMissingIndexes: Component<{ session: string; root: string }> = (props)
       },
       (err) => setError(err.message),
     );
+  };
+
+  const indexesJsonText = (value: MissingIndexReports): string => {
+    const dbName = props.root.replace(/\/documents$/, "");
+    const payload = value.indexesJson[dbName] ?? {
+      indexes: value.missingIndexes.map((entry) => entry.index),
+      fieldOverrides: [],
+    };
+    return JSON.stringify(payload, null, 2);
   };
 
   return (
@@ -1710,7 +1737,7 @@ const PageMissingIndexes: Component<{ session: string; root: string }> = (props)
         </AsyncButton>
         <Show when={reports() && reports()!.missingIndexes.length > 0}>
           <CopyButton
-            value={JSON.stringify(reports()!.indexesJson, null, 2)}
+            value={indexesJsonText(reports()!)}
             subject={t("firestore.queryCopyIndexes")}
             testId="firestore-copy-indexes"
           />
@@ -1723,6 +1750,11 @@ const PageMissingIndexes: Component<{ session: string; root: string }> = (props)
       <Show when={reports()}>
         {(value) => (
           <>
+            <Show when={value().truncated}>
+              <p role="status" class="my-2 text-sm">
+                {t("firestore.queryIndexTruncated", { count: value().dropped })}
+              </p>
+            </Show>
             <Show when={value().missingIndexes.length === 0}>
               <p class="text-sm text-muted">{t("firestore.queryIndexEmpty")}</p>
             </Show>

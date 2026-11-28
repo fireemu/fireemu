@@ -340,6 +340,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
         const depStat=await checked(signal,()=>lstat(resolvedDep));
         const kind=depStat.isDirectory()?(process.platform==='win32'?'junction':'dir'):'file';
         await checked(signal,()=>symlink(resolvedDep,targetDep,kind));
+        stats.symlinks++;
       }
       for(const [sourceLink,targetLink] of links){
         let linkValue;
@@ -398,6 +399,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
       const target=join(ancestor,'node_modules'),canonical=await checked(signal,()=>realpath(modules));
       if(symlinkDeps){
         await checked(signal,()=>symlink(canonical,target,process.platform==='win32'?'junction':'dir'));
+        stats.symlinks++;
       }else if(graph.has(canonical)){
         await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
         relocationLinks.push(relative(baseline,target));

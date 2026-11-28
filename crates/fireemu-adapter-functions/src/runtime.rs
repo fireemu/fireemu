@@ -187,6 +187,8 @@ pub struct BlockingAuthTarget {
     runner: Arc<Runner>,
     revision: u64,
     owner: usize,
+    event_id: u128,
+    epoch: Epoch,
 }
 
 /// The retry policy of a scheduled function: `retryCount` further attempts after the first, spaced by Cloud
@@ -6738,6 +6740,8 @@ impl FunctionsRuntime {
             ));
         }
         inner.next_event = inner.next_event.saturating_add(1);
+        let event_id = u128::from(inner.next_event);
+        let epoch = inner.epoch;
         let key = format!("blocking-auth-{}", inner.next_event);
         inner.running.insert(key.clone(), function.to_owned());
         inner.running_deadlines.insert(
@@ -6760,6 +6764,8 @@ impl FunctionsRuntime {
             runner: current.runner.clone(),
             revision: current.revision,
             owner,
+            event_id,
+            epoch,
         };
         drop(current);
         drop(inner);
@@ -6918,19 +6924,19 @@ impl FunctionsRuntime {
     }
 
     /// Records a blocking Auth function invocation (`beforeUserCreated`, `beforeUserSignedIn`,
-    /// etc.) in the invocation history so UI and test diagnostics observe it alongside HTTP and
-    /// event triggers.
-    pub fn record_blocking_auth_invocation(&self, function: &str, outcome: String) {
+    /// etc.) in the invocation history using the admission's `event_id` and `epoch` so calls
+    /// interrupted by a reset never leak into the next generation's history.
+    pub fn record_blocking_auth_invocation(&self, target: &BlockingAuthTarget, outcome: String) {
         if let Ok(mut inner) = self.inner.lock() {
-            inner.next_event += 1;
-            let event_id = u128::from(inner.next_event);
-            inner.record_invocation(InvocationRecord {
-                event_id,
-                function: function.to_owned(),
-                attempt: 1,
-                outcome,
-                http_method: Some("POST".to_owned()),
-            });
+            if inner.epoch == target.epoch {
+                inner.record_invocation(InvocationRecord {
+                    event_id: target.event_id,
+                    function: target.function.clone(),
+                    attempt: 1,
+                    outcome,
+                    http_method: Some("POST".to_owned()),
+                });
+            }
         }
     }
 

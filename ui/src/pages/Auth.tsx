@@ -93,13 +93,23 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
       ...(displayName() ? { displayName: displayName() } : {}),
       ...(uid() ? { localId: uid() } : {}),
       ...(emailVerified() ? { emailVerified: true } : {}),
-      ...(customAttributes ? { customAttributes } : {}),
     };
     const r = await createUser(props.project, user);
-    r.match(
-      () => props.onDone(),
-      (e) => setError(e.message),
-    );
+    if (r.isErr()) {
+      setError(r.error.message);
+      return;
+    }
+    if (customAttributes) {
+      const updated = await updateUser(props.project, {
+        localId: r.value.localId,
+        customAttributes,
+      });
+      if (updated.isErr()) {
+        setError(updated.error.message);
+        return;
+      }
+    }
+    props.onDone();
   };
   return (
     <div class="card mb-4" data-testid="new-user">

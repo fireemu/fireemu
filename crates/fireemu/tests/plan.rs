@@ -1744,7 +1744,10 @@ fn plan_omits_best_effort_note_for_explicit_ui_and_logging_ports_and_warns_on_no
     let ui = services.iter().find(|s| s["name"] == "ui").unwrap();
     assert_eq!(ui["start"], true);
     assert_eq!(ui["address"], "127.0.0.1:14001");
-    assert!(ui["note"].is_null(), "explicit ui port should have no best-effort note: {ui}");
+    assert!(
+        ui["note"].is_null(),
+        "explicit ui port should have no best-effort note: {ui}"
+    );
     let logging = services.iter().find(|s| s["name"] == "logging").unwrap();
     assert_eq!(logging["start"], true);
     assert_eq!(logging["address"], "127.0.0.1:14501");

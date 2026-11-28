@@ -1206,13 +1206,7 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
     }
 
     if addrs.ui.is_some() {
-        for slot in control.storage_rules.all_slots() {
-            if let Ok(sr) = slot.snapshot() {
-                if let Ok(mut diag) = sr.diagnostics.lock() {
-                    diag.enable_request_traces();
-                }
-            }
-        }
+        control.storage_rules.set_request_traces(true);
     }
     let enforcer = cfg.rules_enforced.then(|| {
         let enforcer = RulesEnforcer::new(rules.clone(), auth_store.clone(), clock.clone());

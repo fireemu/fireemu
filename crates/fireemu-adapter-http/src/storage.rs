@@ -224,6 +224,9 @@ pub struct StorageRulesRegistry {
     /// Where every rules denial of an end-user request is reported with the conditions it
     /// evaluated (see [`StorageRulesRegistry::set_denial_log`]).
     denial_log: std::sync::RwLock<Option<StorageDenialLog>>,
+    /// Whether Storage Rules evaluations record request traces by default (e.g. when the UI is on),
+    /// surviving ruleset reloads.
+    record_traces: std::sync::atomic::AtomicBool,
 }
 
 /// Receives every Storage Rules denial of an end-user request.
@@ -299,6 +302,7 @@ impl StorageRulesRegistry {
             no_rules_notice: std::sync::RwLock::default(),
             noticed_without_rules: Mutex::default(),
             denial_log: std::sync::RwLock::default(),
+            record_traces: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -320,6 +324,7 @@ impl StorageRulesRegistry {
             no_rules_notice: std::sync::RwLock::default(),
             noticed_without_rules: Mutex::default(),
             denial_log: std::sync::RwLock::default(),
+            record_traces: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -343,12 +348,33 @@ impl StorageRulesRegistry {
         self.denial_log.read().ok().and_then(|log| log.clone())
     }
 
-    /// Returns all active Storage rules slots (global or per-bucket) for diagnostics inspection.
+    /// Enables or disables automatic request-trace recording across Storage rules reloads.
+    pub fn set_request_traces(&self, enabled: bool) {
+        self.record_traces
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns whether automatic request-trace recording is enabled.
+    #[must_use]
+    pub fn request_traces_enabled(&self) -> bool {
+        self.record_traces
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Returns all unique active Storage rules slots (global or per-bucket) for diagnostics.
     #[must_use]
     pub fn all_slots(&self) -> Vec<Arc<RulesetSlot>> {
         match self.mode.read().ok().as_deref() {
             Some(StorageRulesMode::Global(slot)) => vec![Arc::clone(slot)],
-            Some(StorageRulesMode::PerBucket(slots)) => slots.values().cloned().collect(),
+            Some(StorageRulesMode::PerBucket(slots)) => {
+                let mut unique: Vec<Arc<RulesetSlot>> = Vec::new();
+                for slot in slots.values() {
+                    if !unique.iter().any(|existing| Arc::ptr_eq(existing, slot)) {
+                        unique.push(Arc::clone(slot));
+                    }
+                }
+                unique
+            }
             None => Vec::new(),
         }
     }
@@ -2847,10 +2873,20 @@ impl StorageState {
                 )
         };
         let denial_log = self.rules.denial_log();
-        let traces_enabled = rules
-            .diagnostics
-            .lock()
-            .is_ok_and(|diag| diag.request_traces_enabled());
+        let auto_traces = self.rules.request_traces_enabled();
+        let traces_enabled = rules.diagnostics.lock().is_ok_and(|mut diag| {
+            if auto_traces {
+                diag.enable_request_traces();
+            }
+            diag.request_traces_enabled()
+        });
+        if denial_log.is_none() && !traces_enabled {
+            return match evaluate_request_with(ruleset, &ctx, access).decision {
+                Decision::Allow => Ok(()),
+                Decision::Deny(_) if proven_one_level() => Ok(()),
+                Decision::Deny(_) => Err(fb_denied(self.is_strict(), method)),
+            };
+        }
         let (report, coverage) =
             fireemu_core_rules::eval::evaluate_request_traced(ruleset, &ctx, access);
         let allowed = match &report.decision {

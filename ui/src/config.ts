@@ -87,6 +87,8 @@ export const initialConfig = (): RuntimeConfig => {
     pubsubAddr: c.pubsubAddr ?? null,
     functionsAddr: c.functionsAddr ?? null,
     functionsSource: c.functionsSource ?? null,
+    functionsClockDate: c.functionsClockDate === "virtual" ? "virtual" : "real",
+    hostingAddr: c.hostingAddr ?? null,
     uiAddr: c.uiAddr ?? "",
     rulesEnforced: c.rulesEnforced ?? true,
     clockPinned: c.clockPinned ?? false,

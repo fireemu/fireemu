@@ -296,12 +296,14 @@ export async function createTestWorld(options={}){
     const resolved=assertUserSnapshotName(name);
     await control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}`);
   };
-  const activeEnvInjections=new Set();
+  const nonInjectableEnv=new Set(['TMPDIR','TEMP','TMP']);
+  const activeEnvInjections=new Map();
   const applyEnvInjection=(target,env)=>{
     for(const key of emulatorVariables){
-      if(!Object.prototype.hasOwnProperty.call(env,key))delete target[key];
+      if(!nonInjectableEnv.has(key)&&!Object.prototype.hasOwnProperty.call(env,key))delete target[key];
     }
     for(const [key,value] of Object.entries(env)){
+      if(nonInjectableEnv.has(key))continue;
       if(value===undefined)delete target[key];
       else target[key]=value;
     }
@@ -310,21 +312,35 @@ export async function createTestWorld(options={}){
     check();
     const env=current.environment;
     const keys=new Set([...emulatorVariables,...Object.keys(env)]);
+    for(const skip of nonInjectableEnv)keys.delete(skip);
+    let stack=activeEnvInjections.get(target);
     const previous=new Map();
-    for(const key of keys){
-      previous.set(key,Object.prototype.hasOwnProperty.call(target,key)?target[key]:undefined);
+    if(!stack){
+      for(const key of keys){
+        previous.set(key,Object.prototype.hasOwnProperty.call(target,key)?target[key]:undefined);
+      }
+      stack={previous,entries:[]};
+      activeEnvInjections.set(target,stack);
     }
+    const entry={world};
+    stack.entries.push(entry);
     applyEnvInjection(target,env);
-    const entry={target};
-    activeEnvInjections.add(entry);
     let restored=false;
     const restoreEnv=()=>{
       if(restored)return;
       restored=true;
-      activeEnvInjections.delete(entry);
-      for(const [key,prev] of previous){
-        if(prev===undefined)delete target[key];
-        else target[key]=prev;
+      const currentStack=activeEnvInjections.get(target);
+      if(!currentStack)return;
+      const idx=currentStack.entries.indexOf(entry);
+      if(idx!==-1)currentStack.entries.splice(idx,1);
+      if(currentStack.entries.length>0){
+        applyEnvInjection(target,current.environment);
+      }else{
+        activeEnvInjections.delete(target);
+        for(const [key,prev] of currentStack.previous){
+          if(prev===undefined)delete target[key];
+          else target[key]=prev;
+        }
       }
     };
     if(typeof Symbol.dispose==='symbol'){
@@ -401,7 +417,7 @@ export async function createTestWorld(options={}){
         catch(error){const failure=snapshotFailure(error,budget.signal);if(prepared)try{await removeSnapshotTree(generationDirectory);}catch(cleanupError){retainCleanupError(failure,cleanupError);}throw failure;}
         finally{budget.close();}
         await start(prepared,generationDirectory);
-        for(const entry of activeEnvInjections)applyEnvInjection(entry.target,current.environment);
+        for(const target of activeEnvInjections.keys())applyEnvInjection(target,current.environment);
         return world;
       },Error('test world call cancelled: the world was reset'));
     },

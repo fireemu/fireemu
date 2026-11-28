@@ -1138,6 +1138,7 @@ fn rules_requests_route(state: &ControlState, method: &str, is_default: bool) ->
         .collect();
     let mut storage_loaded = false;
     let mut storage_source: Option<String> = None;
+    state.storage_rules.set_request_traces(true);
     for slot in state.storage_rules.all_slots() {
         if let Ok(sr) = slot.snapshot() {
             if sr.is_loaded() {
@@ -1153,6 +1154,9 @@ fn rules_requests_route(state: &ControlState, method: &str, is_default: bool) ->
                 }
             }
         }
+    }
+    if requests.len() > REQUEST_TRACE_CAPACITY {
+        requests.truncate(REQUEST_TRACE_CAPACITY);
     }
     ok(json!({
         "capacity": REQUEST_TRACE_CAPACITY,
