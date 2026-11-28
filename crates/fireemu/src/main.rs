@@ -665,8 +665,8 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
     } else if changed_only {
         rows.retain(|row| {
             let source = row["source"].as_str().unwrap_or("");
-            !matches!(source, "default" | "default (schema)" | "unset")
-                && !(source == config::NO_EFFECT_SOURCE && row["value"].is_null())
+            !(matches!(source, "default" | "default (schema)" | "unset")
+                || (source == config::NO_EFFECT_SOURCE && row["value"].is_null()))
         });
     }
     if json {

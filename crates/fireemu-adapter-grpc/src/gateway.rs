@@ -413,6 +413,40 @@ impl Gateway {
         Some(lines)
     }
 
+    /// Records a composite index that strict (`refuse`) mode rejected so `GET /v1/.../firestore/missingIndexes`
+    /// and `world.firestore.missingIndexes()` can inspect it without switching to `report` mode.
+    pub fn record_missing_index(
+        &self,
+        database: &str,
+        requirement: &IndexDefinition,
+        message: String,
+    ) {
+        if self.ctx.policy != IndexValidationPolicy::Production {
+            return;
+        }
+        let report = MissingIndexReport {
+            database: database.to_owned(),
+            fragment: requirement.indexes_json_fragment(),
+            message,
+        };
+        if let Ok(mut ledger) = MISSING_INDEXES.lock() {
+            let seen = ledger
+                .reports
+                .iter()
+                .any(|r| r.database == report.database && r.fragment == report.fragment);
+            if !seen {
+                if ledger.reports.len() < MAX_MISSING_INDEX_REPORTS {
+                    ledger.reports.push(report);
+                } else {
+                    *ledger
+                        .dropped
+                        .entry(project_of(&report.database).to_owned())
+                        .or_default() += 1;
+                }
+            }
+        }
+    }
+
     fn diagnose_indexes(
         &self,
         query: &Query,

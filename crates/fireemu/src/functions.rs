@@ -8079,6 +8079,43 @@ impl FunctionsHook for Hook {
         self.0.status()
     }
 
+    fn history(&self) -> serde_json::Value {
+        let record_json = |r: &fireemu_adapter_functions::runtime::InvocationRecord| {
+            serde_json::json!({
+                "eventId": r.event_id.to_string(),
+                "function": r.function,
+                "attempt": r.attempt,
+                "outcome": r.outcome,
+            })
+        };
+        serde_json::json!({
+            "history": self.0.history().iter().map(record_json).collect::<Vec<_>>(),
+            "deadLetters": self.0.dead_letters().iter().map(record_json).collect::<Vec<_>>(),
+        })
+    }
+
+    fn logs(&self) -> serde_json::Value {
+        let mut lines = Vec::new();
+        let mut logs = Vec::new();
+        for unit in self.0.current_runner_units() {
+            let snapshot = unit.runner.logs_since(None);
+            for line in &snapshot.lines {
+                lines.push(line.display().to_owned());
+                logs.push(serde_json::json!({
+                    "codebase": unit.codebase,
+                    "line": line.display(),
+                    "invocationId": line.invocation_id(),
+                    "function": line.function(),
+                    "truncated": line.is_truncated(),
+                }));
+            }
+        }
+        serde_json::json!({
+            "lines": lines,
+            "logs": logs,
+        })
+    }
+
     fn publish(
         &self,
         topic: &str,

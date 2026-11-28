@@ -749,8 +749,11 @@ fn assemble_adapters(bound: BoundStartup) -> Result<ServiceAssembly, String> {
         &realtime_database,
         (cfg.rules_enforced && only.firestore).then(|| listen_expiry.clone()),
         only.firestore
-            && cfg.index_policy()
-                == fireemu_core_firestore::index::IndexValidationPolicy::ProductionReport,
+            && matches!(
+                cfg.index_policy(),
+                fireemu_core_firestore::index::IndexValidationPolicy::Production
+                    | fireemu_core_firestore::index::IndexValidationPolicy::ProductionReport
+            ),
     );
     let remote_config = fireemu_adapter_http::server::remote_config_stores(&control);
     control

@@ -4449,13 +4449,18 @@ impl LocalBackend {
     fn index_rejection(&self, parent: &Parent, rejection: &crate::gateway::Rejection) -> Status {
         let database = crate::gateway::database_name(parent);
         if let crate::gateway::Rejection::MissingIndex { requirement, .. } = rejection {
-            if let Some(message) = self.admin_index_refusal(parent, requirement) {
-                let mut refused = Status::failed_precondition(message);
+            let refused = if let Some(message) = self.admin_index_refusal(parent, requirement) {
+                let mut status = Status::failed_precondition(message);
                 if let Ok(v) = "FS_GW_MISSING_INDEX".parse() {
-                    refused.metadata_mut().insert("fireemu-reason", v);
+                    status.metadata_mut().insert("fireemu-reason", v);
                 }
-                return refused;
-            }
+                status
+            } else {
+                rejection.to_status_in(&database)
+            };
+            self.gateway
+                .record_missing_index(&database, requirement, refused.message().to_owned());
+            return refused;
         }
         rejection.to_status_in(&database)
     }

@@ -172,6 +172,14 @@ pub trait FunctionsHook: Send + Sync {
     fn idle_notify(&self) -> Arc<tokio::sync::Notify>;
     /// Status JSON (queue depths, functions).
     fn status(&self) -> Value;
+    /// Invocation history and dead letters (`GET /v1/sessions/{s}/functions/history`).
+    fn history(&self) -> Value {
+        json!({"history": [], "deadLetters": []})
+    }
+    /// Retained runner log entries (`GET /v1/sessions/{s}/functions/logs`).
+    fn logs(&self) -> Value {
+        json!({"logs": [], "lines": []})
+    }
     /// Publishes Pub/Sub messages (`{data, attributes, orderingKey}` each) on `topic`;
     /// returns the message IDs. A refusal issues no id and delivers nothing.
     fn publish(&self, topic: &str, messages: &[Value])
@@ -597,7 +605,7 @@ fn missing_indexes_route(
             }
             _ => error(
                 409,
-                "FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with firestore.missingIndexes set to \"report\" and Firestore selected; with \"refuse\" the query fails instead, the emulator profile assumes every index, and nothing is reported when Firestore is not selected",
+                "FAILED_PRECONDITION : missing composite indexes are reported only under the strict profile with Firestore selected; the emulator profile assumes every index, and nothing is reported when Firestore is not selected",
             ),
         },
         _ => error(
@@ -3000,6 +3008,8 @@ fn functions_route(state: &ControlState, method: &str, rest: &str, body: &Value)
     };
     match (method, rest) {
         ("GET", "") => ok(functions.status()),
+        ("GET", "/history") => ok(functions.history()),
+        ("GET", "/logs") => ok(functions.logs()),
         ("POST", "/remoteConfig:publish") => match functions.publish_remote_config(body) {
             Ok(deliveries) => ok(json!({"deliveries": deliveries})),
             Err(PublishEventError::Invalid) => error(
