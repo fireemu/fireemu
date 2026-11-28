@@ -72,7 +72,7 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
         "Firestore port. Default: 8080 (0 picks a free port).",
     ),
     opt(
-        &["--http-port"],
+        &["--http-port", "--auth-port"],
         Value::Required("<n>"),
         "Auth (Identity Toolkit) port. Default: 9099 (0 picks a free port).",
     ),
@@ -94,22 +94,22 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
     opt(
         &["--eventarc-port"],
         Value::Required("<n>"),
-        "Eventarc port. Eventarc starts exactly when a Functions backend is loaded; this option only sets the port. Default: 9299.",
+        "Eventarc port. Eventarc starts exactly when a Functions backend is loaded; this option only sets the port. Default: 9299 (0 picks a free port).",
     ),
     opt(
         &["--tasks-port"],
         Value::Required("<n>"),
-        "Cloud Tasks port. Cloud Tasks starts exactly when a Functions backend is loaded; this option only sets the port. Default: 9499.",
+        "Cloud Tasks port. Cloud Tasks starts exactly when a Functions backend is loaded; this option only sets the port. Default: 9499 (0 picks a free port).",
     ),
     opt(
         &["--pubsub-port"],
         Value::Required("<n>"),
-        "Pub/Sub port. Without --only, giving it also starts Pub/Sub; with --only, Pub/Sub starts only when the list names pubsub. Default: 8085.",
+        "Pub/Sub port. Without --only, giving it also starts Pub/Sub; with --only, Pub/Sub starts only when the list names pubsub. Default: 8085 (0 picks a free port).",
     ),
     opt(
         &["--database-port"],
         Value::Required("<n>"),
-        "Realtime Database port. Without --only, giving it also starts the Realtime Database; with --only, it starts only when the list names database. Default: 9000.",
+        "Realtime Database port. Without --only, giving it also starts the Realtime Database; with --only, it starts only when the list names database. Default: 9000 (0 picks a free port).",
     ),
     opt(
         &["--functions"],
@@ -134,8 +134,8 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
     ),
     opt(
         &["--logging-port"],
-        Value::Required("<n>"),
-        "Logging emulator port; 0 disables it. Default: 4500.",
+        Value::Required("<n|auto>"),
+        "Logging emulator port; auto assigns an available port, 0 disables it. Default: 4500.",
     ),
     opt(
         &["--inspect-functions"],
@@ -157,12 +157,11 @@ pub const DAEMON_OPTIONS: &[OptionSpec] = &[
         Value::Optional("[dir]"),
         "Export all state to this directory when the emulators stop; without a directory, the --import directory. Refused for the working directory or a parent of it, and unavailable on Windows. Default: no export.",
     ),
-    OptionSpec {
-        flags: &["--write-missing-indexes"],
-        value: Value::None,
-        exec_only: true,
-        text: "In strict profile, report and merge missing Firestore composite indexes on exit. Defaults to the configured indexes for (default) or firestore.indexes.json. Use --write-missing-indexes=<file> for a custom path or one named database. Default: off.",
-    },
+    opt(
+        &["--write-missing-indexes"],
+        Value::None,
+        "In strict profile, switches firestore.missingIndexes to \"report\" and merges missing Firestore composite indexes on exit (Ctrl-C for up, command exit for exec). Defaults to the configured indexes for (default) or firestore.indexes.json. Use --write-missing-indexes=<file> for a custom path or one named database. Default: off.",
+    ),
     opt(
         &["--plan"],
         Value::None,
@@ -235,6 +234,8 @@ const CONFIG_OPTIONS: &[OptionSpec] = &[
     opt(&["--firebase-json"], Value::Required("<path>"), "Load this firebase.json, overriding a reference in the canonical configuration."),
     opt(&["--json"], Value::None, "show: print key, value, source and description records as JSON. lint: print the report as JSON. Default: plain text."),
     opt(&["--only"], Value::Required("<services>"), "show only: report the App Check state in effect (the effective object under appCheck.enabled) for these products, as fireemu up --only selects them. Default: every product."),
+    opt(&["--changed"], Value::None, "show only: omit default and unset keys, printing only explicit, discovered, profile-derived, and productionExact-changed settings."),
+    opt(&["--explicit"], Value::None, "show only: print only settings explicitly provided by configuration files, flags, or .firebaserc."),
     opt(&["--deny-ineffective"], Value::None, "lint only: exit 1 when the configuration sets a key that is accepted but has no effect and no --allow entry covers it. Default: the report is informational and the exit code is 0."),
     opt(&["--allow"], Value::Required("<key>"), "lint only: a key (or prefix.* for every key below prefix) that may be set although it has no effect, for example a key kept for a later release. May be repeated. Default: none."),
     opt(&["--allow-file"], Value::Required("<path>"), "lint only: read --allow entries from a UTF-8 file (a byte order mark and CRLF line endings are accepted), one per line; blank lines and # comments are ignored."),
@@ -684,6 +685,7 @@ mod tests {
             let port = addr.rsplit_once(':').unwrap().1;
             let at = help
                 .find(&format!("\n  {flag} "))
+                .or_else(|| help.find(&format!("\n  {flag},")))
                 .unwrap_or_else(|| panic!("{flag}"));
             let rest = &help[at + 1..];
             let entry = &rest[..rest.find("\n  -").unwrap_or(rest.len())];

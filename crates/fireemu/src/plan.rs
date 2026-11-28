@@ -298,6 +298,7 @@ pub(crate) const EMULATOR_ENV: &[(&str, &str, bool)] = &[
     ("FIREBASE_STORAGE_EMULATOR_HOST", "storage", true),
     ("STORAGE_EMULATOR_HOST", "storage", true),
     ("FIREEMU_FUNCTIONS_HOST", "functions", true),
+    ("FIREEMU_HOSTING_HOST", "hosting", true),
     ("CLOUD_EVENTARC_EMULATOR_HOST", "eventarc", true),
     ("CLOUD_TASKS_EMULATOR_HOST", "tasks", true),
     ("PUBSUB_EMULATOR_HOST", "pubsub", true),

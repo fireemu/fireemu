@@ -427,7 +427,7 @@ fn test_world_config_command(args: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
-const CONFIG_USAGE: &str = "usage: fireemu config show [--config <path>] [--firebase-json <path>] [--only <services>] [--json]\n       fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n       fireemu config schema [--out <path>]";
+const CONFIG_USAGE: &str = "usage: fireemu config show [--config <path>] [--firebase-json <path>] [--only <services>] [--changed|--explicit] [--json]\n       fireemu config lint [--config <path>] [--firebase-json <path>] [--json] [--deny-ineffective] [--allow <key>]... [--allow-file <path>]\n       fireemu config schema [--out <path>]";
 
 /// What `config lint` reads from the command line besides the shared file flags.
 #[derive(Default)]
@@ -518,6 +518,8 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
     };
     let mut flags = Vec::new();
     let mut json = false;
+    let mut changed_only = false;
+    let mut explicit_only = false;
     let mut lint_options = LintOptions::default();
     let mut only: Option<String> = None;
     let mut index = 1;
@@ -525,6 +527,14 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
         match args[index].as_str() {
             "--json" => {
                 json = true;
+                index += 1;
+            }
+            "--changed" if !lint => {
+                changed_only = true;
+                index += 1;
+            }
+            "--explicit" if !lint => {
+                explicit_only = true;
                 index += 1;
             }
             "--config" | "--firebase-json" => {
@@ -643,6 +653,21 @@ fn config_command(args: &[String]) -> Result<(), CliError> {
             }
             .into();
         }
+    }
+    if explicit_only {
+        rows.retain(|row| {
+            let source = row["source"].as_str().unwrap_or("");
+            source.starts_with("explicit")
+                || source == ".firebaserc"
+                || source == "discovered"
+                || (source == config::NO_EFFECT_SOURCE && !row["value"].is_null())
+        });
+    } else if changed_only {
+        rows.retain(|row| {
+            let source = row["source"].as_str().unwrap_or("");
+            !matches!(source, "default" | "default (schema)" | "unset")
+                && !(source == config::NO_EFFECT_SOURCE && row["value"].is_null())
+        });
     }
     if json {
         term::write_stdout_line(
@@ -1133,7 +1158,7 @@ struct RawOptions {
     ui_port: Option<AuxiliaryPort>,
     /// The official `emulators:exec --ui` opt-in.
     ui: bool,
-    logging_port: Option<u16>,
+    logging_port: Option<AuxiliaryPort>,
     functions_source: Option<String>,
     inspect_functions: Option<u16>,
     inspect_functions_dynamic: bool,
@@ -1287,8 +1312,8 @@ fn parse_raw_options(args: &[String], context: OptionContext) -> Result<RawOptio
                 raw.storage_port = Some(port_arg(args, i, "--storage-port")?);
                 i += 2;
             }
-            "--http-port" => {
-                raw.http_port = Some(port_arg(args, i, "--http-port")?);
+            "--http-port" | "--auth-port" => {
+                raw.http_port = Some(port_arg(args, i, args[i].as_str())?);
                 i += 2;
             }
             "--pubsub-port" => {
@@ -1336,7 +1361,11 @@ fn parse_raw_options(args: &[String], context: OptionContext) -> Result<RawOptio
                 i += 2;
             }
             "--logging-port" => {
-                raw.logging_port = Some(port_arg(args, i, "--logging-port")?);
+                raw.logging_port = Some(if args.get(i + 1).is_some_and(|value| value == "auto") {
+                    AuxiliaryPort::Auto
+                } else {
+                    AuxiliaryPort::Fixed(port_arg(args, i, "--logging-port")?)
+                });
                 i += 2;
             }
             "--functions" => {
@@ -1391,20 +1420,10 @@ fn parse_raw_options(args: &[String], context: OptionContext) -> Result<RawOptio
                 i += step;
             }
             "--write-missing-indexes" => {
-                if context != OptionContext::Exec {
-                    return Err(CliError::usage(
-                        "--write-missing-indexes is only valid with exec",
-                    ));
-                }
                 raw.write_missing_indexes = Some(WriteMissingIndexes::DefaultFile);
                 i += 1;
             }
             arg if arg.starts_with("--write-missing-indexes=") => {
-                if context != OptionContext::Exec {
-                    return Err(CliError::usage(
-                        "--write-missing-indexes is only valid with exec",
-                    ));
-                }
                 let path = &arg["--write-missing-indexes=".len()..];
                 if path.is_empty() {
                     return Err(CliError::usage(
@@ -1720,9 +1739,13 @@ fn apply_port_overrides(cfg: &mut RuntimeConfig, raw: &RawOptions) {
         cfg.ui_enabled = enabled;
         cfg.ui_addr_explicit = true;
     }
-    if let Some(p) = raw.logging_port {
-        cfg.logging_addr = with_port(&cfg.logging_addr, p);
-        cfg.logging_enabled = p != 0;
+    if let Some(selection) = raw.logging_port {
+        let (port, enabled) = match selection {
+            AuxiliaryPort::Auto => (0, true),
+            AuxiliaryPort::Fixed(port) => (port, port != 0),
+        };
+        cfg.logging_addr = with_port(&cfg.logging_addr, port);
+        cfg.logging_enabled = enabled;
         cfg.logging_addr_explicit = true;
     }
 }
@@ -2375,11 +2398,18 @@ fn command_line_overrides(raw: &RawOptions) -> Vec<(String, String)> {
     push("--database-port", raw.database_port.map(|p| p.to_string()));
     push("--hub-port", auxiliary(raw.hub_port));
     push("--ui-port", auxiliary(raw.ui_port));
-    push("--logging-port", raw.logging_port.map(|p| p.to_string()));
+    push("--logging-port", auxiliary(raw.logging_port));
     push("--functions", raw.functions_source.clone());
     push(
         "--import",
         raw.import.as_ref().map(|p| p.display().to_string()),
+    );
+    push(
+        "--write-missing-indexes",
+        raw.write_missing_indexes.as_ref().map(|mode| match mode {
+            WriteMissingIndexes::DefaultFile => "true".to_owned(),
+            WriteMissingIndexes::File(path) => path.display().to_string(),
+        }),
     );
     out
 }
@@ -2583,6 +2613,9 @@ fn child_environment(
     }
     if let Some(addr) = addrs.functions {
         env.push(("FIREEMU_FUNCTIONS_HOST".to_owned(), addr.to_string()));
+    }
+    if let Some(addr) = addrs.hosting {
+        env.push(("FIREEMU_HOSTING_HOST".to_owned(), addr.to_string()));
     }
     if let Some(addr) = addrs.eventarc {
         env.push((
@@ -4167,14 +4200,22 @@ fn print_banner(
                 "behaves like production Firebase where the official emulators do not",
         }
     );
-    outln!("  productionExact: {}", cfg.production_exact);
-    for setting in &cfg.development_defaults {
+    if verb == "exec" {
         outln!(
-            "    {}: {} ({})",
-            setting["key"].as_str().unwrap_or_default(),
-            setting["value"].as_str().unwrap_or_default(),
-            setting["source"].as_str().unwrap_or_default()
+            "  productionExact: {} ({} development defaults; use --plan or --log-verbosity debug to list)",
+            cfg.production_exact,
+            cfg.development_defaults.len()
         );
+    } else {
+        outln!("  productionExact: {}", cfg.production_exact);
+        for setting in &cfg.development_defaults {
+            outln!(
+                "    {}: {} ({})",
+                setting["key"].as_str().unwrap_or_default(),
+                setting["value"].as_str().unwrap_or_default(),
+                setting["source"].as_str().unwrap_or_default()
+            );
+        }
     }
     outln!(
         "  edition: {}   clock: {}{}",

@@ -731,7 +731,7 @@ fn init_reference_is_complete_valid_toml_and_preserves_the_minimal_config() {
     );
     let minimal = std::fs::read(dir.join("fireemu.toml")).unwrap();
     let config: serde_json::Value = toml::from_str(std::str::from_utf8(&minimal).unwrap()).unwrap();
-    assert_eq!(config.as_object().unwrap().len(), 4);
+    assert_eq!(config.as_object().unwrap().len(), 3);
     let reference = std::fs::read_to_string(dir.join("fireemu.reference.toml")).unwrap();
     assert!(reference.contains("not loaded by fireemu"));
     assert!(reference.starts_with(&format!("#:schema {}\n", config_schema_url())));
@@ -1201,7 +1201,7 @@ fn init_noninteractive_defaults_to_strict_and_detects_firebase_json() {
     assert!(text.ends_with('\n'));
     assert!(text.starts_with(&format!("#:schema {}\n", config_schema_url())));
     let generated: serde_json::Value = toml::from_str(&text).unwrap();
-    assert_eq!(generated["$schema"], config_schema_url());
+    assert!(generated.get("$schema").is_none());
     assert_eq!(generated["schemaVersion"], 1);
     assert_eq!(generated["profile"], "strict");
     assert_eq!(generated["firebaseJson"], "firebase.json");

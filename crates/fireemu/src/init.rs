@@ -114,8 +114,10 @@ pub fn run(args: &[String]) -> Result<PathBuf, CliError> {
         document["profile"]
     );
     // Keep the required version and profile first without changing TOML table scope.
+    // The `#:schema` directive on line 1 already declares the schema for TOML editors,
+    // so skip writing a redundant `"$schema"` key into `fireemu.toml`.
     for (key, value) in document.as_object().expect("configuration object") {
-        if matches!(key.as_str(), "schemaVersion" | "profile") {
+        if matches!(key.as_str(), "schemaVersion" | "profile" | "$schema") {
             continue;
         }
         if let Some(table) = value.as_object() {
