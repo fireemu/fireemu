@@ -269,6 +269,10 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   const withFunctions=functionsSelected(options.services);
   const withHosting=options.services?.includes('hosting');
   const withDatabase=options.services?.includes('database');
+  const functionsSnapshotMode=options.functionsSnapshotMode??'copy';
+  if(!['copy','symlink-deps','in-place'].includes(functionsSnapshotMode)){
+    throw TypeError('functionsSnapshotMode must be "copy", "symlink-deps", or "in-place"');
+  }
   const cwd=resolve(options.cwd??process.cwd());
   const nodePathExcludes=options.nodePathExcludes===undefined?[]:options.nodePathExcludes;
   const packageName=value=>{
@@ -313,17 +317,30 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     }
   };
   const omitted=new Set();
-  const captureTree=async(source,destination,excludes=[])=>{
+  const SYMLINK_DEP_DIRS=new Set(['node_modules','.venv','venv']);
+  const captureTree=async(source,destination,excludes=[],{symlinkDeps=false}={})=>{
     try{
       const canonical=await checked(signal,()=>realpath(source));
       graph.set(canonical,destination);
       const links=[];
+      const externalDepLinks=[];
       await copyInputTree(canonical,destination,{signal,dereference:false,directoryModes,stats,filter:(path,info)=>{
         if(excludes.includes(path)){omitted.add(path);return false;}
-        if(['.git','.worktree'].includes(basename(path)))return false;
+        const name=basename(path);
+        if(['.git','.worktree'].includes(name))return false;
+        if(symlinkDeps&&path!==canonical&&SYMLINK_DEP_DIRS.has(name)&&(info.isDirectory()||info.isSymbolicLink())){
+          externalDepLinks.push([path,join(destination,relative(canonical,path))]);
+          return false;
+        }
         if(info.isSymbolicLink())links.push([path,join(destination,relative(canonical,path))]);
         return true;
       }});
+      for(const [sourceDep,targetDep] of externalDepLinks){
+        const resolvedDep=await checked(signal,()=>realpath(sourceDep));
+        const depStat=await checked(signal,()=>lstat(resolvedDep));
+        const kind=depStat.isDirectory()?(process.platform==='win32'?'junction':'dir'):'file';
+        await checked(signal,()=>symlink(resolvedDep,targetDep,kind));
+      }
       for(const [sourceLink,targetLink] of links){
         let linkValue;
         try{
@@ -358,10 +375,14 @@ export async function snapshotInputs(options, root, signal=options.signal) {
       throw Error(`Cannot snapshot dependency tree ${JSON.stringify(source)}: ${cause.message}`,{cause});
     }
   };
+  let hasFunctionsSource=false;
   const copySource=async(value,base)=>{
     if(typeof value!=='string')return value;
     const source=await checked(signal,()=>realpath(resolve(base,value)));
     if(inside(source,privateRoot))throw Error('world temporary directory must be outside the Functions source');
+    hasFunctionsSource=true;
+    if(functionsSnapshotMode==='in-place')return source;
+    const symlinkDeps=functionsSnapshotMode==='symlink-deps';
     const dependencies=[];
     for(let ancestor=dirname(source),level=1;;ancestor=dirname(ancestor),level++){
       const modules=join(ancestor,'node_modules');
@@ -371,11 +392,13 @@ export async function snapshotInputs(options, root, signal=options.signal) {
     const container=join(baseline,`functions-${sequence++}`);
     const depth=dependencies.at(-1)?.level??0;
     const destination=join(container,...Array(depth).fill('source'));
-    await captureTree(source,destination);
+    await captureTree(source,destination,[],{symlinkDeps});
     for(const {modules,level} of dependencies){
       let ancestor=destination;for(let count=0;count<level;count++)ancestor=dirname(ancestor);
       const target=join(ancestor,'node_modules'),canonical=await checked(signal,()=>realpath(modules));
-      if(graph.has(canonical)){
+      if(symlinkDeps){
+        await checked(signal,()=>symlink(canonical,target,process.platform==='win32'?'junction':'dir'));
+      }else if(graph.has(canonical)){
         await checked(signal,()=>symlink(process.platform==='win32'?graph.get(canonical):relative(ancestor,graph.get(canonical)),target,process.platform==='win32'?'junction':'dir'));
         relocationLinks.push(relative(baseline,target));
       }
@@ -471,7 +494,7 @@ export async function snapshotInputs(options, root, signal=options.signal) {
   if(!withFunctions&&config.functions)config.functions=config.functions.clock===undefined?undefined:{clock:config.functions.clock};
   if(options.firebaseJson){const path=resolve(cwd,options.firebaseJson);config.firebaseJson=await snapshotFirebase(JSON.parse(await readRegularFile(path,signal)),dirname(path));}
   if(withFunctions&&options.functionsSource){config.functions??={};config.functions.source=await copySource(options.functionsSource,cwd);}
-  const functionsConfigured=Boolean(graph.size||config.functions?.manifest||config.functions?.runner);
+  const functionsConfigured=Boolean(hasFunctionsSource||graph.size||config.functions?.manifest||config.functions?.runner);
   const nodePaths=[];
   for(const entry of (functionsConfigured?options.env?.NODE_PATH??'':'').split(delimiter).filter(Boolean)){
     let original=resolve(cwd,entry);

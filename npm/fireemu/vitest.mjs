@@ -25,19 +25,37 @@ function resolveHooks(explicitHooks) {
  * each test after the first.
  */
 export function useTestWorld(options = {}, hooks) {
-  const { resetMode = 'state', dumpDiagnosticsOnFailure = false, startupTimeoutMs, ...worldOptions } = options;
+  const {
+    resetMode = 'state',
+    dumpDiagnosticsOnFailure = false,
+    injectEnv = false,
+    functionsSnapshotMode = 'symlink-deps',
+    startupTimeoutMs,
+    ...worldOptions
+  } = options;
   if (!VALID_RESET_MODES.has(resetMode)) {
     throw TypeError('resetMode must be "state", "restart", or "none"');
   }
   if (typeof dumpDiagnosticsOnFailure !== 'boolean') {
     throw TypeError('dumpDiagnosticsOnFailure must be a boolean');
   }
+  if (typeof injectEnv !== 'boolean') {
+    throw TypeError('injectEnv must be a boolean');
+  }
   const lifecycle = resolveHooks(hooks);
   let instance;
   let needsReset = false;
+  let restoreEnv;
 
   lifecycle.beforeAll(async () => {
-    instance = await createTestWorld({ ...worldOptions, ...(startupTimeoutMs !== undefined ? { startupTimeoutMs } : {}) });
+    instance = await createTestWorld({
+      ...worldOptions,
+      functionsSnapshotMode,
+      ...(startupTimeoutMs !== undefined ? { startupTimeoutMs } : {}),
+    });
+    if (injectEnv) {
+      restoreEnv = instance.injectEnv();
+    }
     needsReset = false;
   }, startupTimeoutMs ?? 60_000);
 
@@ -55,6 +73,10 @@ export function useTestWorld(options = {}, hooks) {
         await instance.resetState();
       } else {
         await instance.reset({ mode: 'restart' });
+        if (injectEnv) {
+          restoreEnv?.();
+          restoreEnv = instance.injectEnv();
+        }
       }
     }, Math.max(startupTimeoutMs ?? 60_000, worldOptions.requestTimeoutMs ?? 80_000));
   }
@@ -81,9 +103,15 @@ export function useTestWorld(options = {}, hooks) {
 
   lifecycle.afterAll(async () => {
     const active = instance;
+    const undoEnv = restoreEnv;
     instance = undefined;
+    restoreEnv = undefined;
     needsReset = false;
-    if (active) await active.dispose();
+    try {
+      if (active) await active.dispose();
+    } finally {
+      undoEnv?.();
+    }
   });
 
   const requireWorld = () => {
@@ -93,6 +121,8 @@ export function useTestWorld(options = {}, hooks) {
 
   return Object.freeze({
     get world() { return requireWorld(); },
+    get clock() { return requireWorld().clock; },
+    get sdkConfig() { return requireWorld().sdkConfig; },
     awaitIdle: idleOptions => requireWorld().awaitIdle(idleOptions),
     resetState: () => requireWorld().resetState(),
     reset: resetOptions => requireWorld().reset(resetOptions),

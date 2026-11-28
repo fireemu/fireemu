@@ -6,12 +6,32 @@ export type { Environment } from './control.mjs';
 /** Codebase suffixes must match [A-Za-z0-9_-]+; this is checked at runtime. */
 export type TestWorldService = 'auth' | 'firestore' | 'storage' | 'functions' | `functions:${string}` | 'pubsub' | 'database' | 'appcheck' | 'hosting';
 
+/**
+ * How Functions source trees and dependencies are prepared for a TestWorld:
+ * - `'copy'`: copy Functions source and dependencies into the world snapshot for strict filesystem isolation (default for `createTestWorld`).
+ * - `'symlink-deps'`: copy Functions source files into the snapshot, but symlink `node_modules`, `.venv`, and `venv` directories to avoid duplicating large dependency trees (default for `useTestWorld`).
+ * - `'in-place'`: reference Functions source directories in place without copying.
+ */
+export type FunctionsSnapshotMode = 'copy' | 'symlink-deps' | 'in-place';
+
+export interface TestWorldSdkConfig {
+  readonly projectId: string;
+  readonly apiKey: string;
+  readonly storageBucket: string;
+}
+
+export interface EnvRestore {
+  (): void;
+  [Symbol.dispose](): void;
+}
+
 export interface TestWorldOptions {
   readonly binaryPath?: string;
   readonly tempRoot?: string;
   readonly cwd?: string;
   readonly firebaseJson?: string;
   readonly functionsSource?: string;
+  readonly functionsSnapshotMode?: FunctionsSnapshotMode;
   readonly import?: string;
   readonly projectId?: string;
   readonly clockStart?: string;
@@ -301,6 +321,8 @@ export interface TestWorld {
   readonly hostingSites: readonly TestWorldHostingSite[];
   readonly endpoints: TestWorldEndpoints;
   readonly environment: Environment;
+  readonly sdkConfig: TestWorldSdkConfig;
+  readonly injectEnv: (target?: Record<string, string | undefined>) => EnvRestore;
   readonly clock: TestWorldClock;
   readonly snapshots: TestWorldSnapshots;
   readonly firestore: TestWorldFirestore;

@@ -296,6 +296,29 @@ export async function createTestWorld(options={}){
     const resolved=assertUserSnapshotName(name);
     await control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}`);
   };
+  const injectEnv=(target=process.env)=>{
+    check();
+    const env=current.environment;
+    const previous=new Map();
+    for(const [key,value] of Object.entries(env)){
+      previous.set(key,Object.prototype.hasOwnProperty.call(target,key)?target[key]:undefined);
+      if(value===undefined)delete target[key];
+      else target[key]=value;
+    }
+    let restored=false;
+    const restoreEnv=()=>{
+      if(restored)return;
+      restored=true;
+      for(const [key,prev] of previous){
+        if(prev===undefined)delete target[key];
+        else target[key]=prev;
+      }
+    };
+    if(typeof Symbol.dispose==='symbol'){
+      Object.defineProperty(restoreEnv,Symbol.dispose,{value:restoreEnv,enumerable:false});
+    }
+    return restoreEnv;
+  };
   const world={
     get generation(){return generation;},
     get uiUrl(){check();return current.descriptor.uiUrl??undefined;},
@@ -303,6 +326,12 @@ export async function createTestWorld(options={}){
     get hostingSites(){check();return Object.freeze(current.hostingSites.map(entry=>Object.freeze({site:entry.site,url:normalizeOrigin(entry.url)})));},
     get endpoints(){check();return current.endpoints;},
     get environment(){check();return current.environment;},
+    get sdkConfig(){
+      check();
+      const projectId=snapshot.config.daemon.authProject;
+      return Object.freeze({projectId,apiKey:'fake-api-key',storageBucket:`${projectId}.appspot.com`});
+    },
+    injectEnv,
     get directory(){return directory;},
     control,
     clock:Object.freeze({

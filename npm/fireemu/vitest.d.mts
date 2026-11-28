@@ -1,5 +1,5 @@
-import type { AwaitIdleOptions, CheckpointOptions, ResetOptions, TestWorld, TestWorldOptions } from './testing.mjs';
-export type { AwaitIdleOptions, CheckpointOptions, ResetOptions, TestWorld, TestWorldOptions } from './testing.mjs';
+import type { AwaitIdleOptions, CheckpointOptions, ResetOptions, TestWorld, TestWorldClock, TestWorldOptions, TestWorldSdkConfig } from './testing.mjs';
+export type { AwaitIdleOptions, CheckpointOptions, FunctionsSnapshotMode, ResetOptions, TestWorld, TestWorldClock, TestWorldOptions, TestWorldSdkConfig } from './testing.mjs';
 
 export type VitestResetMode = 'state' | 'restart' | 'none';
 
@@ -13,6 +13,11 @@ export interface VitestTestWorldOptions extends TestWorldOptions {
   readonly resetMode?: VitestResetMode;
   /** When true (and `afterEach` is available), print recent Functions dead letters and logs on test failure. */
   readonly dumpDiagnosticsOnFailure?: boolean;
+  /**
+   * When true, inject `world.environment` into `process.env` in `beforeAll` (and refresh it on
+   * `'restart'` resets), restoring the previous environment in `afterAll`. Default: `false`.
+   */
+  readonly injectEnv?: boolean;
 }
 
 export interface VitestLifecycleHooks {
@@ -27,6 +32,8 @@ export interface VitestLifecycleHooks {
 
 export interface VitestTestWorldHandle {
   readonly world: TestWorld;
+  readonly clock: TestWorldClock;
+  readonly sdkConfig: TestWorldSdkConfig;
   readonly awaitIdle: (options?: Pick<AwaitIdleOptions, 'scope' | 'timeoutSeconds'>) => Promise<{
     readonly idle: boolean;
     readonly scope?: 'all' | 'runnable';

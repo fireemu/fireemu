@@ -1614,3 +1614,60 @@ test('Firebase inputs snapshot RTDB Rules and selected Hosting across configurat
     }
   }
 });
+
+test('functionsSnapshotMode validates option and supports symlink-deps and in-place without duplicating node_modules or .venv', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'fireemu-world-fn-mode-')));
+  t.after(() => removeSnapshotTree(root));
+
+  const fnDir = join(root, 'functions');
+  const localModules = join(fnDir, 'node_modules', 'demo-pkg');
+  const localVenv = join(fnDir, '.venv', 'bin');
+  const ancestorModules = join(root, 'node_modules', 'ancestor-pkg');
+  await mkdir(localModules, { recursive: true });
+  await mkdir(localVenv, { recursive: true });
+  await mkdir(ancestorModules, { recursive: true });
+  await writeFile(join(fnDir, 'index.js'), 'export const hello = () => "v1";');
+  await writeFile(join(localModules, 'index.js'), 'module.exports = "dep";');
+  await writeFile(join(localVenv, 'python'), '#!/bin/sh\n');
+  await writeFile(join(ancestorModules, 'index.js'), 'module.exports = "anc";');
+
+  const badWorld = join(root, 'world-bad');
+  await mkdir(badWorld, { mode: 0o700 });
+  await assert.rejects(
+    snapshotInputs({ cwd: root, functionsSource: fnDir, functionsSnapshotMode: 'bogus', env: { NODE_PATH: '' } }, badWorld),
+    TypeError,
+  );
+
+  // symlink-deps: source files are isolated copies, node_modules/.venv/ancestor node_modules are symlinked
+  const symWorld = join(root, 'world-sym');
+  await mkdir(symWorld, { mode: 0o700 });
+  const symSnap = await snapshotInputs({ cwd: root, functionsSource: fnDir, functionsSnapshotMode: 'symlink-deps', env: { NODE_PATH: '' } }, symWorld);
+  assert.equal(symSnap.functionsConfigured, true);
+  assert.notEqual(symSnap.config.functions.source, fnDir);
+  assert.equal(await readFile(join(symSnap.config.functions.source, 'index.js'), 'utf8'), 'export const hello = () => "v1";');
+  // Dependency directories must be symlinks pointing to the original realpaths, not copied files.
+  assert.equal(await readlink(join(symSnap.config.functions.source, 'node_modules')), await realpath(join(fnDir, 'node_modules')));
+  assert.equal(await readlink(join(symSnap.config.functions.source, '.venv')), await realpath(join(fnDir, '.venv')));
+  assert.equal(await readlink(join(dirname(symSnap.config.functions.source), 'node_modules')), await realpath(join(root, 'node_modules')));
+  // Only index.js + fireemu.json should be counted as regular files (not the 3 dependency files).
+  assert.equal(symSnap.stats.files, 2);
+
+  // Source isolation still holds for index.js, and removing the snapshot never touches original deps.
+  await writeFile(join(fnDir, 'index.js'), 'export const hello = () => "v2";');
+  assert.equal(await readFile(join(symSnap.config.functions.source, 'index.js'), 'utf8'), 'export const hello = () => "v1";');
+  const genDir = join(symWorld, 'gen-1');
+  const gen = await prepareGeneration(symSnap, genDir);
+  assert.equal(await readFile(join(JSON.parse(await readFile(gen.configPath, 'utf8')).functions.source, 'index.js'), 'utf8'), 'export const hello = () => "v1";');
+  await removeSnapshotTree(symWorld);
+  assert.equal(await readFile(join(localModules, 'index.js'), 'utf8'), 'module.exports = "dep";');
+  assert.equal(await readFile(join(ancestorModules, 'index.js'), 'utf8'), 'module.exports = "anc";');
+
+  // in-place: references original source directory directly without copying
+  const inPlaceWorld = join(root, 'world-inplace');
+  await mkdir(inPlaceWorld, { mode: 0o700 });
+  const inPlaceSnap = await snapshotInputs({ cwd: root, functionsSource: fnDir, functionsSnapshotMode: 'in-place', env: { NODE_PATH: '' } }, inPlaceWorld);
+  assert.equal(inPlaceSnap.functionsConfigured, true);
+  assert.equal(inPlaceSnap.config.functions.source, await realpath(fnDir));
+  // Only fireemu.json is written.
+  assert.equal(inPlaceSnap.stats.files, 1);
+});

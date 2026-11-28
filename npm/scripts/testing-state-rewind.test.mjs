@@ -148,3 +148,47 @@ for (const startRunning of [false, true]) {
     }
   });
 }
+
+test('vitest injectEnv, clock, and sdkConfig helpers inject and cleanly restore process.env', { skip: !hasBinary }, async () => {
+  assert.throws(() => useTestWorld({ injectEnv: 'yes' }, { beforeAll() {}, beforeEach() {}, afterAll() {} }), TypeError);
+
+  const prevFirestore = process.env.FIRESTORE_EMULATOR_HOST;
+  const sentinelKey = 'FIRESTORE_EMULATOR_HOST';
+  process.env[sentinelKey] = '127.0.0.1:9999';
+  const prevAuth = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+  delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
+
+  const hooks = { beforeAll: [], beforeEach: [], afterAll: [] };
+  const handle = useTestWorld(
+    { binaryPath, services: ['firestore', 'auth'], resetMode: 'state', injectEnv: true, projectId: 'demo-inject-test' },
+    {
+      beforeAll(fn) { hooks.beforeAll.push(fn); },
+      beforeEach(fn) { hooks.beforeEach.push(fn); },
+      afterAll(fn) { hooks.afterAll.push(fn); },
+    },
+  );
+  try {
+    for (const fn of hooks.beforeAll) await fn();
+    assert.equal(process.env.FIRESTORE_EMULATOR_HOST, handle.world.environment.FIRESTORE_EMULATOR_HOST);
+    assert.equal(process.env.FIREBASE_AUTH_EMULATOR_HOST, handle.world.environment.FIREBASE_AUTH_EMULATOR_HOST);
+    assert.equal(handle.sdkConfig.projectId, 'demo-inject-test');
+    assert.equal(handle.sdkConfig.storageBucket, 'demo-inject-test.appspot.com');
+    assert.equal(typeof handle.clock.advanceAndSettle, 'function');
+
+    // Direct injectEnv on a custom target + idempotent restore + Symbol.dispose
+    const customTarget = { FIRESTORE_EMULATOR_HOST: 'orig' };
+    const restore = handle.world.injectEnv(customTarget);
+    assert.equal(customTarget.FIRESTORE_EMULATOR_HOST, handle.world.environment.FIRESTORE_EMULATOR_HOST);
+    restore[Symbol.dispose]();
+    restore();
+    assert.equal(customTarget.FIRESTORE_EMULATOR_HOST, 'orig');
+    assert.equal('FIREBASE_AUTH_EMULATOR_HOST' in customTarget, false);
+  } finally {
+    for (const fn of hooks.afterAll) await fn();
+    assert.equal(process.env[sentinelKey], '127.0.0.1:9999');
+    assert.equal('FIREBASE_AUTH_EMULATOR_HOST' in process.env, false);
+    if (prevFirestore === undefined) delete process.env[sentinelKey];
+    else process.env[sentinelKey] = prevFirestore;
+    if (prevAuth !== undefined) process.env.FIREBASE_AUTH_EMULATOR_HOST = prevAuth;
+  }
+});
