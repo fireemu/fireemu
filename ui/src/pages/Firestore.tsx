@@ -28,6 +28,11 @@ import { ValueTree } from "../components/ValueTree";
 import { buildValueTree, type ValueNode } from "../lib/valueTree";
 import { CodeEditorToolbar } from "../components/CodeEditorToolbar";
 import FirestoreQuery from "../components/FirestoreQuery";
+import {
+  clearMissingIndexes,
+  loadMissingIndexes,
+  type MissingIndexReports,
+} from "../api/firestoreQuery";
 import { fsFieldsToPlainJson, plainJsonToFsFields } from "../lib/firestoreJson";
 import { defaultQuery, encodeSharedQuery, type QueryValueType } from "../lib/firestoreQuery";
 import { decodeSplat, firestoreHref, referenceHref } from "../lib/hrefs";
@@ -1644,7 +1649,97 @@ const Firestore: Component = () => {
           </Show>
         </div>
       </div>
+      <PageMissingIndexes session={appState.session()} root={root()} />
     </div>
+  );
+};
+
+const PageMissingIndexes: Component<{ session: string; root: string }> = (props) => {
+  const [reports, setReports] = createSignal<MissingIndexReports | null>(null);
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    const result = await loadMissingIndexes(props.session, props.root);
+    setLoading(false);
+    result.match(
+      (data) => setReports(data),
+      (err) => setError(err.message),
+    );
+  };
+
+  const clear = async () => {
+    setError(null);
+    const result = await clearMissingIndexes(props.session);
+    result.match(
+      () => {
+        setReports({
+          dropped: 0,
+          truncated: false,
+          missingIndexes: [],
+          indexesJson: { indexes: [], fieldOverrides: [] },
+        });
+      },
+      (err) => setError(err.message),
+    );
+  };
+
+  return (
+    <details class="card mt-4" data-testid="firestore-missing-indexes-panel">
+      <summary
+        class="cursor-pointer font-semibold text-sm"
+        onClick={() => {
+          if (reports() === null && !loading()) void load();
+        }}
+      >
+        {t("firestore.queryIndexes")}
+        <Show when={reports() && reports()!.missingIndexes.length > 0}>
+          {" "}
+          ({reports()!.missingIndexes.length})
+        </Show>
+      </summary>
+      <p class="my-2 text-xs text-muted">{t("firestore.queryIndexHint")}</p>
+      <div class="mb-2 flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-sm" disabled={loading()} onClick={() => void load()}>
+          {t("firestore.queryLoadIndexes")}
+        </button>
+        <AsyncButton class="btn btn-sm" testId="firestore-clear-indexes" onClick={clear}>
+          {t("firestore.queryClearIndexes")}
+        </AsyncButton>
+        <Show when={reports() && reports()!.missingIndexes.length > 0}>
+          <CopyButton
+            value={JSON.stringify(reports()!.indexesJson, null, 2)}
+            subject={t("firestore.queryCopyIndexes")}
+            testId="firestore-copy-indexes"
+          />
+        </Show>
+      </div>
+      <Show when={loading()}>
+        <p role="status">{t("app.loading")}</p>
+      </Show>
+      <ErrorBanner message={error()} />
+      <Show when={reports()}>
+        {(value) => (
+          <>
+            <Show when={value().missingIndexes.length === 0}>
+              <p class="text-sm text-muted">{t("firestore.queryIndexEmpty")}</p>
+            </Show>
+            <For each={value().missingIndexes}>
+              {(entry) => (
+                <div class="my-2">
+                  <p class="text-sm">{entry.message}</p>
+                  <pre class="mono max-h-48 overflow-auto rounded-control border border-line-subtle bg-sunken p-2 text-xs">
+                    {JSON.stringify(entry.index, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </For>
+          </>
+        )}
+      </Show>
+    </details>
   );
 };
 

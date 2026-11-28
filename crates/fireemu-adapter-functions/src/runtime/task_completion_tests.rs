@@ -3260,6 +3260,7 @@ fn sparse_history_cursors_preserve_the_replay_boundary_and_exclude_the_cursor() 
                 event_id: u128::from(sequence),
                 attempt: 1,
                 outcome: "ok".into(),
+                http_method: None,
             },
         );
     }

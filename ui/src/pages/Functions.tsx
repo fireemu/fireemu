@@ -1057,11 +1057,14 @@ const Functions: Component = () => {
   const filteredLogOutput = createMemo(() =>
     (formatJson() ? filteredLines().map(formatLogLine) : filteredLines()).join("\n"),
   );
+  const [hideOptions, setHideOptions] = createSignal(false);
   const filteredInvocations = (): InvocationInfo[] => {
     const name = fnFilter();
-    return name === ""
-      ? scopedInvocations()
-      : scopedInvocations().filter((r) => r.function === name);
+    return scopedInvocations().filter((r) => {
+      if (name !== "" && r.function !== name) return false;
+      if (hideOptions() && r.httpMethod === "OPTIONS") return false;
+      return true;
+    });
   };
   /** Function names to offer in the filter: the registered ones plus any seen in invocations. */
   const functionNames = (): string[] => {
@@ -1506,6 +1509,20 @@ const Functions: Component = () => {
                         <dt class="label">{t("functions.overlapRejected")}</dt>
                         <dd data-testid="status-overlap-rejected">{st().overlapRejected}</dd>
                       </dl>
+                      <Show
+                        when={
+                          appState.config().functionsClockDate === "real" &&
+                          (o()?.functions.some((f) => f.trigger.kind === "schedule") ?? false)
+                        }
+                      >
+                        <div
+                          class="mt-3 rounded-control border border-warning-line bg-warning-subtle px-3 py-2 text-xs text-warning"
+                          role="note"
+                          data-testid="functions-clock-real-warning"
+                        >
+                          {t("runtime.functionsClockRealWarning")}
+                        </div>
+                      </Show>
                       <Show when={(st().codebases?.length ?? 0) > 0}>
                         <ul class="mt-3 text-sm" data-testid="codebase-list">
                           <For each={st().codebases}>
@@ -1547,25 +1564,36 @@ const Functions: Component = () => {
             <Section
               title={t("functions.invocations")}
               actions={
-                <label class="text-sm">
-                  <span class="sr-only">{t("functions.filterFunction")}</span>
-                  <select
-                    class="input"
-                    data-testid="invocation-function-filter"
-                    value={fnFilter()}
-                    onInput={(e) =>
-                      setFilterSearch({ function: e.currentTarget.value || undefined })
-                    }
-                  >
-                    <option value="">{t("functions.allFunctions")}</option>
-                    <Show when={fnFilter() && !functionNames().includes(fnFilter())}>
-                      <option value={fnFilter()}>{fnFilter()}</option>
-                    </Show>
-                    <For each={functionNames()}>
-                      {(name) => <option value={name}>{name}</option>}
-                    </For>
-                  </select>
-                </label>
+                <div class="flex flex-wrap items-center gap-3">
+                  <label class="flex items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      data-testid="invocation-hide-options"
+                      checked={hideOptions()}
+                      onChange={(e) => setHideOptions(e.currentTarget.checked)}
+                    />
+                    {t("functions.hideOptions")}
+                  </label>
+                  <label class="text-sm">
+                    <span class="sr-only">{t("functions.filterFunction")}</span>
+                    <select
+                      class="input"
+                      data-testid="invocation-function-filter"
+                      value={fnFilter()}
+                      onInput={(e) =>
+                        setFilterSearch({ function: e.currentTarget.value || undefined })
+                      }
+                    >
+                      <option value="">{t("functions.allFunctions")}</option>
+                      <Show when={fnFilter() && !functionNames().includes(fnFilter())}>
+                        <option value={fnFilter()}>{fnFilter()}</option>
+                      </Show>
+                      <For each={functionNames()}>
+                        {(name) => <option value={name}>{name}</option>}
+                      </For>
+                    </select>
+                  </label>
+                </div>
               }
             >
               <Show
@@ -1591,6 +1619,7 @@ const Functions: Component = () => {
                         <tr>
                           <th>{t("functions.eventId")}</th>
                           <th>{t("functions.name")}</th>
+                          <th>{t("functions.method")}</th>
                           <th>{t("functions.attempt")}</th>
                           <th>{t("functions.outcome")}</th>
                         </tr>
@@ -1601,6 +1630,7 @@ const Functions: Component = () => {
                             <tr>
                               <td class="mono text-xs">{r.eventId}</td>
                               <td class="mono">{r.function}</td>
+                              <td class="mono text-xs">{r.httpMethod ?? "—"}</td>
                               <td>{r.attempt}</td>
                               <td class="mono text-xs">{r.outcome}</td>
                             </tr>

@@ -75,6 +75,8 @@ export type InvocationInfo = {
   function: string;
   attempt: number;
   outcome: string;
+  /** HTTP method for HTTP/callable/blocking invocations (`GET`, `POST`, `OPTIONS`, ...). */
+  httpMethod?: string;
   /** Position in the runtime's diagnostic stream; absent on the overview payload. */
   sequence?: number;
 };

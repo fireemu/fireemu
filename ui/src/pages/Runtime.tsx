@@ -183,13 +183,26 @@ export const ClockPanel: Component = () => {
       <ErrorBanner message={error()} />
       <div class="mb-3">
         <span class="label">{t("runtime.clockNow")}</span>
-        <span class="mono" data-testid="runtime-clock">
-          {appState.clock()}
+        <span class="mono" data-testid="runtime-clock" title={appState.clock()}>
+          {appState.clock().replace(/\.\d+Z$/, "Z")}
         </span>{" "}
         <StatusBadge tone={frozen() ? "paused" : "neutral"} testId="runtime-clock-mode">
           {frozen() ? t("runtime.clockFrozen") : t("runtime.clockRunning")}
         </StatusBadge>
       </div>
+      <Show
+        when={
+          appState.config().functionsConfigured && appState.config().functionsClockDate === "real"
+        }
+      >
+        <div
+          class="mb-3 rounded-control border border-warning-line bg-warning-subtle px-3 py-2 text-xs text-warning"
+          role="note"
+          data-testid="runtime-functions-clock-warning"
+        >
+          {t("runtime.functionsClockRealWarning")}
+        </div>
+      </Show>
       <div class="mb-3 flex flex-wrap items-end gap-2">
         <AsyncButton
           class="btn"

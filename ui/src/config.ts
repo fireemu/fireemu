@@ -22,6 +22,8 @@ export type RuntimeConfig = {
   pubsubAddr: string | null;
   functionsAddr: string | null;
   functionsSource: string | null;
+  functionsClockDate?: "real" | "virtual";
+  hostingAddr?: string | null;
   uiAddr: string;
   rulesEnforced: boolean;
   clockPinned: boolean;

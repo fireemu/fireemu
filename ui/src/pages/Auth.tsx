@@ -62,12 +62,30 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
   const [displayName, setDisplayName] = createSignal("");
   const [uid, setUid] = createSignal("");
   const [emailVerified, setEmailVerified] = createSignal(false);
+  const [claims, setClaims] = createSignal("");
   const guard = createLeaveGuard(() =>
-    Boolean(email() || password() || phone() || displayName() || uid() || emailVerified()),
+    Boolean(
+      email() || password() || phone() || displayName() || uid() || emailVerified() || claims(),
+    ),
   );
   const [error, setError] = createSignal<string | null>(null);
   const save = async () => {
     setError(null);
+    let customAttributes: string | undefined;
+    const rawClaims = claims().trim();
+    if (rawClaims !== "") {
+      try {
+        const parsed: unknown = JSON.parse(rawClaims);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          setError(t("auth.customClaimsInvalid"));
+          return;
+        }
+        customAttributes = JSON.stringify(parsed);
+      } catch {
+        setError(t("auth.customClaimsInvalid"));
+        return;
+      }
+    }
     const user = {
       ...(email() ? { email: email() } : {}),
       ...(password() ? { password: password() } : {}),
@@ -75,6 +93,7 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
       ...(displayName() ? { displayName: displayName() } : {}),
       ...(uid() ? { localId: uid() } : {}),
       ...(emailVerified() ? { emailVerified: true } : {}),
+      ...(customAttributes ? { customAttributes } : {}),
     };
     const r = await createUser(props.project, user);
     r.match(
@@ -142,6 +161,16 @@ const NewUserForm: Component<{ project: string; onDone: () => void; onCancel: ()
             onChange={(e) => setEmailVerified(e.currentTarget.checked)}
           />
           {t("auth.emailVerifiedCreate")}
+        </label>
+        <label class="text-sm md:col-span-2">
+          <span class="label">{t("auth.customClaimsOptional")}</span>
+          <input
+            class="input mono"
+            data-testid="new-user-claims"
+            placeholder='{"role":"admin"}'
+            value={claims()}
+            onInput={(e) => setClaims(e.currentTarget.value)}
+          />
         </label>
       </div>
       <div class="mt-3 flex gap-2">

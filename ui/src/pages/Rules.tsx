@@ -270,6 +270,21 @@ export const createPreviousInterval = <T,>(current: Accessor<T | undefined>) => 
   return { previous, remember: () => setPrevious(() => current()) };
 };
 
+const formatRulePath = (path: string): string =>
+  path.replaceAll("fireemu-any-prefix", "**").replaceAll("fireemu-placeholder", "*");
+
+const expressionSnippet = (
+  content: string | null | undefined,
+  currentOffset: number,
+  endOffset: number,
+): string => {
+  if (!content) return "";
+  const range = sourceRange(content, currentOffset, endOffset);
+  if (!range) return "";
+  const collapsed = content.slice(range.start, range.end).replace(/\s+/g, " ").trim();
+  return collapsed.length > 60 ? `${collapsed.slice(0, 57)}…` : collapsed;
+};
+
 const RulesRequestsPanel: Component<{ scope: string; session: string; revision: number }> = (
   props,
 ) => {
@@ -309,9 +324,19 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
   const identity = (r: RulesRequest) =>
     JSON.stringify([props.scope, r.service, list.data()?.generation ?? null, r.sequence]);
   const current = () => requests().find((r) => identity(r) === selected());
+  const traceSource = () => {
+    const req = current();
+    if (!req) return null;
+    if (req.service === "storage") {
+      return typeof list.data()?.storageSource === "string" ? list.data()!.storageSource! : null;
+    }
+    if (req.service === "firestore") {
+      return typeof list.data()?.source === "string" ? list.data()!.source! : null;
+    }
+    return null;
+  };
   const sourceAvailable = () =>
-    current()?.service === "firestore" &&
-    typeof list.data()?.source === "string" &&
+    traceSource() !== null &&
     typeof list.data()?.generation === "string" &&
     /^\d+$/.test(list.data()!.generation!);
   createEffect(() => {
@@ -341,7 +366,10 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
         <Show when={list.loading()}>
           <p role="status">{t("rules.refreshing")}</p>
         </Show>
-        <Show when={list.data()?.loaded} fallback={<p>{t("rules.notLoaded")}</p>}>
+        <Show
+          when={list.data()?.loaded || list.data()?.storageLoaded}
+          fallback={<p>{t("rules.notLoaded")}</p>}
+        >
           <Show when={requests().length > 0} fallback={<p>{t("rules.requestsNone")}</p>}>
             <div class="mb-3 flex flex-wrap items-center gap-3">
               <label class="flex items-center gap-1.5 text-sm">
@@ -379,7 +407,9 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                       <td class="mono">
                         {r.method} ({r.service})
                       </td>
-                      <td class="mono">{r.path}</td>
+                      <td class="mono" title={r.path}>
+                        {formatRulePath(r.path)}
+                      </td>
                       <td class="mono">{r.uid ?? "-"}</td>
                       <td>
                         <StatusBadge tone={r.allowed ? "success" : "danger"}>
@@ -429,11 +459,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                                 class="btn mono"
                                 disabled={
                                   !sourceAvailable() ||
-                                  sourceRange(
-                                    list.data()!.source!,
-                                    e.currentOffset,
-                                    e.endOffset,
-                                  ) === null
+                                  sourceRange(traceSource()!, e.currentOffset, e.endOffset) === null
                                 }
                                 aria-pressed={sameRange(position(), e)}
                                 data-testid={`rules-request-expression-${index()}`}
@@ -445,11 +471,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                               <Show
                                 when={
                                   sourceAvailable() &&
-                                  sourceRange(
-                                    list.data()!.source!,
-                                    e.currentOffset,
-                                    e.endOffset,
-                                  ) === null
+                                  sourceRange(traceSource()!, e.currentOffset, e.endOffset) === null
                                 }
                               >
                                 <span class="text-sm">{t("rules.rangeUnavailable")}</span>
@@ -466,7 +488,7 @@ const RulesRequestsPanel: Component<{ scope: string; session: string; revision: 
                     </tbody>
                   </table>
                   <RecordedSource
-                    source={list.data()?.source}
+                    source={traceSource()}
                     unavailable={!sourceAvailable()}
                     position={position()}
                     testId="rules-request"
@@ -553,6 +575,7 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
               <thead>
                 <tr>
                   <th>{t("rules.position")}</th>
+                  <th>{t("rules.expression")}</th>
                   <th>{t("rules.values")}</th>
                 </tr>
               </thead>
@@ -583,6 +606,10 @@ const RulesCoveragePanel: Component<{ scope: string; project: string; revision: 
                         >
                           <span class="text-sm">{t("rules.rangeUnavailable")}</span>
                         </Show>
+                      </td>
+                      <td class="mono text-xs text-secondary">
+                        {expressionSnippet(file()?.content, row.currentOffset, row.endOffset) ||
+                          "—"}
                       </td>
                       <td class="mono">{row.summary}</td>
                     </tr>

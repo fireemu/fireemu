@@ -1050,6 +1050,7 @@ fn ttl_sweep_route(state: &ControlState, method: &str, project: &str) -> JsonRes
 ///
 /// `limit` caps the number of requests returned (default and maximum
 /// [`fireemu_core_rules::coverage::REQUEST_TRACE_CAPACITY`]).
+#[allow(clippy::too_many_lines)]
 fn rules_requests_route(state: &ControlState, method: &str, is_default: bool) -> JsonResponse {
     use fireemu_core_rules::coverage::{ExprValue, REQUEST_TRACE_CAPACITY};
 
@@ -1101,43 +1102,64 @@ fn rules_requests_route(state: &ControlState, method: &str, is_default: bool) ->
             "truncated": true,
         }),
     };
-    let requests: Vec<Value> = diagnostics
+    let format_trace = |service: &str, trace: &fireemu_core_rules::coverage::RequestTrace| {
+        json!({
+            "sequence": trace.sequence,
+            "service": service,
+            "method": trace.method,
+            "path": trace.path,
+            "allowed": trace.allowed,
+            "reason": trace.reason,
+            "uid": trace.uid,
+            "expressions": trace.expressions.iter().map(|e| {
+                let mut expression = json!({
+                    "line": e.span.line,
+                    "column": e.span.column,
+                    "currentOffset": e.span.offset,
+                    "endOffset": e.end,
+                    "values": e.values.iter().map(|(v, count)| json!({
+                        "value": value(v),
+                        "count": count,
+                    })).collect::<Vec<_>>(),
+                });
+                if e.omitted > 0 {
+                    expression["valuesOmitted"] = json!(e.omitted);
+                    expression["valuesCountMayBeLower"] = json!(true);
+                }
+                expression
+            }).collect::<Vec<_>>(),
+        })
+    };
+    let mut requests: Vec<Value> = diagnostics
         .requests()
         .into_iter()
         .take(REQUEST_TRACE_CAPACITY)
-        .map(|trace| {
-            json!({
-                "sequence": trace.sequence,
-                "service": "firestore",
-                "method": trace.method,
-                "path": trace.path,
-                "allowed": trace.allowed,
-                "reason": trace.reason,
-                "uid": trace.uid,
-                "expressions": trace.expressions.iter().map(|e| {
-                    let mut expression = json!({
-                        "line": e.span.line,
-                        "column": e.span.column,
-                        "currentOffset": e.span.offset,
-                        "endOffset": e.end,
-                        "values": e.values.iter().map(|(v, count)| json!({
-                            "value": value(v),
-                            "count": count,
-                        })).collect::<Vec<_>>(),
-                    });
-                    if e.omitted > 0 {
-                        expression["valuesOmitted"] = json!(e.omitted);
-                        expression["valuesCountMayBeLower"] = json!(true);
-                    }
-                    expression
-                }).collect::<Vec<_>>(),
-            })
-        })
+        .map(|trace| format_trace("firestore", trace))
         .collect();
+    let mut storage_loaded = false;
+    let mut storage_source: Option<String> = None;
+    for slot in state.storage_rules.all_slots() {
+        if let Ok(sr) = slot.snapshot() {
+            if sr.is_loaded() {
+                storage_loaded = true;
+                if storage_source.is_none() {
+                    storage_source.clone_from(&sr.source);
+                }
+            }
+            if let Ok(mut sdiag) = sr.diagnostics.lock() {
+                sdiag.enable_request_traces();
+                for trace in sdiag.requests().into_iter().take(REQUEST_TRACE_CAPACITY) {
+                    requests.push(format_trace("storage", trace));
+                }
+            }
+        }
+    }
     ok(json!({
         "capacity": REQUEST_TRACE_CAPACITY,
         "loaded": rules.is_loaded(),
         "source": rules.source,
+        "storageLoaded": storage_loaded,
+        "storageSource": storage_source,
         "generation": rules.generation().to_string(),
         "requests": requests,
     }))

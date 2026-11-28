@@ -175,13 +175,27 @@ test('vitest injectEnv, clock, and sdkConfig helpers inject and cleanly restore 
     assert.equal(handle.sdkConfig.storageBucket, 'demo-inject-test.appspot.com');
     assert.equal(typeof handle.clock.advanceAndSettle, 'function');
 
-    // Direct injectEnv on a custom target + idempotent restore + Symbol.dispose
-    const customTarget = { FIRESTORE_EMULATOR_HOST: 'orig' };
+    // Direct injectEnv on a custom target + idempotent restore + Symbol.dispose + unselected var cleared
+    const customTarget = {
+      FIRESTORE_EMULATOR_HOST: 'orig',
+      PUBSUB_EMULATOR_HOST: 'stale-pubsub:8085',
+    };
     const restore = handle.world.injectEnv(customTarget);
     assert.equal(customTarget.FIRESTORE_EMULATOR_HOST, handle.world.environment.FIRESTORE_EMULATOR_HOST);
+    assert.equal('PUBSUB_EMULATOR_HOST' in customTarget, false);
+
+    // Explicit restart reset refreshes all active injected targets (both process.env and customTarget)
+    const oldFirestore = process.env.FIRESTORE_EMULATOR_HOST;
+    await handle.reset({ mode: 'restart' });
+    assert.equal(handle.world.generation, 2);
+    assert.equal(process.env.FIRESTORE_EMULATOR_HOST, handle.world.environment.FIRESTORE_EMULATOR_HOST);
+    assert.equal(customTarget.FIRESTORE_EMULATOR_HOST, handle.world.environment.FIRESTORE_EMULATOR_HOST);
+    assert.notEqual(process.env.FIRESTORE_EMULATOR_HOST, oldFirestore);
+
     restore[Symbol.dispose]();
     restore();
     assert.equal(customTarget.FIRESTORE_EMULATOR_HOST, 'orig');
+    assert.equal(customTarget.PUBSUB_EMULATOR_HOST, 'stale-pubsub:8085');
     assert.equal('FIREBASE_AUTH_EMULATOR_HOST' in customTarget, false);
   } finally {
     for (const fn of hooks.afterAll) await fn();

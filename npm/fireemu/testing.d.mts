@@ -8,8 +8,8 @@ export type TestWorldService = 'auth' | 'firestore' | 'storage' | 'functions' | 
 
 /**
  * How Functions source trees and dependencies are prepared for a TestWorld:
- * - `'copy'`: copy Functions source and dependencies into the world snapshot for strict filesystem isolation (default for `createTestWorld`).
- * - `'symlink-deps'`: copy Functions source files into the snapshot, but symlink `node_modules`, `.venv`, and `venv` directories to avoid duplicating large dependency trees (default for `useTestWorld`).
+ * - `'copy'`: copy Functions source and dependencies into the world snapshot for strict filesystem isolation (default).
+ * - `'symlink-deps'`: copy Functions source files into the snapshot, but symlink `node_modules`, `.venv`, and `venv` directories to avoid duplicating large dependency trees.
  * - `'in-place'`: reference Functions source directories in place without copying.
  */
 export type FunctionsSnapshotMode = 'copy' | 'symlink-deps' | 'in-place';

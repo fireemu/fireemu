@@ -1137,7 +1137,6 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         }
         locator
     });
-    fireemu_adapter_support::term::set_debug_enabled(verbosity == Verbosity::Debug);
     if !quiet {
         print_banner(
             &cfg,
@@ -1206,6 +1205,15 @@ fn assemble_suite(assembly: ServiceAssembly, exec_mode: bool) -> Result<ReadySui
         }
     }
 
+    if addrs.ui.is_some() {
+        for slot in control.storage_rules.all_slots() {
+            if let Ok(sr) = slot.snapshot() {
+                if let Ok(mut diag) = sr.diagnostics.lock() {
+                    diag.enable_request_traces();
+                }
+            }
+        }
+    }
     let enforcer = cfg.rules_enforced.then(|| {
         let enforcer = RulesEnforcer::new(rules.clone(), auth_store.clone(), clock.clone());
         let enforcer = firestore_profile_settings(enforcer, &cfg)
@@ -1953,7 +1961,9 @@ fn merge_missing_indexes_file(
 /// Formats a `firestore.indexes.json` object using the Firebase CLI canonical key order:
 /// top-level `"indexes"` before `"fieldOverrides"` (then any extra keys), and within each
 /// composite index entry `"collectionGroup"`, `"queryScope"`, `"fields"` (then any extra keys).
-fn format_indexes_document(root: &serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
+fn format_indexes_document(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String, String> {
     fn push_indent(out: &mut String, depth: usize) {
         for _ in 0..depth {
             out.push_str("  ");
@@ -2270,6 +2280,7 @@ pub(super) fn run(options: Options, exec: Option<ExecPlan>) -> ExitCode {
         ..
     } = options;
     let quiet = verbosity == Verbosity::Quiet;
+    fireemu_adapter_support::term::set_debug_enabled(verbosity == Verbosity::Debug);
     // The wall-clock reading an unpinned clock start was taken at, so that a clock that follows
     // real time does not lag by the time the daemon takes to build its runtime. A pinned start
     // begins to run when the clock is made.

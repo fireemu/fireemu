@@ -7730,20 +7730,36 @@ impl BlockingAuthBridge {
         let response = match exchange {
             Ok(response) => response,
             Err(failure) => {
+                self.runtime
+                    .record_blocking_auth_invocation(&target.function, "failed".to_owned());
                 self.runtime.restart_runner_after_blocking_failure(&target);
                 return Err(blocking_auth_elapsed(failure, own_timeout_first));
             }
         };
         let Ok(value): Result<serde_json::Value, _> = serde_json::from_slice(&response.body) else {
+            self.runtime.record_blocking_auth_invocation(
+                &target.function,
+                format!("http {} (invalid json)", response.status),
+            );
             self.runtime.restart_runner_after_blocking_failure(&target);
             return Err(BlockingFunctionFailure::unhandled());
         };
         if response.status != 200 {
+            self.runtime.record_blocking_auth_invocation(
+                &target.function,
+                format!("http {}", response.status),
+            );
             return Err(blocking_auth_response_failure(response.status, &value));
         }
         if !value.is_object() {
+            self.runtime.record_blocking_auth_invocation(
+                &target.function,
+                "failed: invalid response".to_owned(),
+            );
             return Err(BlockingFunctionFailure::unhandled());
         }
+        self.runtime
+            .record_blocking_auth_invocation(&target.function, "http 200".to_owned());
         Ok(Some(value))
     }
 }
@@ -8081,12 +8097,16 @@ impl FunctionsHook for Hook {
 
     fn history(&self) -> serde_json::Value {
         let record_json = |r: &fireemu_adapter_functions::runtime::InvocationRecord| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "eventId": r.event_id.to_string(),
                 "function": r.function,
                 "attempt": r.attempt,
                 "outcome": r.outcome,
-            })
+            });
+            if let Some(method) = &r.http_method {
+                obj["httpMethod"] = serde_json::json!(method);
+            }
+            obj
         };
         serde_json::json!({
             "history": self.0.history().iter().map(record_json).collect::<Vec<_>>(),

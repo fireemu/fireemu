@@ -55,10 +55,19 @@ test("the shell snippet is the .env snippet with export on every line", () => {
 
 test("the Web SDK snippet splits host and port and uses a URL for Auth", () => {
   const text = webSdkSnippet(TARGET);
-  expect(text).toContain('initializeApp({ projectId: "demo-app", apiKey: "fake-api-key" })');
+  expect(text).toContain(
+    'initializeApp({ projectId: "demo-app", apiKey: "fake-api-key", storageBucket: "demo-app.appspot.com" })',
+  );
   expect(text).toContain('connectFirestoreEmulator(getFirestore(app), "127.0.0.1", 8080);');
   expect(text).toContain('connectAuthEmulator(getAuth(app), "http://127.0.0.1:9099");');
   expect(text).toContain('connectStorageEmulator(getStorage(app), "127.0.0.1", 9199);');
+});
+
+test("dotenvSnippet includes FIREEMU_HOSTING_HOST when hostingAddr is set", () => {
+  expect(dotenvSnippet({ ...TARGET, hostingAddr: "127.0.0.1:5000" })).toContain(
+    "FIREEMU_HOSTING_HOST=127.0.0.1:5000",
+  );
+  expect(dotenvSnippet(TARGET)).not.toContain("FIREEMU_HOSTING_HOST");
 });
 
 test("the Web and Admin snippets are exactly these programs", () => {
@@ -70,7 +79,7 @@ test("the Web and Admin snippets are exactly these programs", () => {
       'import { getStorage, connectStorageEmulator } from "firebase/storage";',
       'import { getFunctions, connectFunctionsEmulator } from "firebase/functions";',
       "",
-      'const app = initializeApp({ projectId: "demo-app", apiKey: "fake-api-key" });',
+      'const app = initializeApp({ projectId: "demo-app", apiKey: "fake-api-key", storageBucket: "demo-app.appspot.com" });',
       'connectFirestoreEmulator(getFirestore(app), "127.0.0.1", 8080);',
       'connectAuthEmulator(getAuth(app), "http://127.0.0.1:9099");',
       'connectStorageEmulator(getStorage(app), "127.0.0.1", 9199);',

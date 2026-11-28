@@ -494,7 +494,16 @@ pub fn trigger_json(trigger: &Trigger) -> Value {
 }
 
 fn record_json(r: &fireemu_adapter_functions::runtime::InvocationRecord) -> Value {
-    json!({"eventId": r.event_id.to_string(), "function": r.function, "attempt": r.attempt, "outcome": r.outcome})
+    let mut obj = json!({
+        "eventId": r.event_id.to_string(),
+        "function": r.function,
+        "attempt": r.attempt,
+        "outcome": r.outcome,
+    });
+    if let Some(method) = &r.http_method {
+        obj["httpMethod"] = json!(method);
+    }
+    obj
 }
 
 /// The `hosting` keys of `firebase.json` that decide what the site answers; every other key

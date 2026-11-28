@@ -183,7 +183,7 @@ const Stats: Component = () => {
         label={t("nav.auth")}
         icon={<IconAuth />}
         value={count(stats()?.authUsers)}
-        detail={t("overview.statUsers")}
+        detail={t(stats()?.authUsers === 1 ? "overview.statUser" : "overview.statUsers")}
       />
       <StatTile
         id="storage"
@@ -325,10 +325,10 @@ const Overview: Component = () => {
               />
             )}
           </Show>
-          <Show
-            when={config().pubsubAddr}
-            fallback={<Field label={t("overview.pubsub")}>{t("overview.pubsubNone")}</Field>}
-          >
+          <Show when={config().hostingAddr}>
+            {(addr) => <Address label={t("overview.hosting")} value={`http://${addr()}/`} />}
+          </Show>
+          <Show when={config().pubsubEnabled !== false && config().pubsubAddr}>
             {(addr) => <Address label={t("overview.pubsub")} value={addr()} />}
           </Show>
           <Address label={t("overview.control")} value={`http://${config().httpAddr}/v1/`} />
@@ -353,7 +353,9 @@ const Overview: Component = () => {
             </Field>
           </div>
           <Field label={t("overview.clock")} mono>
-            <span data-testid="overview-clock">{appState.clock()}</span>{" "}
+            <span data-testid="overview-clock" title={appState.clock()}>
+              {appState.clock().replace(/\.\d+Z$/, "Z")}
+            </span>{" "}
             <StatusBadge
               tone={appState.clockMode() === "frozen" ? "paused" : "neutral"}
               testId="overview-clock-mode"

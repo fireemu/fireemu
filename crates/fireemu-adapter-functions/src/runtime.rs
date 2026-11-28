@@ -523,6 +523,8 @@ pub struct InvocationRecord {
     pub attempt: u32,
     /// Outcome text (`ok`, `failed: ...`, `timeout`, ...).
     pub outcome: String,
+    /// HTTP method for HTTP/callable/blocking invocations (`GET`, `POST`, `OPTIONS`, ...), if applicable.
+    pub http_method: Option<String>,
 }
 
 /// A retained diagnostic record with the position a reader resumes from.
@@ -5272,6 +5274,7 @@ impl FunctionsRuntime {
                         function,
                         attempt: 0,
                         outcome: format!("skipped: catch-up {label} ({count})"),
+                        http_method: None,
                     });
                 }
                 // Oldest occurrence first across jobs (the sort is stable: job order breaks ties), and
@@ -5292,6 +5295,7 @@ impl FunctionsRuntime {
                             function,
                             attempt: 0,
                             outcome: "skipped: in flight".to_owned(),
+                            http_method: None,
                         });
                         continue;
                     }
@@ -5535,6 +5539,7 @@ impl FunctionsRuntime {
                     function: function.to_owned(),
                     attempt: 0,
                     outcome: "skipped: overlap".to_owned(),
+                    http_method: None,
                 });
                 false
             }
@@ -5545,6 +5550,7 @@ impl FunctionsRuntime {
                     function: function.to_owned(),
                     attempt: 0,
                     outcome: "rejected: overlap".to_owned(),
+                    http_method: None,
                 });
                 false
             }
@@ -6025,6 +6031,7 @@ impl FunctionsRuntime {
                     id,
                     target.function.clone(),
                     "timeout".to_owned(),
+                    None,
                 );
                 log_http_timeout(timeout);
                 Err(Ok(http_timeout_response(profile)))
@@ -6035,6 +6042,7 @@ impl FunctionsRuntime {
                     id,
                     target.function.clone(),
                     format!("failed: {error}"),
+                    None,
                 );
                 Err(Err(error))
             }
@@ -6888,7 +6896,14 @@ impl FunctionsRuntime {
         ))
     }
 
-    fn record_http_invocation(&self, epoch: Epoch, id: EventId, function: String, outcome: String) {
+    fn record_http_invocation(
+        &self,
+        epoch: Epoch,
+        id: EventId,
+        function: String,
+        outcome: String,
+        http_method: Option<String>,
+    ) {
         if let Ok(mut inner) = self.inner.lock() {
             if inner.epoch == epoch {
                 inner.record_invocation(InvocationRecord {
@@ -6896,8 +6911,26 @@ impl FunctionsRuntime {
                     function,
                     attempt: 1,
                     outcome,
+                    http_method,
                 });
             }
+        }
+    }
+
+    /// Records a blocking Auth function invocation (`beforeUserCreated`, `beforeUserSignedIn`,
+    /// etc.) in the invocation history so UI and test diagnostics observe it alongside HTTP and
+    /// event triggers.
+    pub fn record_blocking_auth_invocation(&self, function: &str, outcome: String) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.next_event += 1;
+            let event_id = u128::from(inner.next_event);
+            inner.record_invocation(InvocationRecord {
+                event_id,
+                function: function.to_owned(),
+                attempt: 1,
+                outcome,
+                http_method: Some("POST".to_owned()),
+            });
         }
     }
 
@@ -6927,7 +6960,7 @@ impl FunctionsRuntime {
             if matches!(completion, StreamCompletion::TimedOut) {
                 log_http_timeout(timeout);
             }
-            runtime.record_http_invocation(epoch, id, function, outcome);
+            runtime.record_http_invocation(epoch, id, function, outcome, Some("POST".to_owned()));
             drop(admission);
         });
     }
@@ -7008,6 +7041,7 @@ impl FunctionsRuntime {
                             Ok(response) => format!("fault plan: http {}", response.status),
                             Err(error) => format!("failed: {error}"),
                         },
+                        http_method: Some(method.to_owned()),
                     });
                 }
             }
@@ -7059,6 +7093,7 @@ impl FunctionsRuntime {
                     id,
                     target.function.clone(),
                     "timeout".to_owned(),
+                    Some(method.to_owned()),
                 );
                 log_http_timeout(timeout);
                 drop(admission);
@@ -7070,6 +7105,7 @@ impl FunctionsRuntime {
                     id,
                     target.function.clone(),
                     format!("failed: {error}"),
+                    Some(method.to_owned()),
                 );
                 drop(admission);
                 Err(error)
@@ -7077,7 +7113,7 @@ impl FunctionsRuntime {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn invoke_http_classified(
         self: &Arc<Self>,
         target: &HttpTarget,
@@ -7118,6 +7154,7 @@ impl FunctionsRuntime {
                             Ok(r) => format!("fault plan: http {}", r.status),
                             Err(e) => format!("failed: {e}"),
                         },
+                        http_method: Some(method.to_owned()),
                     });
                 }
             }
@@ -7187,7 +7224,13 @@ impl FunctionsRuntime {
             Ok(Err(e)) => format!("failed: {e}"),
             Err(_) => "timeout".to_owned(),
         };
-        self.record_http_invocation(epoch, id, target.function.clone(), outcome);
+        self.record_http_invocation(
+            epoch,
+            id,
+            target.function.clone(),
+            outcome,
+            Some(method.to_owned()),
+        );
         if let Ok(answer) = result {
             answer.map_err(HttpInvokeError::Message)
         } else {
@@ -7909,6 +7952,7 @@ impl FunctionsRuntime {
                     function: function.to_owned(),
                     attempt,
                     outcome: text,
+                    http_method: None,
                 });
             }
             Err(_) => {}
@@ -7951,6 +7995,7 @@ impl FunctionsRuntime {
                 function: function.to_owned(),
                 attempt,
                 outcome: text.clone(),
+                http_method: None,
             });
             let single = RetryPolicy::try_new(
                 1,

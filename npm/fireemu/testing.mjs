@@ -296,19 +296,32 @@ export async function createTestWorld(options={}){
     const resolved=assertUserSnapshotName(name);
     await control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(resolved)}`);
   };
-  const injectEnv=(target=process.env)=>{
-    check();
-    const env=current.environment;
-    const previous=new Map();
+  const activeEnvInjections=new Set();
+  const applyEnvInjection=(target,env)=>{
+    for(const key of emulatorVariables){
+      if(!Object.prototype.hasOwnProperty.call(env,key))delete target[key];
+    }
     for(const [key,value] of Object.entries(env)){
-      previous.set(key,Object.prototype.hasOwnProperty.call(target,key)?target[key]:undefined);
       if(value===undefined)delete target[key];
       else target[key]=value;
     }
+  };
+  const injectEnv=(target=process.env)=>{
+    check();
+    const env=current.environment;
+    const keys=new Set([...emulatorVariables,...Object.keys(env)]);
+    const previous=new Map();
+    for(const key of keys){
+      previous.set(key,Object.prototype.hasOwnProperty.call(target,key)?target[key]:undefined);
+    }
+    applyEnvInjection(target,env);
+    const entry={target};
+    activeEnvInjections.add(entry);
     let restored=false;
     const restoreEnv=()=>{
       if(restored)return;
       restored=true;
+      activeEnvInjections.delete(entry);
       for(const [key,prev] of previous){
         if(prev===undefined)delete target[key];
         else target[key]=prev;
@@ -329,7 +342,11 @@ export async function createTestWorld(options={}){
     get sdkConfig(){
       check();
       const projectId=snapshot.config.daemon.authProject;
-      return Object.freeze({projectId,apiKey:'fake-api-key',storageBucket:`${projectId}.appspot.com`});
+      const apiKeys=snapshot.config.auth?.apiKeys;
+      const apiKey=Array.isArray(apiKeys)&&typeof apiKeys[0]==='string'&&apiKeys[0].length>0?apiKeys[0]:'fake-api-key';
+      const defaultBucket=snapshot.config.storage?.defaultBucket;
+      const storageBucket=defaultBucket==='firebasestorage.app'?`${projectId}.firebasestorage.app`:`${projectId}.appspot.com`;
+      return Object.freeze({projectId,apiKey,storageBucket});
     },
     injectEnv,
     get directory(){return directory;},
@@ -384,6 +401,7 @@ export async function createTestWorld(options={}){
         catch(error){const failure=snapshotFailure(error,budget.signal);if(prepared)try{await removeSnapshotTree(generationDirectory);}catch(cleanupError){retainCleanupError(failure,cleanupError);}throw failure;}
         finally{budget.close();}
         await start(prepared,generationDirectory);
+        for(const entry of activeEnvInjections)applyEnvInjection(entry.target,current.environment);
         return world;
       },Error('test world call cancelled: the world was reset'));
     },

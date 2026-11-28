@@ -29,7 +29,6 @@ export function useTestWorld(options = {}, hooks) {
     resetMode = 'state',
     dumpDiagnosticsOnFailure = false,
     injectEnv = false,
-    functionsSnapshotMode = 'symlink-deps',
     startupTimeoutMs,
     ...worldOptions
   } = options;
@@ -50,7 +49,6 @@ export function useTestWorld(options = {}, hooks) {
   lifecycle.beforeAll(async () => {
     instance = await createTestWorld({
       ...worldOptions,
-      functionsSnapshotMode,
       ...(startupTimeoutMs !== undefined ? { startupTimeoutMs } : {}),
     });
     if (injectEnv) {
@@ -73,10 +71,6 @@ export function useTestWorld(options = {}, hooks) {
         await instance.resetState();
       } else {
         await instance.reset({ mode: 'restart' });
-        if (injectEnv) {
-          restoreEnv?.();
-          restoreEnv = instance.injectEnv();
-        }
       }
     }, Math.max(startupTimeoutMs ?? 60_000, worldOptions.requestTimeoutMs ?? 80_000));
   }

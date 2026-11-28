@@ -343,6 +343,16 @@ impl StorageRulesRegistry {
         self.denial_log.read().ok().and_then(|log| log.clone())
     }
 
+    /// Returns all active Storage rules slots (global or per-bucket) for diagnostics inspection.
+    #[must_use]
+    pub fn all_slots(&self) -> Vec<Arc<RulesetSlot>> {
+        match self.mode.read().ok().as_deref() {
+            Some(StorageRulesMode::Global(slot)) => vec![Arc::clone(slot)],
+            Some(StorageRulesMode::PerBucket(slots)) => slots.values().cloned().collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// Calls the notice the first time `bucket` is refused for want of rules.
     fn notice_without_rules(&self, bucket: &str) {
         let Some(notice) = self.no_rules_notice.read().ok().and_then(|n| n.clone()) else {
@@ -2745,6 +2755,7 @@ impl StorageState {
     /// Evaluates the Storage rules; `Ok(())` = allowed. The Firebase dialect is the only
     /// caller: the JSON API is a privileged surface on which rules never run, as in the
     /// official emulator.
+    #[allow(clippy::too_many_lines)]
     fn authorize(
         &self,
         principal: &Principal,
@@ -2835,39 +2846,65 @@ impl StorageState {
                     Decision::Allow
                 )
         };
-        let Some(log) = self.rules.denial_log() else {
-            return match evaluate_request_with(ruleset, &ctx, access).decision {
-                Decision::Allow => Ok(()),
-                Decision::Deny(_) if proven_one_level() => Ok(()),
-                Decision::Deny(_) => Err(fb_denied(self.is_strict(), method)),
-            };
-        };
+        let denial_log = self.rules.denial_log();
+        let traces_enabled = rules
+            .diagnostics
+            .lock()
+            .is_ok_and(|diag| diag.request_traces_enabled());
         let (report, coverage) =
             fireemu_core_rules::eval::evaluate_request_traced(ruleset, &ctx, access);
-        match report.decision {
-            Decision::Allow => Ok(()),
-            Decision::Deny(_) if proven_one_level() => Ok(()),
-            Decision::Deny(reason) => {
-                use fireemu_core_rules::denial::{
-                    deny_reason_summary, DeniedCondition, RulesDenial,
-                };
-                (log.0)(&RulesDenial {
-                    service: "storage",
-                    location: format!("bucket {}", bucket.as_str()),
-                    method: storage_method_name(method),
-                    path: object_path.to_owned(),
-                    uid: ctx.auth.as_ref().map(|auth| auth.uid.clone()),
-                    reason: deny_reason_summary(&reason),
-                    conditions: fireemu_core_rules::coverage::decided_conditions(
-                        ruleset, &coverage,
-                    )
+        let allowed = match &report.decision {
+            Decision::Allow => true,
+            Decision::Deny(_) => proven_one_level(),
+        };
+        let denial_reason = if allowed {
+            None
+        } else if let Decision::Deny(reason) = &report.decision {
+            Some(fireemu_core_rules::denial::deny_reason_summary(reason))
+        } else {
+            None
+        };
+        if let Ok(mut sink) = rules.diagnostics.lock() {
+            if traces_enabled {
+                let expressions = coverage.trace_entries();
+                let path = object_path.to_owned();
+                let uid = ctx.auth.as_ref().map(|auth| auth.uid.clone());
+                let reason = denial_reason.clone().unwrap_or_default();
+                let method_str = storage_method_name(method);
+                sink.push(&coverage, move |sequence| {
+                    fireemu_core_rules::coverage::RequestTrace {
+                        sequence,
+                        method: method_str,
+                        path,
+                        allowed,
+                        reason,
+                        uid,
+                        expressions,
+                    }
+                });
+            } else {
+                sink.merge_coverage(&coverage);
+            }
+        }
+        if allowed {
+            return Ok(());
+        }
+        if let (Some(log), Some(reason)) = (denial_log, denial_reason) {
+            use fireemu_core_rules::denial::{DeniedCondition, RulesDenial};
+            (log.0)(&RulesDenial {
+                service: "storage",
+                location: format!("bucket {}", bucket.as_str()),
+                method: storage_method_name(method),
+                path: object_path.to_owned(),
+                uid: ctx.auth.as_ref().map(|auth| auth.uid.clone()),
+                reason,
+                conditions: fireemu_core_rules::coverage::decided_conditions(ruleset, &coverage)
                     .iter()
                     .map(|entry| DeniedCondition::from_entry(entry, rules.source.as_deref()))
                     .collect(),
-                });
-                Err(fb_denied(self.is_strict(), method))
-            }
+            });
         }
+        Err(fb_denied(self.is_strict(), method))
     }
 }
 

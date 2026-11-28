@@ -313,6 +313,8 @@ export type RulesRequests = {
   loaded: boolean;
   /** Same-response snapshot metadata; absent on older daemons. Never join a later editor fetch. */
   source?: string | null;
+  storageLoaded?: boolean;
+  storageSource?: string | null;
   generation?: string;
   requests: RulesRequest[];
 };

@@ -144,6 +144,11 @@ pub fn state(parts: Parts<'_>) -> Arc<UiState> {
             rules_enforced: parts.cfg.rules_enforced,
             clock_pinned: parts.cfg.clock_start_pinned,
             clock_frozen: parts.cfg.clock_frozen(),
+            functions_clock_date: if parts.cfg.functions_clock.date_virtual {
+                "virtual".to_owned()
+            } else {
+                "real".to_owned()
+            },
             hosts: hosts_info(parts.cfg),
             hosting: parts.hosting,
             codebases: codebases_info(parts.cfg),

@@ -7,6 +7,7 @@ export type SnippetTarget = {
   httpAddr: string;
   storageAddr: string;
   functionsAddr: string | null;
+  hostingAddr?: string | null;
 };
 
 export type SnippetKind = "dotenv" | "shell" | "web" | "admin";
@@ -19,6 +20,7 @@ export const dotenvSnippet = (target: SnippetTarget): string =>
     `FIREBASE_STORAGE_EMULATOR_HOST=${target.storageAddr}`,
     `STORAGE_EMULATOR_HOST=http://${target.storageAddr}`,
     ...(target.functionsAddr ? [`FIREEMU_FUNCTIONS_HOST=${target.functionsAddr}`] : []),
+    ...(target.hostingAddr ? [`FIREEMU_HOSTING_HOST=${target.hostingAddr}`] : []),
     `GOOGLE_CLOUD_PROJECT=${target.project}`,
     `FIREEMU_CONTROL_URL=http://${target.httpAddr}/v1/`,
   ].join("\n");
@@ -59,7 +61,7 @@ export const webSdkSnippet = (target: SnippetTarget): string =>
       ? [`import { getFunctions, connectFunctionsEmulator } from "firebase/functions";`]
       : []),
     ``,
-    `const app = initializeApp({ projectId: ${literal(target.project)}, apiKey: "fake-api-key" });`,
+    `const app = initializeApp({ projectId: ${literal(target.project)}, apiKey: "fake-api-key", storageBucket: ${literal(`${target.project}.appspot.com`)} });`,
     `connectFirestoreEmulator(getFirestore(app), ${hostPort(target.firestoreAddr)});`,
     `connectAuthEmulator(getAuth(app), ${literal(`http://${target.httpAddr}`)});`,
     `connectStorageEmulator(getStorage(app), ${hostPort(target.storageAddr)});`,

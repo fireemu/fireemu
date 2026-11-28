@@ -157,6 +157,7 @@ fn state_full(
             rules_enforced: true,
             clock_pinned: true,
             clock_frozen: true,
+            functions_clock_date: "real".to_owned(),
             hosts: HostsInfo::default(),
             hosting: None,
             codebases: Vec::new(),

@@ -134,6 +134,8 @@ pub struct RuntimeInfo {
     pub clock_pinned: bool,
     /// Whether the clock stands still (`daemon.clock` is `frozen`) or follows real time.
     pub clock_frozen: bool,
+    /// Functions application clock date mode (`real` or `virtual`).
+    pub functions_clock_date: String,
     /// The `Host` names the product listeners answer.
     pub hosts: HostsInfo,
     /// The served Hosting site, when Hosting runs.
@@ -344,6 +346,8 @@ pub fn config_json(state: &UiState) -> Value {
         "pubsubAddr": info.pubsub_addr,
         "functionsAddr": info.functions_addr,
         "functionsSource": info.functions_source,
+        "functionsClockDate": if info.functions_clock_date.is_empty() { "real" } else { info.functions_clock_date.as_str() },
+        "hostingAddr": info.hosting.as_ref().map(|h| h.addr.as_str()),
         "uiAddr": info.ui_addr,
         "rulesEnforced": info.rules_enforced,
         "clockPinned": info.clock_pinned,
