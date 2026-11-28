@@ -47,14 +47,14 @@ export function functionsSelected(services){
 // A failed clone always falls back to a real copy, so every generation owns its bytes.
 // Internal: tests replace these to exercise each path on any platform.
 export const cloneSupport={
-  file:process.platform==='linux',
+  file:process.platform==='linux'||process.platform==='darwin',
   tree:process.platform==='darwin',
   treeCommand:'/bin/cp',
   treeArguments:(source,destination)=>['-c','-R','-p',source,destination],
 };
 
 // Internal bound shared by portable snapshots and deterministic copy benchmarks.
-export const copySupport={maxConcurrentFiles:4};
+export const copySupport={maxConcurrentFiles:16};
 
 /** Counters for one snapshot or generation copy; `noClone` remembers source devices that cannot clone. */
 function createCopyStats(){

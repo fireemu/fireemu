@@ -12,7 +12,7 @@ import { createWorldQueue, waitRequestTimeoutMs } from './testing-queue.mjs';
 import { createControlClient } from './control.mjs';
 import { advanceBody, toBody } from './testing-clock.mjs';
 
-const endpointVariables = {firestore:'FIRESTORE_EMULATOR_HOST',auth:'FIREBASE_AUTH_EMULATOR_HOST',storage:'FIREBASE_STORAGE_EMULATOR_HOST',functions:'FIREEMU_FUNCTIONS_HOST',eventarc:'CLOUD_EVENTARC_EMULATOR_HOST',tasks:'CLOUD_TASKS_EMULATOR_HOST',pubsub:'PUBSUB_EMULATOR_HOST',database:'FIREBASE_DATABASE_EMULATOR_HOST',appcheck:'FIREEMU_APP_CHECK_EMULATOR_HOST',hub:'FIREBASE_EMULATOR_HUB',logging:'FIREBASE_LOGGING_EMULATOR_HOST'};
+const endpointVariables = {firestore:'FIRESTORE_EMULATOR_HOST',auth:'FIREBASE_AUTH_EMULATOR_HOST',storage:'FIREBASE_STORAGE_EMULATOR_HOST',functions:'FIREEMU_FUNCTIONS_HOST',hosting:'FIREEMU_HOSTING_HOST',eventarc:'CLOUD_EVENTARC_EMULATOR_HOST',tasks:'CLOUD_TASKS_EMULATOR_HOST',pubsub:'PUBSUB_EMULATOR_HOST',database:'FIREBASE_DATABASE_EMULATOR_HOST',appcheck:'FIREEMU_APP_CHECK_EMULATOR_HOST',hub:'FIREBASE_EMULATOR_HUB',logging:'FIREBASE_LOGGING_EMULATOR_HOST'};
 const emulatorVariables = new Set([...Object.values(endpointVariables),'FIREBASE_CONFIG','NODE_PATH','FIREBASE_FIRESTORE_EMULATOR_ADDRESS','STORAGE_EMULATOR_HOST','FIREEMU_CONTROL_TOKEN','FIREEMU_CONTROL_URL','FIREEMU_APP_CHECK_EMULATOR_HOST','FIREEMU_APP_CHECK_JWKS_URL','FIREEMU_APP_CHECK_DEBUG_TOKEN_URL','FIREBASE_DATABASE_EMULATOR_HOST']);
 const emptyEnvironment=base=>Object.fromEntries(Object.entries(base).filter(([name])=>!emulatorVariables.has(name)));
 
@@ -199,12 +199,26 @@ export async function createTestWorld(options={}){
   const control=(method,path,body)=>waitsForIdle(method,path)
     ?queue.waiting(async signal=>{check();return requestFor(current,method,path,body,anySignal(idleSignal(body),signal));})
     :queue.ordered(async()=>{check();return requestFor(current,method,path,body);});
+  const awaitIdle=async(settings={})=>{
+    const {scope='all',timeoutSeconds=30}=settings;
+    if(scope!=='all'&&scope!=='runnable')throw TypeError('scope must be all or runnable');
+    if(typeof timeoutSeconds!=='number'||!Number.isFinite(timeoutSeconds)||timeoutSeconds<0||timeoutSeconds>600)throw TypeError('timeoutSeconds must be a number from 0 through 600');
+    return control('POST','/v1/sessions/default:awaitIdle',{scope,timeoutSeconds});
+  };
   const advanceAndSettle=async(duration,settings={})=>{
     // Due timers exist only where Functions runs with virtual timers; elsewhere the daemon refuses runDue.
-    const {scope='runnable',timeoutSeconds=20,timeZone,allowBackwards,runTimers=services.some(name=>name==='functions'||name.startsWith('functions:'))&&snapshot.config.functions?.clock?.timers==='virtual'}=settings;
+    const {scope='runnable',timeoutSeconds=20,timeZone,allowBackwards,failOnFunctionError=false,runTimers=services.some(name=>name==='functions'||name.startsWith('functions:'))&&snapshot.config.functions?.clock?.timers==='virtual'}=settings;
     if(scope!=='all'&&scope!=='runnable')throw TypeError('scope must be all or runnable');
     if(typeof timeoutSeconds!=='number'||!Number.isFinite(timeoutSeconds)||timeoutSeconds<0||timeoutSeconds>600)throw TypeError('timeoutSeconds must be a number from 0 through 600');
     if(typeof runTimers!=='boolean')throw TypeError('runTimers must be a boolean');
+    if(typeof failOnFunctionError!=='boolean')throw TypeError('failOnFunctionError must be a boolean');
+    let priorDeadLetters=0;
+    if(failOnFunctionError){
+      try{
+        const before=await control('GET','/v1/sessions/default/functions/history');
+        if(Array.isArray(before?.deadLetters))priorDeadLetters=before.deadLetters.length;
+      }catch{}
+    }
     // The wait is admitted right behind the move, so it sees the move and never delays later clock calls.
     const moved=queue.ordered(async()=>{
       check();
@@ -221,6 +235,18 @@ export async function createTestWorld(options={}){
       const {active,clock,timers}=await moved;
       const body={scope,timeoutSeconds};
       const idle=await requestFor(active,'POST','/v1/sessions/default:awaitIdle',body,anySignal(idleSignal(body),signal));
+      if(failOnFunctionError){
+        try{
+          const after=await requestFor(active,'GET','/v1/sessions/default/functions/history');
+          const deadLetters=Array.isArray(after?.deadLetters)?after.deadLetters.slice(priorDeadLetters):[];
+          if(deadLetters.length>0){
+            const summary=deadLetters.map(d=>`${d.function??'unknown'} (${JSON.stringify(d.outcome)})`).join(', ');
+            throw Error(`background function(s) failed during advanceAndSettle: ${summary}`);
+          }
+        }catch(err){
+          if(err?.message?.startsWith('background function(s) failed'))throw err;
+        }
+      }
       return {clock,timers,idle};
     });
     return settled;
@@ -242,9 +268,18 @@ export async function createTestWorld(options={}){
     await restoreSnapshot(BASELINE_SNAPSHOT);
     return world;
   },Error('test world call cancelled: the world state was reset'));
-  const checkpoint=async name=>{
+  const normalizeOrigin=value=>typeof value==='string'?value.replace(/\/+$/,''):undefined;
+  const checkpointBody=(name,opts={})=>{
+    const body={name};
+    if(opts?.allowNonQuiescent!==undefined){
+      if(typeof opts.allowNonQuiescent!=='boolean')throw TypeError('allowNonQuiescent must be a boolean');
+      if(opts.allowNonQuiescent)body.allowNonQuiescent=true;
+    }
+    return body;
+  };
+  const checkpoint=async(name,opts={})=>{
     const resolved=name===undefined?`cp-${++checkpointSeq}-${randomUUID().slice(0,8)}`:assertUserSnapshotName(name);
-    await control('POST','/v1/sessions/default/snapshots',{name:resolved});
+    await control('POST','/v1/sessions/default/snapshots',checkpointBody(resolved,opts));
     return resolved;
   };
   const restore=name=>{
@@ -262,8 +297,8 @@ export async function createTestWorld(options={}){
   const world={
     get generation(){return generation;},
     get uiUrl(){check();return current.descriptor.uiUrl??undefined;},
-    get hostingUrl(){check();return current.descriptor.hostingUrl??undefined;},
-    get hostingSites(){check();return current.hostingSites;},
+    get hostingUrl(){check();return normalizeOrigin(current.descriptor.hostingUrl);},
+    get hostingSites(){check();return Object.freeze(current.hostingSites.map(entry=>Object.freeze({site:entry.site,url:normalizeOrigin(entry.url)})));},
     get endpoints(){check();return current.endpoints;},
     get environment(){check();return current.environment;},
     get directory(){return directory;},
@@ -285,7 +320,7 @@ export async function createTestWorld(options={}){
         }
         return res;
       },
-      create:name=>control('POST','/v1/sessions/default/snapshots',{name:assertUserSnapshotName(name)}),
+      create:(name,opts={})=>control('POST','/v1/sessions/default/snapshots',checkpointBody(assertUserSnapshotName(name),opts)),
       restore:name=>restore(name),
       delete:name=>control('DELETE',`/v1/sessions/default/snapshots/${encodeURIComponent(assertUserSnapshotName(name))}`),
     }),
@@ -293,6 +328,12 @@ export async function createTestWorld(options={}){
       missingIndexes:()=>control('GET','/v1/sessions/default/firestore/missingIndexes'),
       clearMissingIndexes:()=>control('DELETE','/v1/sessions/default/firestore/missingIndexes'),
     }),
+    functions:Object.freeze({
+      invocations:()=>control('GET','/v1/sessions/default/functions/history'),
+      logs:()=>control('GET','/v1/sessions/default/functions/logs'),
+    }),
+    logs:()=>control('GET','/v1/sessions/default/functions/logs'),
+    awaitIdle,
     resources:()=>control('GET','/v1/sessions/default/resources'),
     checkpoint,
     restore,

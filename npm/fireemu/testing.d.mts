@@ -136,7 +136,7 @@ export interface TestWorldClock {
    */
   readonly advanceAndSettle: (
     duration: ClockDuration,
-    options?: AwaitIdleOptions & ClockMoveOptions,
+    options?: AwaitIdleOptions & ClockMoveOptions & { readonly failOnFunctionError?: boolean },
   ) => Promise<AdvanceAndSettleResult>;
 }
 
@@ -234,14 +234,56 @@ export interface MissingIndexesResponse {
   readonly [key: string]: unknown;
 }
 
+export interface CheckpointOptions {
+  /** Allow capturing a snapshot while background Functions work is still in flight. */
+  readonly allowNonQuiescent?: boolean;
+}
+
+export interface FunctionInvocationRecord {
+  readonly eventId: string;
+  readonly function: string;
+  readonly attempt: number;
+  readonly outcome: unknown;
+}
+
+export interface FunctionsHistoryResponse {
+  readonly history: readonly FunctionInvocationRecord[];
+  readonly deadLetters: readonly FunctionInvocationRecord[];
+  readonly [key: string]: unknown;
+}
+
+export interface FunctionLogEntry {
+  readonly codebase: string;
+  readonly line: string;
+  readonly invocationId?: string | null;
+  readonly function?: string | null;
+  readonly truncated?: boolean;
+}
+
+export interface FunctionsLogsResponse {
+  readonly lines: readonly string[];
+  readonly logs: readonly FunctionLogEntry[];
+  readonly [key: string]: unknown;
+}
+
+export interface TestWorldFunctions {
+  readonly invocations: () => Promise<FunctionsHistoryResponse>;
+  readonly logs: () => Promise<FunctionsLogsResponse>;
+}
+
 export interface TestWorldSnapshots {
   readonly list: () => Promise<SnapshotsListResponse>;
-  readonly create: (name: string) => Promise<Readonly<Record<string, unknown>>>;
+  readonly create: (name: string, options?: CheckpointOptions) => Promise<Readonly<Record<string, unknown>>>;
   readonly restore: (name: string) => Promise<TestWorld>;
   readonly delete: (name: string) => Promise<Readonly<Record<string, unknown>>>;
 }
 
 export interface TestWorldFirestore {
+  /**
+   * Lists missing composite indexes recorded under the `strict` profile (both `refuse` and
+   * `report` modes). Rejects with HTTP 409 `FAILED_PRECONDITION` under the `emulator` profile
+   * or when Firestore is not selected.
+   */
   readonly missingIndexes: () => Promise<MissingIndexesResponse>;
   readonly clearMissingIndexes: () => Promise<Readonly<Record<string, unknown>>>;
 }
@@ -253,18 +295,27 @@ export interface TestWorld {
   readonly generation: number;
   readonly directory: string;
   readonly uiUrl: string | undefined;
-  /** Primary Hosting site for this generation, or undefined when Hosting is not selected. */
+  /** Primary Hosting site origin (without trailing slash) for this generation, or undefined when Hosting is not selected. */
   readonly hostingUrl: string | undefined;
-  /** Sites in configuration order for this generation. */
+  /** Sites in configuration order for this generation (origins without trailing slash). */
   readonly hostingSites: readonly TestWorldHostingSite[];
   readonly endpoints: TestWorldEndpoints;
   readonly environment: Environment;
   readonly clock: TestWorldClock;
   readonly snapshots: TestWorldSnapshots;
   readonly firestore: TestWorldFirestore;
+  readonly functions: TestWorldFunctions;
+  /** Read retained Functions runner log lines and structured log entries. */
+  readonly logs: () => Promise<FunctionsLogsResponse>;
+  /** Wait until background Functions and Tasks work reaches idle. */
+  readonly awaitIdle: (options?: Pick<AwaitIdleOptions, 'scope' | 'timeoutSeconds'>) => Promise<{
+    readonly idle: boolean;
+    readonly scope?: 'all' | 'runnable';
+    readonly [key: string]: unknown;
+  }>;
   readonly resources: () => Promise<Readonly<Record<string, unknown>>>;
   /** Capture a named in-memory checkpoint (auto-named when omitted) and return its name. */
-  readonly checkpoint: (name?: string) => Promise<string>;
+  readonly checkpoint: (name?: string, options?: CheckpointOptions) => Promise<string>;
   /** Restore a previously captured checkpoint in memory without restarting the daemon. */
   readonly restore: (name: string) => Promise<TestWorld>;
   /** Delete a previously captured checkpoint to free session snapshot budget. */

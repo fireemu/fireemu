@@ -7,7 +7,12 @@ function resolveHooks(explicitHooks) {
   if (explicitHooks) return explicitHooks;
   const g = globalThis;
   if (typeof g.beforeAll === 'function' && typeof g.beforeEach === 'function' && typeof g.afterAll === 'function') {
-    return { beforeAll: g.beforeAll, beforeEach: g.beforeEach, afterAll: g.afterAll };
+    return {
+      beforeAll: g.beforeAll,
+      beforeEach: g.beforeEach,
+      afterAll: g.afterAll,
+      ...(typeof g.afterEach === 'function' ? { afterEach: g.afterEach } : {}),
+    };
   }
   throw Error(
     'fireemu/vitest requires Vitest lifecycle hooks (enable `test.globals: true` or pass `{ beforeAll, beforeEach, afterAll }` as the second argument)',
@@ -20,9 +25,12 @@ function resolveHooks(explicitHooks) {
  * each test after the first.
  */
 export function useTestWorld(options = {}, hooks) {
-  const { resetMode = 'state', startupTimeoutMs, ...worldOptions } = options;
+  const { resetMode = 'state', dumpDiagnosticsOnFailure = false, startupTimeoutMs, ...worldOptions } = options;
   if (!VALID_RESET_MODES.has(resetMode)) {
     throw TypeError('resetMode must be "state", "restart", or "none"');
+  }
+  if (typeof dumpDiagnosticsOnFailure !== 'boolean') {
+    throw TypeError('dumpDiagnosticsOnFailure must be a boolean');
   }
   const lifecycle = resolveHooks(hooks);
   let instance;
@@ -51,6 +59,26 @@ export function useTestWorld(options = {}, hooks) {
     }, Math.max(startupTimeoutMs ?? 60_000, worldOptions.requestTimeoutMs ?? 80_000));
   }
 
+  if (dumpDiagnosticsOnFailure && typeof lifecycle.afterEach === 'function') {
+    lifecycle.afterEach(async context => {
+      if (context?.task?.result?.state !== 'fail' || !instance) return;
+      try {
+        const [history, logData] = await Promise.all([
+          instance.functions.invocations().catch(() => null),
+          instance.logs().catch(() => null),
+        ]);
+        const deadLetters = Array.isArray(history?.deadLetters) ? history.deadLetters : [];
+        const lines = Array.isArray(logData?.lines) ? logData.lines.slice(-20) : [];
+        if (deadLetters.length > 0 || lines.length > 0) {
+          console.error(
+            `[fireemu/vitest] diagnostics for failed test "${context?.task?.name ?? 'unknown'}":`,
+            JSON.stringify({ deadLetters, recentLogs: lines }, null, 2),
+          );
+        }
+      } catch {}
+    });
+  }
+
   lifecycle.afterAll(async () => {
     const active = instance;
     instance = undefined;
@@ -65,9 +93,10 @@ export function useTestWorld(options = {}, hooks) {
 
   return Object.freeze({
     get world() { return requireWorld(); },
+    awaitIdle: idleOptions => requireWorld().awaitIdle(idleOptions),
     resetState: () => requireWorld().resetState(),
     reset: resetOptions => requireWorld().reset(resetOptions),
-    checkpoint: name => requireWorld().checkpoint(name),
+    checkpoint: (name, checkpointOptions) => requireWorld().checkpoint(name, checkpointOptions),
     restore: name => requireWorld().restore(name),
     deleteCheckpoint: name => requireWorld().deleteCheckpoint(name),
   });
