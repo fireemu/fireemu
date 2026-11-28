@@ -133,9 +133,11 @@ export const FunctionsTimeline: Component<{
       .map((r) => `[${r.codebase} / ${r.runner} / ${r.cursor}] ${r.line}`)
       .join("\n"),
   );
-  const ungrouped = createMemo(
-    () => props.logs.length - events().reduce((n, e) => n + e.logs.length, 0),
-  );
+  const ungroupedLogs = createMemo(() => {
+    const attached = new Set(events().flatMap((e) => e.logs));
+    return props.logs.filter((r) => !attached.has(r));
+  });
+  const ungrouped = createMemo(() => ungroupedLogs().length);
   return (
     <Section title={t("functions.timeline")}>
       <p class="mb-2 text-sm" data-testid="timeline-owner">
@@ -272,9 +274,18 @@ export const FunctionsTimeline: Component<{
                         </Show>
                       </td>
                       <td class="mono text-xs">{byKey().get(key)!.function}</td>
-                      <td>{byKey().get(key)!.causal?.source ?? "—"}</td>
                       <td>
-                        <Show when={byKey().get(key)!.causal?.phases.at(-1)?.phase} fallback="—">
+                        {byKey().get(key)!.causal?.source ??
+                          (byKey().get(key)!.outcomes.length > 0 ? "http" : "—")}
+                      </td>
+                      <td>
+                        <Show
+                          when={
+                            byKey().get(key)!.causal?.phases.at(-1)?.phase ??
+                            byKey().get(key)!.outcomes.at(-1)?.outcome
+                          }
+                          fallback="—"
+                        >
                           {(phase) => (
                             <StatusBadge tone={phaseTone(phase())}>{phase()}</StatusBadge>
                           )}
@@ -400,9 +411,28 @@ export const FunctionsTimeline: Component<{
           </Show>
         </div>
       </Show>
-      <p class="mt-2 text-xs text-muted">
-        {t("functions.timelineUngroupedLogs", { count: ungrouped() })}
-      </p>
+      <Show
+        when={ungrouped() > 0}
+        fallback={
+          <p class="mt-2 text-xs text-muted">
+            {t("functions.timelineUngroupedLogs", { count: ungrouped() })}
+          </p>
+        }
+      >
+        <details class="mt-2 text-xs text-muted">
+          <summary class="cursor-pointer select-none">
+            {t("functions.timelineUngroupedLogs", { count: ungrouped() })}
+          </summary>
+          <pre
+            class="mono mt-1.5 max-h-48 overflow-auto rounded bg-surface-muted p-2 text-xs text-secondary"
+            data-testid="timeline-ungrouped-logs"
+          >
+            {ungroupedLogs()
+              .map((r) => `[${r.codebase} / ${r.runner} / ${r.cursor}] ${r.line}`)
+              .join("\n")}
+          </pre>
+        </details>
+      </Show>
     </Section>
   );
 };

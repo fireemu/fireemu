@@ -114,8 +114,8 @@ export const HeaderClock: Component = () => {
         data-testid="header-clock-trigger"
         onClick={() => setOpen((was) => !was)}
       >
-        <span class="mono whitespace-nowrap" data-testid="clock">
-          {appState.clock()}
+        <span class="mono whitespace-nowrap" data-testid="clock" title={appState.clock()}>
+          {appState.clock().replace(/\.\d+Z$/, "Z")}
         </span>
         <StatusBadge
           tone={frozen() ? "paused" : "neutral"}
@@ -145,6 +145,9 @@ export const HeaderClock: Component = () => {
               {t("app.close")}
             </button>
           </div>
+          <p class="mono mb-2 text-xs text-muted" data-testid="clock-full-precision">
+            {appState.clock()}
+          </p>
           <ErrorBanner message={error()} />
           <div class="mb-2.5 flex flex-wrap gap-1.5">
             <AsyncButton

@@ -661,17 +661,32 @@ const AuthScope: Component<{ project: string }> = (props) => {
                         class={u.disabled ? "opacity-60" : ""}
                         data-testid={`user-row-${u.localId}`}
                       >
-                        <td class="mono">
-                          <button type="button" class="link" onClick={() => select(u.localId)}>
+                        <td class="mono max-w-[10rem] truncate" title={u.localId}>
+                          <button
+                            type="button"
+                            class="link truncate max-w-full"
+                            onClick={() => select(u.localId)}
+                          >
                             {u.localId}
                           </button>
                         </td>
                         <td>
-                          {u.email}
-                          <Show when={u.emailVerified}>
-                            <span class="ml-1 text-xs text-success">
-                              ({t("auth.emailVerified")})
-                            </span>
+                          <div>
+                            {u.email}
+                            <Show when={u.emailVerified}>
+                              <span class="ml-1 text-xs text-success">
+                                ({t("auth.emailVerified")})
+                              </span>
+                            </Show>
+                          </div>
+                          <Show when={u.customAttributes && u.customAttributes !== "{}"}>
+                            <div
+                              class="mono mt-0.5 max-w-xs truncate text-xs text-muted"
+                              title={u.customAttributes}
+                              data-testid={`user-claims-${u.localId}`}
+                            >
+                              {u.customAttributes}
+                            </div>
                           </Show>
                         </td>
                         <td class="mono">{u.phoneNumber}</td>
@@ -683,12 +698,16 @@ const AuthScope: Component<{ project: string }> = (props) => {
                           <MfaSummary enrollments={u.mfaInfo} />
                         </td>
                         <td class="mono text-xs">
-                          <span class="whitespace-nowrap">{formatMillis(u.createdAt)}</span>{" "}
-                          <RelativeTime value={formatMillis(u.createdAt)} />
+                          <div class="flex flex-col">
+                            <span class="whitespace-nowrap">{formatMillis(u.createdAt)}</span>
+                            <RelativeTime value={formatMillis(u.createdAt)} />
+                          </div>
                         </td>
                         <td class="mono text-xs">
-                          <span class="whitespace-nowrap">{formatMillis(u.lastLoginAt)}</span>{" "}
-                          <RelativeTime value={formatMillis(u.lastLoginAt)} />
+                          <div class="flex flex-col">
+                            <span class="whitespace-nowrap">{formatMillis(u.lastLoginAt)}</span>
+                            <RelativeTime value={formatMillis(u.lastLoginAt)} />
+                          </div>
                         </td>
                         <td class="text-right">
                           <Show when={u.disabled}>

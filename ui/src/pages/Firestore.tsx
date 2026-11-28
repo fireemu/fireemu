@@ -1303,7 +1303,7 @@ const CollectionView: Component<{
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-base font-semibold">{t("firestore.documents")}</h3>
         <input
-          class="input mono w-72 max-w-full"
+          class="input mono w-96 max-w-full"
           data-testid="preview-columns-input"
           aria-label={t("firestore.pinColumn")}
           placeholder={t("firestore.pinColumn")}
@@ -1354,13 +1354,13 @@ const CollectionView: Component<{
                     {(col) => {
                       const val = () => d.fields?.[col];
                       return (
-                        <td class="mono break-all text-secondary">
+                        <td class="mono break-words text-secondary">
                           {val() ? summarize(val()!) : "—"}
                         </td>
                       );
                     }}
                   </For>
-                  <td class="mono break-all text-secondary">
+                  <td class="mono break-words text-secondary">
                     {Object.entries(d.fields ?? {})
                       .slice(0, 4)
                       .map(([k, v]) => `${k}: ${summarize(v)}`)
@@ -1585,7 +1585,7 @@ const Firestore: Component = () => {
           }}
         >
           <input
-            class="input mono w-72"
+            class="input mono w-80 max-w-full sm:w-96"
             data-testid="path-jump"
             placeholder={t("firestore.goToPlaceholder")}
             aria-label={t("firestore.goTo")}

@@ -491,21 +491,24 @@ const Storage: Component = () => {
           <h2 class="text-base font-semibold">{t("storage.objects")}</h2>
           <div class="flex flex-wrap items-center gap-2">
             <input
-              class="input mono w-44"
+              class="input mono w-56 max-w-full"
               data-testid="upload-subpath"
               placeholder={t("storage.uploadSubpath")}
               aria-label={t("storage.uploadSubpath")}
               value={uploadSubpath()}
               onInput={(e) => setUploadSubpath(e.currentTarget.value)}
             />
-            <input
-              ref={setFileInput}
-              type="file"
-              multiple
-              class="file-input"
-              data-testid="upload-input"
-              aria-label={t("storage.upload")}
-            />
+            <label class="btn cursor-pointer">
+              <span>Choose files</span>
+              <input
+                ref={setFileInput}
+                type="file"
+                multiple
+                class="sr-only"
+                data-testid="upload-input"
+                aria-label={t("storage.upload")}
+              />
+            </label>
             <button
               type="button"
               class="btn btn-primary"

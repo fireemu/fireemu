@@ -38,6 +38,7 @@ export const en = {
   "overview.statDatabase": "1 database",
   "overview.statLiveData": "live document data",
   "overview.statUsers": "users",
+  "overview.statObject": "object, {bytes}",
   "overview.statObjects": "objects, {bytes}",
   "overview.statFunctions": "registered functions",
   "overview.statFunctionsRunning": "registered functions, {running} running",

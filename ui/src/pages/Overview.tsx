@@ -191,7 +191,7 @@ const Stats: Component = () => {
         label={t("nav.storage")}
         icon={<IconStorage />}
         value={count(stats()?.storageObjects)}
-        detail={t("overview.statObjects", {
+        detail={t(stats()?.storageObjects === 1 ? "overview.statObject" : "overview.statObjects", {
           bytes:
             stats()?.storageBytes === null || stats()?.storageBytes === undefined
               ? "—"

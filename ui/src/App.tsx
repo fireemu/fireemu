@@ -259,14 +259,24 @@ export const App: Component<RouteSectionProps> = (props) => {
                 <A
                   href={item.href}
                   class="nav-link"
-                  classList={{ "opacity-80": inactive() }}
+                  classList={{ "opacity-55": inactive() }}
                   title={inactive() ? `${t(item.key)} (${t("app.inactive")})` : undefined}
                   aria-description={inactive() ? t("app.inactive") : undefined}
                   onClick={() => setNavigationOpen(false)}
                   end={item.href === "/"}
                 >
                   <item.icon />
-                  {t(item.key)}
+                  <span class="flex-1 truncate">{t(item.key)}</span>
+                  <Show when={item.active !== undefined}>
+                    <span
+                      aria-hidden="true"
+                      class="size-1.5 shrink-0 rounded-full"
+                      classList={{
+                        "bg-emerald-500": !inactive(),
+                        "bg-muted/40": inactive(),
+                      }}
+                    />
+                  </Show>
                 </A>
               );
             }}
